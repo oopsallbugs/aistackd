@@ -34,7 +34,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
-DIM='\033[2m'
 NC='\033[0m'
 
 print_status() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -287,7 +286,8 @@ restore_backup() {
     
     # Create a backup of current config before restoring
     if [[ -f "$OPENCODE_CONFIG" ]]; then
-        local pre_restore_backup="$OPENCODE_CONFIG.pre-restore.$(date +%Y%m%d_%H%M%S)"
+        local pre_restore_backup
+        pre_restore_backup="$OPENCODE_CONFIG.pre-restore.$(date +%Y%m%d_%H%M%S)"
         cp "$OPENCODE_CONFIG" "$pre_restore_backup"
         print_status "Backed up current config to: $pre_restore_backup"
     fi
