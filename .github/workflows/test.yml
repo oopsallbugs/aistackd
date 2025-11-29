@@ -1,0 +1,67 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*.sh'
+      - '*.conf'
+  pull_request:
+    branches: [main]
+    paths:
+      - '*.sh'
+      - '*.conf'
+
+jobs:
+  test:
+    name: Test Scripts
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify bash syntax
+        run: |
+          for script in *.sh; do
+            echo "Checking syntax: $script"
+            bash -n "$script"
+          done
+
+      - name: Test help commands
+        run: |
+          ./sync-opencode-config.sh --help
+
+      - name: Test sync dry-run (mock mode)
+        run: |
+          # Dry-run should fail gracefully when Ollama isn't running
+          ./sync-opencode-config.sh --dry-run || true
+
+      - name: Validate config file format
+        run: |
+          # Check models.conf format (category|model:tag|size|description)
+          echo "Validating models.conf..."
+          while IFS= read -r line; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+            if ! [[ "$line" =~ ^[a-z]+\|[a-z0-9._-]+:[a-z0-9._-]+\|[0-9]+(\.[0-9]+)?[GMK]?B\|.+ ]]; then
+              echo "Invalid line: $line"
+              exit 1
+            fi
+          done < models.conf
+          echo "models.conf: OK"
+
+          # Check models-metadata.conf format (model:tag|name|context|output)
+          echo "Validating models-metadata.conf..."
+          while IFS= read -r line; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+            if ! [[ "$line" =~ ^[a-z0-9._-]+:[a-z0-9._-]+\|.+\|[0-9]+\|[0-9]+$ ]]; then
+              echo "Invalid line: $line"
+              exit 1
+            fi
+          done < models-metadata.conf
+          echo "models-metadata.conf: OK"
