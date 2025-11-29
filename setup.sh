@@ -77,6 +77,7 @@ print_header() { echo -e "\n${CYAN}${BOLD}$1${NC}"; }
 
 ENV_FILE="$SCRIPT_DIR/.env"
 MODELS_CONF="$SCRIPT_DIR/models.conf"
+METADATA_CONF="$SCRIPT_DIR/models-metadata.conf"
 OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
 
 # Parse command line arguments
@@ -87,6 +88,7 @@ FIX_PERMISSIONS=false
 IGNORE_WARNINGS=false
 RUN_UPDATE=false
 RUN_STATUS=false
+SELECTED_MODELS=()
 for arg in "$@"; do
     case $arg in
         --skip-models) SKIP_MODELS=true ;;
@@ -175,6 +177,114 @@ prompt_continue() {
 declare -A MODEL_SELECTED
 declare -a MODEL_ORDER
 declare -A MODEL_INFO
+declare -A CATEGORY_SEEN
+
+# Model metadata for OpenCode config
+declare -A MODEL_DISPLAY_NAME
+declare -A MODEL_CONTEXT_LIMIT
+declare -A MODEL_OUTPUT_LIMIT
+DEFAULT_CONTEXT=32768
+DEFAULT_OUTPUT=8192
+
+load_metadata_conf() {
+    # Load model metadata for OpenCode config generation
+    if [[ ! -f "$METADATA_CONF" ]]; then
+        print_warning "models-metadata.conf not found, using defaults for OpenCode config"
+        return
+    fi
+    
+    while IFS='|' read -r model display_name context_limit output_limit || [[ -n "$model" ]]; do
+        # Skip comments and empty lines
+        [[ "$model" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$model" ]] && continue
+        
+        # Trim whitespace
+        model="${model#"${model%%[![:space:]]*}"}"
+        model="${model%"${model##*[![:space:]]}"}"
+        display_name="${display_name#"${display_name%%[![:space:]]*}"}"
+        display_name="${display_name%"${display_name##*[![:space:]]}"}"
+        context_limit="${context_limit#"${context_limit%%[![:space:]]*}"}"
+        context_limit="${context_limit%"${context_limit##*[![:space:]]}"}"
+        output_limit="${output_limit#"${output_limit%%[![:space:]]*}"}"
+        output_limit="${output_limit%"${output_limit##*[![:space:]]}"}"
+        
+        MODEL_DISPLAY_NAME["$model"]="$display_name"
+        MODEL_CONTEXT_LIMIT["$model"]="$context_limit"
+        MODEL_OUTPUT_LIMIT["$model"]="$output_limit"
+    done < "$METADATA_CONF"
+}
+
+generate_display_name() {
+    # Generate a display name for models not in metadata
+    local model="$1"
+    local base_name size_tag
+    
+    base_name="${model%%:*}"
+    size_tag="${model##*:}"
+    base_name="${base_name^}"  # Capitalize first letter
+    size_tag="${size_tag^^}"   # Uppercase size tag
+    
+    echo "$base_name $size_tag"
+}
+
+generate_opencode_config() {
+    # Generate OpenCode config JSON for the given models
+    local models=("$@")
+    local config=""
+    local first=true
+    
+    # JSON header
+    config='{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {'
+    
+    # Add each model
+    for model in "${models[@]}"; do
+        [[ -z "$model" ]] && continue
+        
+        local display_name context_limit output_limit
+        
+        # Look up metadata or use defaults
+        if [[ -n "${MODEL_DISPLAY_NAME[$model]:-}" ]]; then
+            display_name="${MODEL_DISPLAY_NAME[$model]}"
+            context_limit="${MODEL_CONTEXT_LIMIT[$model]}"
+            output_limit="${MODEL_OUTPUT_LIMIT[$model]}"
+        else
+            display_name=$(generate_display_name "$model")
+            context_limit=$DEFAULT_CONTEXT
+            output_limit=$DEFAULT_OUTPUT
+        fi
+        
+        # Add comma separator after first entry
+        if [[ "$first" == "true" ]]; then
+            first=false
+        else
+            config+=","
+        fi
+        
+        config+="
+        \"$model\": {
+          \"name\": \"$display_name\",
+          \"limit\": { \"context\": $context_limit, \"output\": $output_limit }
+        }"
+    done
+    
+    # JSON footer
+    config+='
+      }
+    }
+  }
+}'
+    
+    echo "$config"
+}
 
 load_models_conf() {
     # Load models from models.conf file
@@ -203,48 +313,16 @@ load_models_conf() {
         MODEL_ORDER+=("$model")
         MODEL_INFO["$model"]="$category|$size|$description"
         
-        # Default selection: first model in autocomplete, general, reasoning, coding
-        case "$category" in
-            autocomplete)
-                # Select first autocomplete model
-                if [[ -z "${FIRST_AUTOCOMPLETE:-}" ]]; then
-                    MODEL_SELECTED["$model"]=1
-                    FIRST_AUTOCOMPLETE=1
-                else
-                    MODEL_SELECTED["$model"]=0
-                fi
-                ;;
-            general)
-                # Select first general model
-                if [[ -z "${FIRST_GENERAL:-}" ]]; then
-                    MODEL_SELECTED["$model"]=1
-                    FIRST_GENERAL=1
-                else
-                    MODEL_SELECTED["$model"]=0
-                fi
-                ;;
-            reasoning)
-                # Select first reasoning model
-                if [[ -z "${FIRST_REASONING:-}" ]]; then
-                    MODEL_SELECTED["$model"]=1
-                    FIRST_REASONING=1
-                else
-                    MODEL_SELECTED["$model"]=0
-                fi
-                ;;
-            coding)
-                # Select first coding model
-                if [[ -z "${FIRST_CODING:-}" ]]; then
-                    MODEL_SELECTED["$model"]=1
-                    FIRST_CODING=1
-                else
-                    MODEL_SELECTED["$model"]=0
-                fi
-                ;;
-            *)
-                MODEL_SELECTED["$model"]=0
-                ;;
-        esac
+        # Default selection: first model in each category is auto-selected
+        # This works for any category name (autocomplete, general, reasoning, coding, or custom)
+        if [[ -z "${CATEGORY_SEEN[$category]:-}" ]]; then
+            # First model in this category - select it by default
+            MODEL_SELECTED["$model"]=1
+            CATEGORY_SEEN["$category"]=1
+        else
+            # Not the first model in this category - don't select by default
+            MODEL_SELECTED["$model"]=0
+        fi
         
         index=$((index + 1))
     done < "$MODELS_CONF"
@@ -1118,6 +1196,7 @@ if [ "$SKIP_MODELS" = false ]; then
     
     # Load models from config
     load_models_conf
+    load_metadata_conf
     
     if [ "$NON_INTERACTIVE" = false ]; then
         # Interactive model selection using gum
@@ -1205,43 +1284,31 @@ fi
 if [ "$SKIP_OPENCODE_CONFIG" = false ]; then
     print_status "Creating OpenCode configuration for Ollama..."
     mkdir -p "$(dirname "$OPENCODE_CONFIG")"
-
-    cat > "$OPENCODE_CONFIG" << 'OPENCODE_EOF'
-{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "ollama": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama (local)",
-      "options": {
-        "baseURL": "http://localhost:11434/v1"
-      },
-      "models": {
-        "qwen3:32b": {
-          "name": "Qwen3 32B (General Purpose)",
-          "limit": { "context": 32768, "output": 8192 }
-        },
-        "deepseek-r1:32b": {
-          "name": "DeepSeek-R1 32B (Reasoning)",
-          "limit": { "context": 32768, "output": 8192 }
-        },
-        "qwen3-coder:30b": {
-          "name": "Qwen3-Coder 30B (Agentic/Coding)",
-          "limit": { "context": 32768, "output": 8192 }
-        },
-        "qwen2.5-coder:3b": {
-          "name": "Qwen2.5-Coder 3B (Autocomplete)",
-          "limit": { "context": 32768, "output": 8192 }
-        }
-      }
-    }
-  }
-}
-OPENCODE_EOF
-
-    print_success "OpenCode config created at: $OPENCODE_CONFIG"
+    
+    # Load metadata if not already loaded
+    if [[ ${#MODEL_DISPLAY_NAME[@]} -eq 0 ]]; then
+        load_metadata_conf
+    fi
+    
+    # Determine which models to include in config
+    if [[ ${#SELECTED_MODELS[@]} -gt 0 ]]; then
+        # Use selected models from model selection
+        CONFIG_MODELS=("${SELECTED_MODELS[@]}")
+    else
+        # No models selected (--skip-models), query installed models
+        readarray -t CONFIG_MODELS < <(docker exec ollama ollama list 2>/dev/null | tail -n +2 | awk '{print $1}')
+    fi
+    
+    if [[ ${#CONFIG_MODELS[@]} -gt 0 ]]; then
+        generate_opencode_config "${CONFIG_MODELS[@]}" > "$OPENCODE_CONFIG"
+        print_success "OpenCode config created at: $OPENCODE_CONFIG"
+        print_status "Configured ${#CONFIG_MODELS[@]} model(s)"
+    else
+        print_warning "No models to configure. Run sync-opencode-config.sh after installing models."
+    fi
 fi
 print_status "Use '/models' in OpenCode to switch between local models"
+print_status "Run ./sync-opencode-config.sh to refresh config after pulling new models"
 
 # -----------------------------------------------------------------------------
 # Test GPU Acceleration
