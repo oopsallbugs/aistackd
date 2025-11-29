@@ -61,10 +61,13 @@ The setup scripts will:
 | Requirement | Notes |
 |-------------|-------|
 | **macOS 12+** | Monterey or later |
+| **Bash 4+** | macOS ships with Bash 3.2; install via `brew install bash` |
 | **Homebrew** | Will be installed if not present |
 | **Disk space** | 20-60GB for models |
 | **Apple Silicon** | Recommended (Metal GPU acceleration) |
 | **Intel Mac** | Supported (CPU only, slower) |
+
+> **Note**: macOS includes Bash 3.2 by default (due to licensing). The setup script requires Bash 4+ for associative arrays. Install it with `brew install bash`, then run: `/opt/homebrew/bin/bash ./setup-macos.sh`
 
 ### Supported GPUs
 

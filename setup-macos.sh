@@ -7,6 +7,26 @@ set -euo pipefail
 # =============================================================================
 
 # -----------------------------------------------------------------------------
+# Bash Version Check - Requires Bash 4+ for associative arrays
+# -----------------------------------------------------------------------------
+
+if [[ "${BASH_VERSION%%.*}" -lt 4 ]]; then
+    echo ""
+    echo "ERROR: This script requires Bash 4.0 or later."
+    echo "       Current version: $BASH_VERSION"
+    echo ""
+    echo "macOS ships with Bash 3.2 due to licensing restrictions."
+    echo ""
+    echo "To fix this, install Bash via Homebrew:"
+    echo "  brew install bash"
+    echo ""
+    echo "Then run this script with the new Bash:"
+    echo "  /opt/homebrew/bin/bash ./setup-macos.sh"
+    echo ""
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
 # OS Check - This script is macOS only
 # -----------------------------------------------------------------------------
 
@@ -313,7 +333,7 @@ display_model_menu() {
             checkbox="[ ]"
         fi
         
-        printf "    %s ${YELLOW}%2d${NC}) %-28s ${DIM}(~%-5s)${NC} %s\n" \
+        printf "    %b ${YELLOW}%2d${NC}) %-28s ${DIM}(~%-5s)${NC} %s\n" \
             "$checkbox" "$index" "$model" "$size" "$description"
         
         index=$((index + 1))
@@ -321,15 +341,17 @@ display_model_menu() {
     
     total_size=$(calculate_total_size)
     selected_count=$(count_selected)
+    local num_models=${#MODEL_ORDER[@]}
     
     echo ""
     echo -e "  ─────────────────────────────────────────────"
     echo -e "  ${BOLD}Selected:${NC} $selected_count models (~${total_size}GB total)"
     echo ""
     echo -e "  ${DIM}Commands:${NC}"
-    echo -e "    ${YELLOW}1-9${NC}    Toggle model       ${YELLOW}a${NC}  Select all"
+    echo -e "    ${YELLOW}1-${num_models}${NC}   Toggle model       ${YELLOW}a${NC}  Select all"
     echo -e "    ${YELLOW}c${NC}      Clear all          ${YELLOW}Enter${NC}  Continue"
     echo ""
+    echo -ne "  Enter selection: "
 }
 
 interactive_model_selection() {
@@ -338,15 +360,19 @@ interactive_model_selection() {
     while true; do
         display_model_menu
         
-        read -rsn1 key
+        read -r input
         
-        case "$key" in
+        # Trim whitespace
+        input="${input#"${input%%[![:space:]]*}"}"
+        input="${input%"${input##*[![:space:]]}"}"
+        
+        case "$input" in
             "")
                 break
                 ;;
-            [1-9])
-                local idx=$((key - 1))
-                if [[ $idx -lt $num_models ]]; then
+            [0-9]|[0-9][0-9])
+                local idx=$((input - 1))
+                if [[ $idx -ge 0 && $idx -lt $num_models ]]; then
                     local model="${MODEL_ORDER[$idx]}"
                     if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
                         MODEL_SELECTED["$model"]=0
