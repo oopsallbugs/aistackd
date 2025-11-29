@@ -61,5 +61,3 @@ services:
       options:
         max-size: "100m"
         max-file: "3"
-
-    # cpus: 12  # Optional: Limit CPU usage if needed
