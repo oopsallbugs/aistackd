@@ -23,7 +23,6 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 CHECKMARK="${GREEN}✓${NC}"
-CROSSMARK="${RED}✗${NC}"
 
 print_status() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
@@ -47,37 +46,33 @@ elif [[ "$(uname -s)" == "Linux" ]]; then
 fi
 
 # Parse command line arguments
-REMOVE_MODELS=false
-REMOVE_OPENCODE=false
-REMOVE_ALL=false
 FORCE=false
 DRY_RUN=false
+NON_INTERACTIVE=false
+REMOVE_ALL=false
 
 for arg in "$@"; do
     case $arg in
-        --models) REMOVE_MODELS=true ;;
-        --opencode) REMOVE_OPENCODE=true ;;
-        --all) REMOVE_ALL=true ;;
+        --all) REMOVE_ALL=true; NON_INTERACTIVE=true ;;
         --force|-f) FORCE=true ;;
         --dry-run) DRY_RUN=true ;;
+        --non-interactive) NON_INTERACTIVE=true ;;
         --help|-h)
             echo "Usage: ./uninstall.sh [OPTIONS]"
             echo ""
-            echo "Uninstalls Ollama and optionally removes related data."
+            echo "Interactively uninstall Ollama and select which components to remove."
             echo ""
             echo "Options:"
-            echo "  --models      Remove downloaded models (~/.ollama)"
-            echo "  --opencode    Remove OpenCode Ollama configuration"
-            echo "  --all         Remove everything (models + opencode config)"
-            echo "  --force, -f   Skip confirmation prompts"
-            echo "  --dry-run     Show what would be removed without doing it"
-            echo "  --help, -h    Show this help message"
+            echo "  --all              Remove everything (no prompts)"
+            echo "  --force, -f        Skip final confirmation prompt"
+            echo "  --dry-run          Show what would be removed without doing it"
+            echo "  --non-interactive  Use default selections (container + image only)"
+            echo "  --help, -h         Show this help message"
             echo ""
             echo "Examples:"
-            echo "  ./uninstall.sh                  # Remove Ollama container only"
-            echo "  ./uninstall.sh --models         # Also remove downloaded models"
-            echo "  ./uninstall.sh --all            # Remove everything"
-            echo "  ./uninstall.sh --all --dry-run  # Preview full removal"
+            echo "  ./uninstall.sh              # Interactive selection"
+            echo "  ./uninstall.sh --all        # Remove everything"
+            echo "  ./uninstall.sh --dry-run    # Preview what would be removed"
             exit 0
             ;;
         *)
@@ -87,12 +82,6 @@ for arg in "$@"; do
             ;;
     esac
 done
-
-# --all implies both
-if [ "$REMOVE_ALL" = true ]; then
-    REMOVE_MODELS=true
-    REMOVE_OPENCODE=true
-fi
 
 # -----------------------------------------------------------------------------
 # Banner
@@ -110,108 +99,259 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Show what will be removed
+# Dependency Check
 # -----------------------------------------------------------------------------
 
-print_header "Components to Remove"
+# Check for gum (required for interactive mode)
+if [ "$NON_INTERACTIVE" = false ]; then
+    if ! command -v gum &>/dev/null; then
+        print_error "gum is required for interactive mode but not installed"
+        echo ""
+        echo "Install gum:"
+        echo "  Arch Linux:     sudo pacman -S gum"
+        echo "  Fedora:         sudo dnf install gum"
+        echo "  macOS:          brew install gum"
+        echo "  Ubuntu/Debian:  See https://github.com/charmbracelet/gum#installation"
+        echo ""
+        echo "Or run with --non-interactive or --all to skip the interactive menu"
+        exit 1
+    fi
+fi
 
-echo ""
-echo -e "  ${BOLD}Core:${NC}"
+# -----------------------------------------------------------------------------
+# Detect Components
+# -----------------------------------------------------------------------------
 
+# All possible components
+ALL_COMPONENTS=(container image brew models opencode env backups)
+
+# Arrays to track what exists and what's selected
+declare -A COMPONENT_EXISTS
+declare -A COMPONENT_SELECTED
+declare -A COMPONENT_DESC
+declare -A COMPONENT_LABEL
+
+# Initialize all to false
+for comp in "${ALL_COMPONENTS[@]}"; do
+    COMPONENT_EXISTS[$comp]=false
+    COMPONENT_SELECTED[$comp]=false
+    COMPONENT_DESC[$comp]=""
+    COMPONENT_LABEL[$comp]=""
+done
+
+print_status "Detecting installed components..."
+
+# Detect Linux Docker components
 if [ "$IS_LINUX" = true ]; then
     if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^ollama$'; then
-        echo -e "    $CHECKMARK Ollama Docker container"
-        CONTAINER_EXISTS=true
-    else
-        echo -e "    $CROSSMARK Ollama Docker container (not found)"
-        CONTAINER_EXISTS=false
+        COMPONENT_EXISTS[container]=true
+        COMPONENT_SELECTED[container]=true  # Default selected
+        COMPONENT_DESC[container]="Ollama Docker container"
+        COMPONENT_LABEL[container]="container"
     fi
     
     if docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -q 'ollama/ollama:rocm'; then
-        echo -e "    $CHECKMARK Ollama ROCm Docker image"
-        IMAGE_EXISTS=true
-    else
-        echo -e "    $CROSSMARK Ollama ROCm Docker image (not found)"
-        IMAGE_EXISTS=false
+        COMPONENT_EXISTS[image]=true
+        COMPONENT_SELECTED[image]=true  # Default selected
+        IMG_SIZE=$(docker images ollama/ollama:rocm --format "{{.Size}}" 2>/dev/null || echo "unknown")
+        COMPONENT_DESC[image]="Ollama ROCm Docker image ($IMG_SIZE)"
+        COMPONENT_LABEL[image]="image"
     fi
-elif [ "$IS_MACOS" = true ]; then
+fi
+
+# Detect macOS components
+if [ "$IS_MACOS" = true ]; then
     if brew list ollama &>/dev/null 2>&1; then
-        echo -e "    $CHECKMARK Ollama (Homebrew)"
-        BREW_INSTALLED=true
-    else
-        echo -e "    $CROSSMARK Ollama (not installed via Homebrew)"
-        BREW_INSTALLED=false
-    fi
-    
-    if pgrep -x "ollama" &>/dev/null; then
-        echo -e "    $CHECKMARK Ollama service (running)"
-        SERVICE_RUNNING=true
-    else
-        echo -e "    $CROSSMARK Ollama service (not running)"
-        SERVICE_RUNNING=false
+        COMPONENT_EXISTS[brew]=true
+        COMPONENT_SELECTED[brew]=true  # Default selected
+        COMPONENT_DESC[brew]="Ollama (Homebrew)"
+        COMPONENT_LABEL[brew]="brew"
     fi
 fi
 
-echo ""
-echo -e "  ${BOLD}Data:${NC}"
-
-if [ "$REMOVE_MODELS" = true ]; then
-    if [ -d "$OLLAMA_DATA_DIR" ]; then
-        MODEL_SIZE=$(du -sh "$OLLAMA_DATA_DIR" 2>/dev/null | cut -f1 || echo "unknown")
-        echo -e "    $CHECKMARK Models directory: $OLLAMA_DATA_DIR ($MODEL_SIZE)"
-        MODELS_EXIST=true
-    else
-        echo -e "    $CROSSMARK Models directory (not found)"
-        MODELS_EXIST=false
-    fi
-else
-    if [ -d "$OLLAMA_DATA_DIR" ]; then
-        MODEL_SIZE=$(du -sh "$OLLAMA_DATA_DIR" 2>/dev/null | cut -f1 || echo "unknown")
-        echo -e "    ${DIM}○ Models directory: $OLLAMA_DATA_DIR ($MODEL_SIZE) - KEEPING${NC}"
-    fi
+# Models directory
+if [ -d "$OLLAMA_DATA_DIR" ]; then
+    COMPONENT_EXISTS[models]=true
+    MODEL_SIZE=$(du -sh "$OLLAMA_DATA_DIR" 2>/dev/null | cut -f1 || echo "unknown")
+    COMPONENT_DESC[models]="Models directory: $OLLAMA_DATA_DIR ($MODEL_SIZE)"
+    COMPONENT_LABEL[models]="models"
 fi
 
-echo ""
-echo -e "  ${BOLD}Configuration:${NC}"
-
-if [ "$REMOVE_OPENCODE" = true ]; then
-    if [ -f "$OPENCODE_CONFIG" ]; then
-        echo -e "    $CHECKMARK OpenCode config: $OPENCODE_CONFIG"
-        OPENCODE_EXISTS=true
-    else
-        echo -e "    $CROSSMARK OpenCode config (not found)"
-        OPENCODE_EXISTS=false
-    fi
-else
-    if [ -f "$OPENCODE_CONFIG" ]; then
-        echo -e "    ${DIM}○ OpenCode config: $OPENCODE_CONFIG - KEEPING${NC}"
-    fi
+# OpenCode config
+if [ -f "$OPENCODE_CONFIG" ]; then
+    COMPONENT_EXISTS[opencode]=true
+    COMPONENT_DESC[opencode]="OpenCode config: $OPENCODE_CONFIG"
+    COMPONENT_LABEL[opencode]="opencode"
 fi
 
 # Local .env file
 if [ -f "$SCRIPT_DIR/.env" ]; then
-    echo -e "    $CHECKMARK Local .env file"
-    ENV_EXISTS=true
-else
-    echo -e "    $CROSSMARK Local .env file (not found)"
-    ENV_EXISTS=false
+    COMPONENT_EXISTS[env]=true
+    COMPONENT_DESC[env]="Local .env file"
+    COMPONENT_LABEL[env]="env"
+fi
+
+# Backup files
+BACKUP_COUNT=$(find "$SCRIPT_DIR" -name "*.backup.*" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+if [ "$BACKUP_COUNT" -gt 0 ]; then
+    COMPONENT_EXISTS[backups]=true
+    COMPONENT_DESC[backups]="Backup files ($BACKUP_COUNT files)"
+    COMPONENT_LABEL[backups]="backups"
+fi
+
+# Override selections if --all flag
+if [ "$REMOVE_ALL" = true ]; then
+    for comp in "${ALL_COMPONENTS[@]}"; do
+        if [ "${COMPONENT_EXISTS[$comp]}" = true ]; then
+            COMPONENT_SELECTED[$comp]=true
+        fi
+    done
+fi
+
+# Check if anything exists
+ANYTHING_EXISTS=false
+for comp in "${ALL_COMPONENTS[@]}"; do
+    if [ "${COMPONENT_EXISTS[$comp]}" = true ]; then
+        ANYTHING_EXISTS=true
+        break
+    fi
+done
+
+if [ "$ANYTHING_EXISTS" = false ]; then
+    echo ""
+    print_warning "No Ollama components found to uninstall"
+    exit 0
 fi
 
 echo ""
 
 # -----------------------------------------------------------------------------
-# Confirmation
+# Interactive Selection with gum
+# -----------------------------------------------------------------------------
+
+if [ "$NON_INTERACTIVE" = false ]; then
+    # Build options array for gum
+    OPTIONS=()
+    PRESELECTED=()
+    
+    for comp in "${ALL_COMPONENTS[@]}"; do
+        if [ "${COMPONENT_EXISTS[$comp]}" = true ]; then
+            OPTIONS+=("${COMPONENT_LABEL[$comp]}:${COMPONENT_DESC[$comp]}")
+            if [ "${COMPONENT_SELECTED[$comp]}" = true ]; then
+                PRESELECTED+=("${COMPONENT_LABEL[$comp]}:${COMPONENT_DESC[$comp]}")
+            fi
+        fi
+    done
+    
+    # Build the --selected argument
+    SELECTED_ARG=""
+    if [ ${#PRESELECTED[@]} -gt 0 ]; then
+        SELECTED_ARG=$(IFS=,; echo "${PRESELECTED[*]}")
+    fi
+    
+    # Run gum choose
+    echo -e "${BOLD}Select components to remove:${NC}"
+    echo -e "${DIM}(Space to toggle, Enter to confirm, Ctrl+C to cancel)${NC}"
+    echo ""
+    
+    SELECTIONS=$(gum choose --no-limit \
+        --cursor-prefix="○ " \
+        --selected-prefix="✓ " \
+        --unselected-prefix="○ " \
+        --cursor.foreground="212" \
+        --selected.foreground="212" \
+        ${SELECTED_ARG:+--selected="$SELECTED_ARG"} \
+        "${OPTIONS[@]}") || {
+        echo ""
+        print_status "Uninstall cancelled"
+        exit 0
+    }
+    
+    # Reset all selections
+    for comp in "${ALL_COMPONENTS[@]}"; do
+        COMPONENT_SELECTED[$comp]=false
+    done
+    
+    # Parse selections and update
+    while IFS= read -r line; do
+        # Extract the component key (before the colon)
+        local_key="${line%%:*}"
+        if [ -n "$local_key" ]; then
+            COMPONENT_SELECTED[$local_key]=true
+        fi
+    done <<< "$SELECTIONS"
+    
+    echo ""
+fi
+
+# -----------------------------------------------------------------------------
+# Show Summary
+# -----------------------------------------------------------------------------
+
+print_header "Components to Remove"
+echo ""
+
+# Check if anything is selected
+ANYTHING_SELECTED=false
+for comp in "${ALL_COMPONENTS[@]}"; do
+    if [ "${COMPONENT_SELECTED[$comp]}" = true ] && [ "${COMPONENT_EXISTS[$comp]}" = true ]; then
+        ANYTHING_SELECTED=true
+        break
+    fi
+done
+
+if [ "$ANYTHING_SELECTED" = false ]; then
+    if [ "$NON_INTERACTIVE" = true ]; then
+        print_warning "No core components (container/image) found to remove"
+        echo ""
+        echo "Use --all to remove remaining components (models, config, etc.)"
+        echo "Or run interactively: ./uninstall.sh"
+    else
+        print_warning "No components selected for removal"
+        echo ""
+        echo "Run again and select items to remove, or use --all to remove everything."
+    fi
+    exit 0
+fi
+
+# Show what will be removed
+for comp in "${ALL_COMPONENTS[@]}"; do
+    if [ "${COMPONENT_SELECTED[$comp]}" = true ] && [ "${COMPONENT_EXISTS[$comp]}" = true ]; then
+        echo -e "  $CHECKMARK ${COMPONENT_DESC[$comp]}"
+    fi
+done
+
+echo ""
+
+# Show what will be kept
+KEEPING_SOMETHING=false
+for comp in "${ALL_COMPONENTS[@]}"; do
+    if [ "${COMPONENT_EXISTS[$comp]}" = true ] && [ "${COMPONENT_SELECTED[$comp]}" = false ]; then
+        if [ "$KEEPING_SOMETHING" = false ]; then
+            echo -e "${DIM}Keeping:${NC}"
+            KEEPING_SOMETHING=true
+        fi
+        echo -e "  ${DIM}○ ${COMPONENT_DESC[$comp]}${NC}"
+    fi
+done
+
+if [ "$KEEPING_SOMETHING" = true ]; then
+    echo ""
+fi
+
+# -----------------------------------------------------------------------------
+# Final Confirmation
 # -----------------------------------------------------------------------------
 
 if [ "$FORCE" = false ] && [ "$DRY_RUN" = false ]; then
-    echo -e "${YELLOW}${BOLD}WARNING:${NC} This will remove the above components."
-    if [ "$REMOVE_MODELS" = true ]; then
-        echo -e "${YELLOW}         Downloaded models will be permanently deleted!${NC}"
+    # Check if models are selected (big warning)
+    if [ "${COMPONENT_SELECTED[models]}" = true ] && [ "${COMPONENT_EXISTS[models]}" = true ]; then
+        echo ""
+        gum style --foreground 212 --bold "⚠ WARNING: Downloaded models will be permanently deleted!"
+        echo ""
     fi
-    echo ""
-    read -p "Are you sure you want to continue? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    
+    if ! gum confirm "Proceed with removal?"; then
         print_status "Uninstall cancelled"
         exit 0
     fi
@@ -224,11 +364,16 @@ fi
 
 print_header "Removing Components"
 
+# Helper to check if item should be removed
+should_remove() {
+    local name="$1"
+    [ "${COMPONENT_SELECTED[$name]}" = true ] && [ "${COMPONENT_EXISTS[$name]}" = true ]
+}
+
 # Linux: Docker-based removal
 if [ "$IS_LINUX" = true ]; then
-    # Stop and remove container
-    if [ "${CONTAINER_EXISTS:-false}" = true ]; then
-        print_status "Stopping Ollama container..."
+    if should_remove "container"; then
+        print_status "Stopping and removing Ollama container..."
         if [ "$DRY_RUN" = false ]; then
             docker compose down 2>/dev/null || docker stop ollama 2>/dev/null || true
             docker rm -f ollama 2>/dev/null || true
@@ -236,8 +381,7 @@ if [ "$IS_LINUX" = true ]; then
         print_success "Container removed"
     fi
     
-    # Remove Docker image
-    if [ "${IMAGE_EXISTS:-false}" = true ]; then
+    if should_remove "image"; then
         print_status "Removing Ollama Docker image..."
         if [ "$DRY_RUN" = false ]; then
             docker rmi ollama/ollama:rocm 2>/dev/null || true
@@ -248,18 +392,13 @@ fi
 
 # macOS: Homebrew-based removal
 if [ "$IS_MACOS" = true ]; then
-    # Stop service
-    if [ "${SERVICE_RUNNING:-false}" = true ]; then
+    if should_remove "brew"; then
         print_status "Stopping Ollama service..."
         if [ "$DRY_RUN" = false ]; then
             brew services stop ollama 2>/dev/null || true
             pkill -x ollama 2>/dev/null || true
         fi
-        print_success "Service stopped"
-    fi
-    
-    # Uninstall via Homebrew
-    if [ "${BREW_INSTALLED:-false}" = true ]; then
+        
         print_status "Uninstalling Ollama via Homebrew..."
         if [ "$DRY_RUN" = false ]; then
             brew uninstall ollama 2>/dev/null || true
@@ -269,16 +408,20 @@ if [ "$IS_MACOS" = true ]; then
 fi
 
 # Remove models directory
-if [ "$REMOVE_MODELS" = true ] && [ "${MODELS_EXIST:-false}" = true ]; then
+if should_remove "models"; then
     print_status "Removing models directory: $OLLAMA_DATA_DIR"
     if [ "$DRY_RUN" = false ]; then
-        rm -rf "$OLLAMA_DATA_DIR"
+        # Try normal removal first, fall back to sudo if permission denied
+        if ! rm -rf "$OLLAMA_DATA_DIR" 2>/dev/null; then
+            print_warning "Permission denied, trying with sudo..."
+            sudo rm -rf "$OLLAMA_DATA_DIR"
+        fi
     fi
     print_success "Models removed"
 fi
 
 # Remove OpenCode config
-if [ "$REMOVE_OPENCODE" = true ] && [ "${OPENCODE_EXISTS:-false}" = true ]; then
+if should_remove "opencode"; then
     print_status "Removing OpenCode config: $OPENCODE_CONFIG"
     if [ "$DRY_RUN" = false ]; then
         rm -f "$OPENCODE_CONFIG"
@@ -287,7 +430,7 @@ if [ "$REMOVE_OPENCODE" = true ] && [ "${OPENCODE_EXISTS:-false}" = true ]; then
 fi
 
 # Remove local .env
-if [ "${ENV_EXISTS:-false}" = true ]; then
+if should_remove "env"; then
     print_status "Removing local .env file"
     if [ "$DRY_RUN" = false ]; then
         rm -f "$SCRIPT_DIR/.env"
@@ -296,9 +439,8 @@ if [ "${ENV_EXISTS:-false}" = true ]; then
 fi
 
 # Remove backup files
-BACKUP_COUNT=$(find "$SCRIPT_DIR" -name "*.backup.*" 2>/dev/null | wc -l || echo "0")
-if [ "$BACKUP_COUNT" -gt 0 ]; then
-    print_status "Removing $BACKUP_COUNT backup file(s)"
+if should_remove "backups"; then
+    print_status "Removing backup files"
     if [ "$DRY_RUN" = false ]; then
         find "$SCRIPT_DIR" -name "*.backup.*" -delete 2>/dev/null || true
     fi
@@ -317,17 +459,20 @@ if [ "$DRY_RUN" = true ]; then
     echo ""
     echo "Run without --dry-run to perform the uninstall."
 else
-    print_success "Ollama has been uninstalled"
-    echo ""
+    print_success "Selected components have been removed"
     
-    if [ "$REMOVE_MODELS" = false ] && [ -d "$OLLAMA_DATA_DIR" ]; then
+    # Show notes about kept items
+    echo ""
+    if [ "${COMPONENT_EXISTS[models]}" = true ] && [ "${COMPONENT_SELECTED[models]}" = false ]; then
         echo -e "${DIM}Note: Models still exist at $OLLAMA_DATA_DIR${NC}"
-        echo -e "${DIM}      Run with --models to remove them${NC}"
     fi
     
-    if [ "$REMOVE_OPENCODE" = false ] && [ -f "$OPENCODE_CONFIG" ]; then
+    if [ "${COMPONENT_EXISTS[opencode]}" = true ] && [ "${COMPONENT_SELECTED[opencode]}" = false ]; then
         echo -e "${DIM}Note: OpenCode config still exists at $OPENCODE_CONFIG${NC}"
-        echo -e "${DIM}      Run with --opencode to remove it${NC}"
+    fi
+    
+    if [ "${COMPONENT_EXISTS[env]}" = true ] && [ "${COMPONENT_SELECTED[env]}" = false ]; then
+        echo -e "${DIM}Note: .env file kept (useful for reinstalling)${NC}"
     fi
 fi
 

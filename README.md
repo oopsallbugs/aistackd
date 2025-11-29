@@ -54,6 +54,7 @@ The setup scripts will:
 | **User groups** | Must be in `video` and `render` groups |
 | **Disk space** | 60-100GB for models |
 | **VRAM** | 8GB minimum, 16-24GB recommended |
+| **gum** | Required for interactive mode ([install](https://github.com/charmbracelet/gum#installation)) |
 
 ### macOS
 
@@ -297,17 +298,20 @@ Find available versions at: https://hub.docker.com/r/ollama/ollama/tags
 ### Uninstalling
 
 ```bash
-# Remove container only (keeps models)
+# Interactive mode - select what to remove
 ./uninstall.sh
 
-# Remove container and all models
-./uninstall.sh --models
-
-# Remove everything (models + OpenCode config)
+# Remove everything (container, models, OpenCode config)
 ./uninstall.sh --all
 
 # Preview what would be removed
-./uninstall.sh --all --dry-run
+./uninstall.sh --dry-run
+
+# Skip confirmation prompts
+./uninstall.sh --force
+
+# Non-interactive mode (uses defaults)
+./uninstall.sh --non-interactive
 ```
 
 ### OpenCode Configuration

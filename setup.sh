@@ -185,11 +185,15 @@ load_models_conf() {
         [[ "$category" =~ ^[[:space:]]*# ]] && continue
         [[ -z "$category" ]] && continue
         
-        # Trim whitespace
-        category=$(echo "$category" | xargs)
-        model=$(echo "$model" | xargs)
-        size=$(echo "$size" | xargs)
-        description=$(echo "$description" | xargs)
+        # Trim whitespace (use parameter expansion to avoid xargs issues with quotes)
+        category="${category#"${category%%[![:space:]]*}"}"
+        category="${category%"${category##*[![:space:]]}"}"
+        model="${model#"${model%%[![:space:]]*}"}"
+        model="${model%"${model##*[![:space:]]}"}"
+        size="${size#"${size%%[![:space:]]*}"}"
+        size="${size%"${size##*[![:space:]]}"}"
+        description="${description#"${description%%[![:space:]]*}"}"
+        description="${description%"${description##*[![:space:]]}"}"
         
         # Store model info
         MODEL_ORDER+=("$model")
@@ -238,7 +242,7 @@ load_models_conf() {
                 ;;
         esac
         
-        ((index++))
+        index=$((index + 1))
     done < "$MODELS_CONF"
 }
 
@@ -266,122 +270,99 @@ count_selected() {
     echo "$count"
 }
 
-display_model_menu() {
-    clear
+interactive_model_selection() {
+    # Build options array and list of preselected labels
+    local options=()
+    local preselected_labels=()
+    
+    for model in "${MODEL_ORDER[@]}"; do
+        IFS='|' read -r category size description <<< "${MODEL_INFO[$model]}"
+        
+        # Format: "model_name (~size) - description"
+        local label="$model (~$size) - $description"
+        options+=("$label")
+        
+        if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
+            preselected_labels+=("$label")
+        fi
+    done
+    
     echo ""
     echo -e "${CYAN}${BOLD}============================================${NC}"
     echo -e "${CYAN}${BOLD}  Select Models to Install${NC}"
     echo -e "${CYAN}${BOLD}============================================${NC}"
     echo ""
-    echo -e "${DIM}Use number keys to toggle selection, then press Enter to continue${NC}"
+    echo -e "${DIM}Space to toggle, Enter to confirm, Ctrl+C to cancel${NC}"
     echo -e "${DIM}Edit models.conf to add more models to this list${NC}"
     echo ""
     
-    local current_category=""
-    local index=1
-    local total_size
-    local selected_count
+    # Build comma-separated string of preselected labels (descriptions must not contain commas!)
+    local selected_csv=""
+    if [ ${#preselected_labels[@]} -gt 0 ]; then
+        selected_csv=$(IFS=,; echo "${preselected_labels[*]}")
+    fi
     
-    for model in "${MODEL_ORDER[@]}"; do
-        IFS='|' read -r category size description <<< "${MODEL_INFO[$model]}"
-        
-        # Print category header
-        if [[ "$category" != "$current_category" ]]; then
-            current_category="$category"
+    # Run gum choose with multi-select
+    local selections
+    if [ -n "$selected_csv" ]; then
+        selections=$(gum choose --no-limit \
+            --cursor-prefix="○ " \
+            --selected-prefix="✓ " \
+            --unselected-prefix="○ " \
+            --cursor.foreground="212" \
+            --selected.foreground="212" \
+            --height=20 \
+            --selected="$selected_csv" \
+            "${options[@]}") || {
+            # User cancelled with Ctrl+C
             echo ""
-            case "$category" in
-                autocomplete) echo -e "  ${BOLD}IDE Autocomplete:${NC}" ;;
-                general)      echo -e "  ${BOLD}General Purpose:${NC}" ;;
-                reasoning)    echo -e "  ${BOLD}Reasoning:${NC}" ;;
-                coding)       echo -e "  ${BOLD}Coding Focus:${NC}" ;;
-                specialized)  echo -e "  ${BOLD}Specialized:${NC}" ;;
-                *)            echo -e "  ${BOLD}${category^}:${NC}" ;;
-            esac
-        fi
-        
-        # Print model entry
-        local checkbox
-        if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
-            checkbox="${GREEN}[x]${NC}"
-        else
-            checkbox="[ ]"
-        fi
-        
-        printf "    %s ${YELLOW}%2d${NC}) %-28s ${DIM}(~%-5s)${NC} %s\n" \
-            "$checkbox" "$index" "$model" "$size" "$description"
-        
-        ((index++))
+            print_status "Model selection cancelled"
+            exit 0
+        }
+    else
+        selections=$(gum choose --no-limit \
+            --cursor-prefix="○ " \
+            --selected-prefix="✓ " \
+            --unselected-prefix="○ " \
+            --cursor.foreground="212" \
+            --selected.foreground="212" \
+            --height=20 \
+            "${options[@]}") || {
+            # User cancelled with Ctrl+C
+            echo ""
+            print_status "Model selection cancelled"
+            exit 0
+        }
+    fi
+    
+    # Reset all selections
+    for model in "${MODEL_ORDER[@]}"; do
+        MODEL_SELECTED["$model"]=0
     done
     
+    # Parse selections and update MODEL_SELECTED
+    while IFS= read -r line; do
+        # Extract the model name (everything before the first space and parenthesis)
+        local selected_model="${line%% (~*}"
+        if [ -n "$selected_model" ]; then
+            # Find matching model in MODEL_ORDER
+            for model in "${MODEL_ORDER[@]}"; do
+                if [[ "$model" == "$selected_model" ]]; then
+                    MODEL_SELECTED["$model"]=1
+                    break
+                fi
+            done
+        fi
+    done <<< "$selections"
+    
+    # Show summary
+    local total_size
+    local selected_count
     total_size=$(calculate_total_size)
     selected_count=$(count_selected)
     
     echo ""
-    echo -e "  ─────────────────────────────────────────────"
-    echo -e "  ${BOLD}Selected:${NC} $selected_count models (~${total_size}GB total)"
-    echo ""
-    echo -e "  ${DIM}Commands:${NC}"
-    echo -e "    ${YELLOW}1-9${NC}    Toggle model       ${YELLOW}a${NC}  Select all"
-    echo -e "    ${YELLOW}c${NC}      Clear all          ${YELLOW}Enter${NC}  Continue"
-    echo ""
-}
-
-interactive_model_selection() {
-    local num_models=${#MODEL_ORDER[@]}
-    
-    while true; do
-        display_model_menu
-        
-        read -rsn1 key
-        
-        case "$key" in
-            # Enter key - continue with selection
-            "")
-                break
-                ;;
-            # Number keys 1-9
-            [1-9])
-                local idx=$((key - 1))
-                if [[ $idx -lt $num_models ]]; then
-                    local model="${MODEL_ORDER[$idx]}"
-                    if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
-                        MODEL_SELECTED["$model"]=0
-                    else
-                        MODEL_SELECTED["$model"]=1
-                    fi
-                fi
-                ;;
-            # 'a' - select all
-            a|A)
-                for model in "${MODEL_ORDER[@]}"; do
-                    MODEL_SELECTED["$model"]=1
-                done
-                ;;
-            # 'c' - clear all
-            c|C)
-                for model in "${MODEL_ORDER[@]}"; do
-                    MODEL_SELECTED["$model"]=0
-                done
-                ;;
-            # Handle multi-digit numbers (10+)
-            1)
-                read -rsn1 -t 0.3 second_key || true
-                if [[ -n "$second_key" && "$second_key" =~ [0-9] ]]; then
-                    local idx=$((10 + second_key - 1))
-                    if [[ $idx -lt $num_models ]]; then
-                        local model="${MODEL_ORDER[$idx]}"
-                        if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
-                            MODEL_SELECTED["$model"]=0
-                        else
-                            MODEL_SELECTED["$model"]=1
-                        fi
-                    fi
-                fi
-                ;;
-        esac
-    done
-    
-    clear
+    echo -e "${BOLD}Selected:${NC} $selected_count models (~${total_size}GB total)"
 }
 
 get_selected_models() {
@@ -789,6 +770,17 @@ else
     MISSING_REQUIRED+=("bc")
 fi
 
+# gum (for interactive menus) - only required if interactive mode
+if [ "$NON_INTERACTIVE" = false ]; then
+    if command -v gum &> /dev/null; then
+        GUM_VERSION=$(gum --version 2>/dev/null | head -1 || echo "unknown")
+        echo -e "  $CHECKMARK gum                  installed ($GUM_VERSION)"
+    else
+        echo -e "  $CROSSMARK gum                  not installed (required for interactive mode)"
+        MISSING_REQUIRED+=("gum")
+    fi
+fi
+
 echo ""
 
 # Recommended dependencies
@@ -857,6 +849,16 @@ if [ ${#MISSING_REQUIRED[@]} -gt 0 ]; then
                 echo "  ${BOLD}bc (calculator):${NC}"
                 echo "    Arch Linux:  sudo pacman -S bc"
                 echo "    Ubuntu:      sudo apt install bc"
+                echo ""
+                ;;
+            gum)
+                echo "  ${BOLD}gum (interactive menus):${NC}"
+                echo "    Arch Linux:  sudo pacman -S gum"
+                echo "    Fedora:      sudo dnf install gum"
+                echo "    macOS:       brew install gum"
+                echo "    Ubuntu:      See https://github.com/charmbracelet/gum#installation"
+                echo ""
+                echo "    Or run with: ./setup.sh --non-interactive"
                 echo ""
                 ;;
         esac
@@ -1114,9 +1116,7 @@ if [ "$SKIP_MODELS" = false ]; then
     load_models_conf
     
     if [ "$NON_INTERACTIVE" = false ]; then
-        # Interactive model selection
-        print_status "Loading model selection menu..."
-        sleep 1
+        # Interactive model selection using gum
         interactive_model_selection
     else
         print_status "Using default model selection (--non-interactive)"

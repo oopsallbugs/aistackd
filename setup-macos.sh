@@ -109,10 +109,14 @@ load_models_conf() {
         [[ "$category" =~ ^[[:space:]]*# ]] && continue
         [[ -z "$category" ]] && continue
         
-        category=$(echo "$category" | xargs)
-        model=$(echo "$model" | xargs)
-        size=$(echo "$size" | xargs)
-        description=$(echo "$description" | xargs)
+        category="${category#"${category%%[![:space:]]*}"}"
+        category="${category%"${category##*[![:space:]]}"}"
+        model="${model#"${model%%[![:space:]]*}"}"
+        model="${model%"${model##*[![:space:]]}"}"
+        size="${size#"${size%%[![:space:]]*}"}"
+        size="${size%"${size##*[![:space:]]}"}"
+        description="${description#"${description%%[![:space:]]*}"}"
+        description="${description%"${description##*[![:space:]]}"}"
         
         MODEL_ORDER+=("$model")
         MODEL_INFO["$model"]="$category|$size|$description"
@@ -207,7 +211,7 @@ display_model_menu() {
         printf "    %s ${YELLOW}%2d${NC}) %-28s ${DIM}(~%-5s)${NC} %s\n" \
             "$checkbox" "$index" "$model" "$size" "$description"
         
-        ((index++))
+        index=$((index + 1))
     done
     
     total_size=$(calculate_total_size)
