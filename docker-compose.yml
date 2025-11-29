@@ -1,3 +1,4 @@
+---
 # Ollama with AMD ROCm GPU Support
 # Configuration loaded from .env file - run setup.sh to generate it
 
@@ -61,5 +62,4 @@ services:
         max-size: "100m"
         max-file: "3"
 
-    # Optional: Limit CPU usage if needed (uncomment to enable)
-    # cpus: 12
+    # cpus: 12  # Optional: Limit CPU usage if needed
