@@ -28,14 +28,18 @@ if [[ "$(uname -s)" != "Linux" ]]; then
         echo "It would be a mass pro gamer move for you to install Linux right now."
         echo ""
         echo "Your options:"
-        echo "  1. WSL2 with Ubuntu (acceptable)"
-        echo "  2. Dual boot Linux (chad move)"
+        echo "  1. WSL2 with Ubuntu (cringe)"
+        echo "  2. Dual boot Linux (acceptable)"
         echo "  3. Full Linux install (legendary)"
         echo ""
-        echo "Get started: https://ubuntu.com/download"
+        echo "Get started:"
+        echo "  Stock standard: https://ubuntu.com/download"
+        echo "  If you are an insane person: https://omarchy.org/"
+        echo "  Giga chads: https://archlinux.org/download/"
+        echo ""
+        echo "Then run this setup script again inside your new premium Linux environment."
     else
-        echo "For other operating systems, see:"
-        echo "  https://ollama.com/download"
+        echo "For other operating systems, good luck :)"
     fi
     echo ""
     exit 1
