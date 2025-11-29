@@ -1,0 +1,65 @@
+# Ollama with AMD ROCm GPU Support
+# Configuration loaded from .env file - run setup.sh to generate it
+
+services:
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-rocm}
+    container_name: ollama
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:11434:11434"
+
+    volumes:
+      - ${OLLAMA_DATA_DIR:-${HOME}/.ollama}:/root/.ollama
+
+    devices:
+      - /dev/kfd
+      - /dev/dri
+
+    # Group IDs for GPU access (system-specific, loaded from .env)
+    group_add:
+      - "${VIDEO_GROUP_ID}"
+      - "${RENDER_GROUP_ID}"
+
+    environment:
+      # GPU architecture override (loaded from .env)
+      - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION}
+      # Listen on all interfaces inside container
+      - OLLAMA_HOST=0.0.0.0
+      # Performance settings (loaded from .env)
+      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-10m}
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-1}
+
+    # Required for ROCm
+    security_opt:
+      - seccomp=unconfined
+
+    # Shared memory for better ROCm performance
+    ipc: host
+
+    # Allow large memory-mapped files for big models
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+    # Health check - restart if Ollama becomes unresponsive
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # Prevent logs from growing unbounded
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+    # Optional: Limit CPU usage if needed (uncomment to enable)
+    # cpus: 12

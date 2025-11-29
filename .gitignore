@@ -1,0 +1,16 @@
+# Local configuration (contains system-specific values)
+.env
+
+# Backup files
+*.backup.*
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
