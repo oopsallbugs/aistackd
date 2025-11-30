@@ -196,7 +196,13 @@ opencode
 # Inside OpenCode, type /models to switch between local models
 ```
 
-**Note on local models**: Local models (even 32B) are still hit-or-miss compared to cloud models like Claude for complex agentic tasks. They work well for simple queries but struggle with multi-step reasoning, long context, and following system instructions reliably. You may notice models echoing OpenCode's internal `<system-reminder>` tags verbatim - this appears to be an issue with how instructions are passed to local models, causing them to treat system prompts as conversation text. I'm working on a fix for this and will update this note when resolved or an upstream fix is implemented.  
+**Note on local models**: Local models (even 32B) are still hit-or-miss compared to cloud models like Claude for complex agentic tasks. They work well for simple queries but can struggle with multi-step reasoning, long context, and following system instructions reliably.
+
+**Common issues and fixes**:
+
+- **Model forgets context or ignores instructions**: Increase `OLLAMA_NUM_CTX` to 32768 or higher. See [Model Performance Tuning](#model-performance-tuning).
+- **Model echoes `<system-reminder>` tags verbatim**: This can happen when context is too small. Try increasing `OLLAMA_NUM_CTX`.
+- **Slow responses**: Ensure GPU acceleration is working (`rocm-smi` on Linux, Metal on macOS). Try a smaller model.  
 
 ### Command Line Chat
 
@@ -366,11 +372,15 @@ The setup script creates a `.env` file with your system's configuration. Key set
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `OLLAMA_NUM_CTX` | `32768` | Context window size in tokens - **increase if models forget context** |
+| `OLLAMA_NUM_GPU` | `-1` | GPU layers (-1 = all on GPU, 0 = CPU only) |
+| `OLLAMA_REQUEST_TIMEOUT` | `300` | Request timeout in seconds |
 | `OLLAMA_UID` | Your UID | Container user ID (auto-detected) |
 | `OLLAMA_GID` | Your GID | Container group ID (auto-detected) |
 | `OLLAMA_KEEP_ALIVE` | `10m` | How long to keep models loaded in GPU memory |
 | `OLLAMA_NUM_PARALLEL` | `2` | How many requests to handle at once |
 | `OLLAMA_MAX_LOADED_MODELS` | `1` | Maximum models loaded simultaneously |
+| `OLLAMA_FLASH_ATTENTION` | `1` | Enable flash attention (faster inference) |
 
 ### OpenCode Configuration
 
@@ -423,6 +433,58 @@ ls ~/.ollama 2>/dev/null || echo "OK"              # Should say "OK"
 ```
 
 ## Performance Tuning
+
+### Model Performance Tuning
+
+**If models seem confused, forget context, or ignore instructions**, increase the context window size. This is the most common issue with local models.
+
+#### Linux (Docker)
+
+Edit your `.env` file and adjust these settings:
+
+```bash
+# Context window size (tokens) - CRITICAL for agentic/coding tasks
+# Too low = model forgets context, ignores instructions, gives confused responses
+# Recommended: 32768 (general), 65536 (coding/agentic tasks)
+OLLAMA_NUM_CTX=32768
+
+# GPU layer offloading (-1 = all layers on GPU)
+OLLAMA_NUM_GPU=-1
+
+# Request timeout in seconds (increase for reasoning models)
+OLLAMA_REQUEST_TIMEOUT=300
+```
+
+Then restart: `docker compose down && docker compose up -d`
+
+Or regenerate with defaults: `./setup.sh --force-env`
+
+#### macOS (Native)
+
+Set environment variables and restart Ollama:
+
+```bash
+# Set context window size
+launchctl setenv OLLAMA_NUM_CTX 32768
+brew services restart ollama
+```
+
+To make permanent, add to `~/.zshrc` or `~/.bash_profile`:
+
+```bash
+export OLLAMA_NUM_CTX=32768
+```
+
+#### Recommended Context Window Values
+
+| Value | Use Case |
+|-------|----------|
+| `16384` | Basic chat, limited memory/VRAM |
+| `32768` | General purpose, good balance (default) |
+| `65536` | Agentic coding tasks, complex multi-step reasoning |
+| `131072` | Maximum context (requires significant memory, not all models support) |
+
+**Note**: Higher values use more VRAM/memory. If you get out-of-memory errors, reduce this value.
 
 ### VRAM Management
 

@@ -1379,6 +1379,25 @@ if [ ! -f "$ENV_FILE" ] || [ "$FORCE_ENV" = true ]; then
 # Detected GPU: $GPU_NAME ($GPU_CHIP)
 
 # =============================================================================
+# MODEL PERFORMANCE TUNING
+# =============================================================================
+# These settings directly affect model quality and responsiveness.
+# See .env.example for detailed descriptions of each setting.
+#
+# IMPORTANT: If models seem to forget context, ignore instructions, or give
+# confused responses, increase OLLAMA_NUM_CTX first.
+
+# Context window size (tokens) - CRITICAL for agentic/coding tasks
+# Recommended: 32768 (general), 65536 (coding/agentic tasks)
+OLLAMA_NUM_CTX=32768
+
+# GPU layer offloading (-1 = all layers on GPU)
+OLLAMA_NUM_GPU=-1
+
+# Request timeout in seconds
+OLLAMA_REQUEST_TIMEOUT=300
+
+# =============================================================================
 # SYSTEM-SPECIFIC SETTINGS (auto-detected)
 # =============================================================================
 
@@ -1391,7 +1410,7 @@ OLLAMA_UID=$CURRENT_UID
 OLLAMA_GID=$CURRENT_GID
 
 # =============================================================================
-# OLLAMA SETTINGS
+# RUNTIME SETTINGS
 # =============================================================================
 
 OLLAMA_KEEP_ALIVE=10m

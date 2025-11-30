@@ -39,7 +39,14 @@ services:
       - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION}
       # Listen on all interfaces inside container
       - OLLAMA_HOST=0.0.0.0
-      # Performance settings (loaded from .env)
+
+      # Model Performance Tuning (see .env.example for detailed descriptions)
+      # These settings directly affect model quality - adjust if models seem confused
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-32768}
+      - OLLAMA_NUM_GPU=${OLLAMA_NUM_GPU:--1}
+      - OLLAMA_REQUEST_TIMEOUT=${OLLAMA_REQUEST_TIMEOUT:-300}
+
+      # Runtime settings (loaded from .env)
       - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-10m}
       - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
