@@ -192,14 +192,24 @@ handle_error() {
     local exit_code=$1
     local line_number=$2
     echo ""
-    print_error "An error occurred on line $line_number (exit code: $exit_code)"
+    print_error "Something went wrong during setup."
     echo ""
     echo "Common solutions:"
-    echo "  - Check Docker is running: sudo systemctl status docker"
-    echo "  - Check permissions: groups (should show video and render)"
-    echo "  - Check logs: docker compose logs"
-    echo "  - Re-run with: ./setup.sh --ignore-warnings"
+    echo "  1. Make sure Docker is running:"
+    echo "     sudo systemctl start docker"
     echo ""
+    echo "  2. Check you have permission to use Docker:"
+    echo "     groups   # Should show 'docker' in the list"
+    echo ""
+    echo "  3. If you just added yourself to groups, log out and back in first"
+    echo ""
+    echo "  4. Try running setup again - some issues resolve on retry:"
+    echo "     ./setup.sh"
+    echo ""
+    echo "  5. View detailed logs:"
+    echo "     docker compose logs"
+    echo ""
+    echo -e "${DIM}(Technical: error on line $line_number, exit code $exit_code)${NC}"
     exit "$exit_code"
 }
 
@@ -222,6 +232,115 @@ prompt_continue() {
 }
 
 # -----------------------------------------------------------------------------
+# Hardware Detection for Model Recommendations
+# -----------------------------------------------------------------------------
+
+DETECTED_VRAM_GB=""
+IGNORE_HARDWARE_RECOMMENDATIONS=false
+
+get_vram_gb() {
+    # Detect GPU VRAM in GB using rocm-smi
+    # Returns the VRAM of the first GPU found (or smallest if multiple)
+    
+    if [[ -n "$DETECTED_VRAM_GB" ]]; then
+        echo "$DETECTED_VRAM_GB"
+        return
+    fi
+    
+    local vram_mb=""
+    
+    # Try rocm-smi first (most reliable for AMD GPUs)
+    if command -v rocm-smi &>/dev/null; then
+        # rocm-smi --showmeminfo vram gives total VRAM
+        vram_mb=$(rocm-smi --showmeminfo vram 2>/dev/null | grep -i "total" | head -1 | grep -oE '[0-9]+' | head -1)
+    fi
+    
+    # Fallback: try to parse from rocminfo
+    if [[ -z "$vram_mb" ]] && command -v rocminfo &>/dev/null; then
+        # Look for "Size:" line after "Pool 1" (VRAM pool)
+        vram_mb=$(rocminfo 2>/dev/null | grep -A 20 "Pool 1" | grep "Size:" | head -1 | grep -oE '[0-9]+')
+    fi
+    
+    # Convert MB to GB
+    if [[ -n "$vram_mb" && "$vram_mb" =~ ^[0-9]+$ ]]; then
+        DETECTED_VRAM_GB=$((vram_mb / 1024))
+        echo "$DETECTED_VRAM_GB"
+    else
+        # Unknown VRAM - return 0 to disable recommendations
+        DETECTED_VRAM_GB=0
+        echo "0"
+    fi
+}
+
+get_model_size_gb() {
+    # Extract numeric GB value from model size string (e.g., "20GB" -> 20, "0.6GB" -> 0.6)
+    local size_str="$1"
+    echo "$size_str" | grep -oE '[0-9]+\.?[0-9]*' | head -1
+}
+
+get_model_hardware_status() {
+    # Returns hardware status for a model: "recommended", "may_struggle", or "wont_fit"
+    # Args: model_size_gb, vram_gb
+    local model_size="$1"
+    local vram="$2"
+    
+    # If VRAM unknown or recommendations disabled, return empty
+    if [[ "$vram" == "0" || -z "$vram" || "$IGNORE_HARDWARE_RECOMMENDATIONS" == "true" ]]; then
+        echo ""
+        return
+    fi
+    
+    # Calculate thresholds
+    # - Model <= 80% VRAM = recommended (leaves headroom for context/overhead)
+    # - Model 80-100% VRAM = may struggle (might work but slow/limited context)
+    # - Model > 100% VRAM = won't fit
+    
+    local threshold_recommended threshold_struggle
+    threshold_recommended=$(echo "$vram * 0.80" | bc -l 2>/dev/null | cut -d. -f1)
+    threshold_struggle=$vram
+    
+    # Handle bc failures
+    if [[ -z "$threshold_recommended" ]]; then
+        threshold_recommended=$((vram * 80 / 100))
+    fi
+    
+    # Compare (using bc for float comparison)
+    local model_int vram_int
+    model_int=$(echo "$model_size" | cut -d. -f1)
+    [[ -z "$model_int" ]] && model_int=0
+    
+    if (( model_int <= threshold_recommended )); then
+        echo "recommended"
+    elif (( model_int <= threshold_struggle )); then
+        echo "may_struggle"
+    else
+        echo "wont_fit"
+    fi
+}
+
+format_hardware_tag() {
+    # Format the hardware status tag for display
+    # Args: status, vram_gb
+    local status="$1"
+    local vram="$2"
+    
+    case "$status" in
+        recommended)
+            echo -e "${GREEN}[✓ recommended - fits ${vram}GB VRAM]${NC}"
+            ;;
+        may_struggle)
+            echo -e "${YELLOW}[⚠ may struggle - exceeds ${vram}GB VRAM]${NC}"
+            ;;
+        wont_fit)
+            echo -e "${RED}[✗ won't fit - requires more VRAM]${NC}"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
 # Model Selection Functions
 # -----------------------------------------------------------------------------
 
@@ -229,6 +348,7 @@ declare -A MODEL_SELECTED
 declare -a MODEL_ORDER
 declare -A MODEL_INFO
 declare -A CATEGORY_SEEN
+declare -A CATEGORY_RECOMMENDED_FOUND
 
 # Model metadata for OpenCode config
 declare -A MODEL_DISPLAY_NAME
@@ -344,10 +464,23 @@ load_models_conf() {
         exit 1
     fi
     
+    # First pass: check for config options
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Look for IGNORE_HARDWARE_RECOMMENDATIONS setting
+        if [[ "$line" =~ ^[[:space:]]*IGNORE_HARDWARE_RECOMMENDATIONS[[:space:]]*=[[:space:]]*(true|false) ]]; then
+            IGNORE_HARDWARE_RECOMMENDATIONS="${BASH_REMATCH[1]}"
+        fi
+    done < "$MODELS_CONF"
+    
+    # Get VRAM for hardware recommendations
+    local vram_gb
+    vram_gb=$(get_vram_gb)
+    
     local index=0
     while IFS='|' read -r category model size description || [[ -n "$category" ]]; do
-        # Skip comments and empty lines
+        # Skip comments, empty lines, and config directives
         [[ "$category" =~ ^[[:space:]]*# ]] && continue
+        [[ "$category" =~ ^[[:space:]]*IGNORE_HARDWARE_RECOMMENDATIONS ]] && continue
         [[ -z "$category" ]] && continue
         
         # Trim whitespace (use parameter expansion to avoid xargs issues with quotes)
@@ -364,15 +497,40 @@ load_models_conf() {
         MODEL_ORDER+=("$model")
         MODEL_INFO["$model"]="$category|$size|$description"
         
-        # Default selection: first model in each category is auto-selected
-        # This works for any category name (autocomplete, general, reasoning, coding, or custom)
-        if [[ -z "${CATEGORY_SEEN[$category]:-}" ]]; then
-            # First model in this category - select it by default
-            MODEL_SELECTED["$model"]=1
-            CATEGORY_SEEN["$category"]=1
+        # Default selection logic:
+        # If IGNORE_HARDWARE_RECOMMENDATIONS=true: select first model in each category
+        # Otherwise: select first RECOMMENDED model in each category
+        
+        if [[ "$IGNORE_HARDWARE_RECOMMENDATIONS" == "true" ]]; then
+            # Original behavior: first model in each category
+            if [[ -z "${CATEGORY_SEEN[$category]:-}" ]]; then
+                MODEL_SELECTED["$model"]=1
+                CATEGORY_SEEN["$category"]=1
+            else
+                MODEL_SELECTED["$model"]=0
+            fi
         else
-            # Not the first model in this category - don't select by default
-            MODEL_SELECTED["$model"]=0
+            # New behavior: first RECOMMENDED model in each category
+            local model_size_gb hw_status
+            model_size_gb=$(get_model_size_gb "$size")
+            hw_status=$(get_model_hardware_status "$model_size_gb" "$vram_gb")
+            
+            if [[ -z "${CATEGORY_RECOMMENDED_FOUND[$category]:-}" ]]; then
+                # Haven't found a recommended model for this category yet
+                if [[ "$hw_status" == "recommended" || -z "$hw_status" ]]; then
+                    # This model is recommended (or recommendations disabled) - select it
+                    MODEL_SELECTED["$model"]=1
+                    CATEGORY_RECOMMENDED_FOUND["$category"]=1
+                    CATEGORY_SEEN["$category"]=1
+                else
+                    # Not recommended - don't select, but track that we've seen the category
+                    MODEL_SELECTED["$model"]=0
+                    CATEGORY_SEEN["$category"]=1
+                fi
+            else
+                # Already found a recommended model for this category
+                MODEL_SELECTED["$model"]=0
+            fi
         fi
         
         index=$((index + 1))
@@ -407,12 +565,25 @@ interactive_model_selection() {
     # Build options array and list of preselected labels
     local options=()
     local preselected_labels=()
+    local vram_gb
+    vram_gb=$(get_vram_gb)
     
     for model in "${MODEL_ORDER[@]}"; do
         IFS='|' read -r category size description <<< "${MODEL_INFO[$model]}"
         
-        # Format: "model_name (~size) - description"
-        local label="$model (~$size) - $description"
+        # Get hardware status tag
+        local model_size_gb hw_status hw_tag=""
+        model_size_gb=$(get_model_size_gb "$size")
+        hw_status=$(get_model_hardware_status "$model_size_gb" "$vram_gb")
+        
+        case "$hw_status" in
+            recommended)  hw_tag=" [✓ recommended]" ;;
+            may_struggle) hw_tag=" [⚠ may struggle]" ;;
+            wont_fit)     hw_tag=" [✗ won't fit]" ;;
+        esac
+        
+        # Format: "model_name (~size) - description [status]"
+        local label="$model (~$size) - $description$hw_tag"
         options+=("$label")
         
         if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
@@ -425,7 +596,12 @@ interactive_model_selection() {
     echo -e "${CYAN}${BOLD}  Select Models to Install${NC}"
     echo -e "${CYAN}${BOLD}============================================${NC}"
     echo ""
-    echo -e "${DIM}Space to toggle, Enter to confirm, Ctrl+C to cancel${NC}"
+    # Show VRAM info if detected
+    if [[ "$vram_gb" -gt 0 && "$IGNORE_HARDWARE_RECOMMENDATIONS" != "true" ]]; then
+        echo -e "  ${BOLD}Detected VRAM:${NC} ${GREEN}${vram_gb}GB${NC}"
+        echo ""
+    fi
+    echo -e "${DIM}Use Space to toggle selection, Enter to confirm, Ctrl+C to cancel${NC}"
     echo -e "${DIM}Edit models.conf to add more models to this list${NC}"
     echo ""
     
@@ -595,7 +771,6 @@ detect_amd_gpu() {
 echo ""
 echo -e "${CYAN}${BOLD}============================================${NC}"
 echo -e "${CYAN}${BOLD}  Ollama ROCm Setup for AMD GPUs${NC}"
-echo -e "${CYAN}${BOLD}  With Multi-Model Support & OpenCode${NC}"
 echo -e "${CYAN}${BOLD}============================================${NC}"
 echo ""
 
@@ -775,7 +950,7 @@ if [ "$FIX_PERMISSIONS" = true ]; then
     print_header "Fixing User Permissions"
     
     echo ""
-    print_status "This will add your user to the required groups for GPU access."
+    print_status "Adding user to video, render, and docker groups for GPU access."
     print_warning "You will need to enter your sudo password."
     print_warning "After this completes, you MUST log out and log back in!"
     echo ""
@@ -973,6 +1148,10 @@ if [ ${#MISSING_REQUIRED[@]} -gt 0 ]; then
     print_header "Missing Required Dependencies"
     echo ""
     
+    # Track if we can offer to fix some issues automatically
+    CAN_AUTO_FIX=false
+    NEEDS_LOGOUT=false
+    
     for dep in "${MISSING_REQUIRED[@]}"; do
         case $dep in
             docker)
@@ -986,9 +1165,11 @@ if [ ${#MISSING_REQUIRED[@]} -gt 0 ]; then
                 echo "  ${BOLD}Docker daemon not running:${NC}"
                 echo "    Start:       sudo systemctl start docker"
                 echo "    Enable:      sudo systemctl enable docker"
-                echo "    Add user:    sudo usermod -aG docker \$USER"
-                echo "    Then:        Log out and back in"
                 echo ""
+                # Check if we can offer to start it
+                if command -v systemctl &>/dev/null; then
+                    CAN_AUTO_FIX=true
+                fi
                 ;;
             docker-compose)
                 echo "  ${BOLD}Docker Compose:${NC}"
@@ -1036,9 +1217,41 @@ if [ ${#MISSING_REQUIRED[@]} -gt 0 ]; then
         esac
     done
     
-    print_status "Install missing dependencies and run this script again."
-    echo ""
-    exit 1
+    # Offer to auto-start docker daemon if that's the only issue
+    if [[ "$CAN_AUTO_FIX" == "true" && " ${MISSING_REQUIRED[*]} " == *" docker-daemon "* && ${#MISSING_REQUIRED[@]} -eq 1 ]]; then
+        echo ""
+        if [ "$NON_INTERACTIVE" = false ]; then
+            read -p "Would you like to start the Docker daemon now? (requires sudo) (Y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                print_status "Starting Docker daemon..."
+                if sudo systemctl start docker; then
+                    print_success "Docker daemon started"
+                    echo ""
+                    print_status "Continuing setup..."
+                    echo ""
+                    # Clear the missing required array and continue
+                    MISSING_REQUIRED=()
+                else
+                    print_error "Failed to start Docker daemon"
+                    echo ""
+                    print_status "Try manually: sudo systemctl start docker"
+                    echo "Then run this script again: ./setup.sh"
+                    echo ""
+                    exit 1
+                fi
+            fi
+        fi
+    fi
+    
+    # Exit if there are still missing dependencies
+    if [ ${#MISSING_REQUIRED[@]} -gt 0 ]; then
+        echo ""
+        echo -e "${YELLOW}${BOLD}After installing dependencies, run this script again:${NC}"
+        echo "  ./setup.sh"
+        echo ""
+        exit 1
+    fi
 fi
 
 # Handle permission warnings
@@ -1255,8 +1468,10 @@ while ! curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; do
             echo "Container is running but API not responding."
             echo "This may be a GPU permission issue."
             echo ""
-            echo "Try: ./setup.sh --fix-permissions"
-            echo "Then log out/in and run setup again."
+            echo -e "${YELLOW}${BOLD}To fix:${NC}"
+            echo -e "  1. Run: ${CYAN}./setup.sh --fix-permissions${NC}"
+            echo -e "  2. Log out and log back in"
+            echo -e "  3. Run: ${CYAN}./setup.sh${NC}"
         fi
         
         exit 1
@@ -1335,11 +1550,15 @@ if [ "$SKIP_MODELS" = false ]; then
         echo ""
         
         if [ "$NON_INTERACTIVE" = false ]; then
-            print_warning "This may take a while depending on your connection."
-            read -p "Proceed with download? (Y/n) " -n 1 -r
+            echo -e "  ${DIM}Download time depends on your internet speed.${NC}"
+            echo -e "  ${DIM}Rough estimate: 5-15 minutes per 10GB on typical broadband.${NC}"
+            echo -e "  ${DIM}Downloads can be resumed if interrupted.${NC}"
+            echo ""
+            echo -e "  Press ${BOLD}Enter${NC} to start downloading, or ${BOLD}n${NC} to skip for now."
+            read -p "  Download now? [Y/n] " -n 1 -r
             echo
             if [[ $REPLY =~ ^[Nn]$ ]]; then
-                print_status "Skipping downloads. Pull models later with:"
+                print_status "Skipping downloads. You can download models later with:"
                 echo "    docker exec ollama ollama pull <model-name>"
                 SELECTED_MODELS=()
             fi

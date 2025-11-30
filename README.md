@@ -14,10 +14,7 @@ Run local AI models with GPU acceleration. Supports:
 git clone https://github.com/oopsallbugs/ollama-rocm.git
 cd ollama-rocm
 
-# 2. (Optional) Customize models to install
-nano models.conf
-
-# 3. Run setup
+# 2. Run setup
 ./setup.sh
 ```
 
@@ -32,14 +29,17 @@ cd ollama-rocm
 ./setup-macos.sh
 ```
 
-> **Note**: The macOS script installs Ollama natively (no Docker). Apple Silicon Macs get Metal GPU acceleration; Intel Macs run on CPU.
+> **Note**: macOS ships with Bash 3.2 which is too old for this script. If you see a version error, install a newer Bash with `brew install bash`, then run: `/opt/homebrew/bin/bash ./setup-macos.sh`
 
 The setup scripts will:
-1. Check all dependencies
+
+1. Check all dependencies (and help you install missing ones)
 2. Detect your GPU and configure the correct settings
 3. Install and start Ollama (Docker on Linux, native on macOS)
 4. Show an interactive menu to select which models to install
 5. Configure OpenCode integration
+
+**Estimated time**: 10-30 minutes depending on your internet speed and model choices.
 
 ## Requirements
 
@@ -47,39 +47,397 @@ The setup scripts will:
 
 | Requirement | Notes |
 |-------------|-------|
-| **Linux** | ROCm only supports Linux |
+| **Linux** | ROCm (AMD's GPU compute software) only supports Linux |
 | **AMD GPU** | RDNA1, RDNA2, or RDNA3 (RX 5000/6000/7000 series) |
-| **Docker** | With Docker Compose v2 |
-| **ROCm support** | `/dev/kfd` and `/dev/dri` must be present |
-| **User groups** | Must be in `video` and `render` groups |
-| **Disk space** | 60-100GB for models |
-| **VRAM** | 8GB minimum, 16-24GB recommended |
-| **gum** | Required for interactive mode ([install](https://github.com/charmbracelet/gum#installation)) |
+| **Docker** | Container system that runs Ollama - setup will guide you if missing |
+| **Disk space** | 20-100GB depending on model choices |
+| **GPU Memory (VRAM)** | 8GB minimum, 16-24GB recommended for larger models |
+
+The setup script will check for everything else and guide you through fixing any issues.
 
 ### macOS
 
 | Requirement | Notes |
 |-------------|-------|
 | **macOS 12+** | Monterey or later |
-| **Bash 4+** | macOS ships with Bash 3.2; install via `brew install bash` |
-| **Homebrew** | Will be installed if not present |
-| **Disk space** | 20-60GB for models |
-| **Apple Silicon** | Recommended (Metal GPU acceleration) |
-| **Intel Mac** | Supported (CPU only, slower) |
+| **Disk space** | 20-60GB depending on model choices |
+| **Apple Silicon** | Recommended - uses Metal for GPU acceleration |
+| **Intel Mac** | Supported but slower (CPU only) |
 
-> **Note**: macOS includes Bash 3.2 by default (due to licensing). The setup script requires Bash 4+ for associative arrays. Install it with `brew install bash`, then run: `/opt/homebrew/bin/bash ./setup-macos.sh`
+### Supported AMD GPUs
 
-### Supported GPUs
+| GPU Series | Example Cards | Notes |
+|------------|---------------|-------|
+| RX 7000 (RDNA3) | 7900 XTX, 7900 XT, 7800 XT, 7700 XT, 7600 | Best performance |
+| RX 6000 (RDNA2) | 6900 XT, 6800 XT, 6700 XT, 6600 XT | Great performance |
+| RX 5000 (RDNA1) | 5700 XT, 5700, 5600 XT | Good performance |
 
-| GPU Family | Cards | HSA Version |
-|------------|-------|-------------|
-| RDNA3 (Navi 31) | RX 7900 XTX, 7900 XT, 7900 GRE | 11.0.0 |
-| RDNA3 (Navi 32) | RX 7800 XT, 7700 XT | 11.0.0 |
-| RDNA3 (Navi 33) | RX 7600 | 11.0.0 |
-| RDNA2 (Navi 21) | RX 6900 XT, 6800 XT, 6800 | 10.3.0 |
-| RDNA2 (Navi 22) | RX 6700 XT | 10.3.0 |
-| RDNA2 (Navi 23) | RX 6600 XT, 6600 | 10.3.0 |
-| RDNA1 (Navi 10) | RX 5700 XT, 5700 | 10.1.0 |
+## Choosing Models
+
+### During Setup
+
+The setup script shows an interactive menu where you can select which AI models to install. Models are automatically tagged based on your hardware:
+
+- `[✓ recommended]` - Will run well on your GPU/system
+- `[⚠ may struggle]` - Might work but could be slow
+- `[✗ won't fit]` - Too large for your GPU memory
+
+The first recommended model in each category is pre-selected. You can toggle selections with Space and confirm with Enter.
+
+### Customizing the Model List
+
+Edit `models.conf` before or after running setup to customize the selection menu:
+
+```bash
+# Format: category|model:tag|size|description
+
+# Small models for quick testing
+small|tinyllama:latest|0.6GB|Tiny but capable - ideal for testing
+
+# IDE autocomplete
+autocomplete|qwen2.5-coder:3b|2GB|Fast code completion for IDE
+
+# General purpose models
+general|qwen3:14b|9GB|Fast all-rounder with good quality
+general|qwen3:8b|5GB|Smaller and faster
+
+# Reasoning models (show their thinking)
+reasoning|deepseek-r1:32b|20GB|Deep reasoning with chain of thought
+
+# Coding-focused models
+coding|qwen3-coder:30b|18GB|Newest for agentic tasks and coding
+```
+
+**Categories**: You can use any category name. Built-in ones are: `small`, `autocomplete`, `general`, `reasoning`, `coding`, `specialized`
+
+**Finding more models**: Browse https://ollama.com/library
+
+### Adding More Models Later
+
+After setup, you can pull additional models anytime:
+
+```bash
+# Linux (Docker)
+docker exec ollama ollama pull codestral:22b
+docker exec ollama ollama pull mistral-small:24b
+docker exec ollama ollama pull deepseek-coder-v2:16b
+
+# macOS (native)
+ollama pull codestral:22b
+ollama pull mistral-small:24b
+```
+
+After pulling new models, sync your OpenCode configuration:
+
+```bash
+./sync-opencode-config.sh
+```
+
+### Model Size Guide
+
+| Your GPU Memory | Recommended Model Sizes |
+|-----------------|------------------------|
+| 8GB | Up to 7B models |
+| 12GB | Up to 14B models |
+| 16GB | Up to 14B-20B models |
+| 24GB+ | 32B+ models work great |
+
+## Using Ollama
+
+### With OpenCode
+
+```bash
+# Start OpenCode in any project directory
+cd ~/my-project
+opencode
+
+# Inside OpenCode, type /models to switch between local models
+```
+
+### Command Line Chat
+
+```bash
+# Linux (Docker)
+docker exec -it ollama ollama run qwen3:14b
+
+# macOS (native)
+ollama run qwen3:14b
+
+# Ask a one-off question
+docker exec ollama ollama run qwen3:14b "Explain this regex: ^[a-z]+$"
+```
+
+### Managing Models
+
+```bash
+# List installed models
+docker exec ollama ollama list          # Linux
+ollama list                              # macOS
+
+# Remove a model
+docker exec ollama ollama rm qwen3:14b  # Linux
+ollama rm qwen3:14b                      # macOS
+
+# Check what's currently loaded in GPU memory
+docker exec ollama ollama ps            # Linux
+ollama ps                                # macOS
+```
+
+### Starting and Stopping
+
+```bash
+# Linux (Docker)
+docker compose up -d      # Start
+docker compose down       # Stop
+docker compose restart    # Restart
+docker compose logs -f    # View logs
+
+# macOS (Homebrew)
+brew services start ollama   # Start
+brew services stop ollama    # Stop
+brew services restart ollama # Restart
+```
+
+## Troubleshooting
+
+### "Permission denied" or GPU Not Working
+
+This is the most common issue on Linux. Run the permission fix:
+
+```bash
+./setup.sh --fix-permissions
+```
+
+Then **log out and log back in** (this is required - Linux only checks group membership at login).
+
+After logging back in, run setup again:
+
+```bash
+./setup.sh
+```
+
+### Docker Not Running
+
+```bash
+# Start Docker
+sudo systemctl start docker
+
+# Make it start automatically on boot
+sudo systemctl enable docker
+```
+
+### Model Downloads Failing
+
+```bash
+# Check disk space
+df -h ~/.ollama
+
+# If download was interrupted, remove and retry
+docker exec ollama ollama rm qwen3:14b
+docker exec ollama ollama pull qwen3:14b
+```
+
+### Slow Performance / Not Using GPU
+
+```bash
+# Watch GPU usage during inference (should spike when generating)
+watch -n 1 rocm-smi
+
+# Check GPU is accessible inside container
+docker exec ollama ls /dev/kfd /dev/dri
+
+# If GPU not accessible, fix permissions and log out/in:
+./setup.sh --fix-permissions
+```
+
+### Check Status
+
+```bash
+# See overall system status
+./setup.sh --status
+
+# Check what's loaded in GPU memory
+docker exec ollama ollama ps
+```
+
+### More Help
+
+See the [detailed troubleshooting section](#detailed-troubleshooting) below for more specific issues.
+
+## Configuration
+
+### Setup Script Options
+
+```bash
+./setup.sh --help              # Show all options
+./setup.sh --status            # Check Ollama status
+./setup.sh --update            # Update to latest version
+./setup.sh --fix-permissions   # Fix GPU access permissions
+./setup.sh --skip-models       # Re-run setup without model selection
+./setup.sh --force-env         # Regenerate configuration
+./setup.sh --non-interactive   # Use defaults, no prompts
+```
+
+### Hardware Recommendations Toggle
+
+By default, the setup script auto-selects the first model in each category that fits your hardware. To disable this and always select the first model regardless of size:
+
+Add this line to `models.conf`:
+
+```bash
+IGNORE_HARDWARE_RECOMMENDATIONS=true
+```
+
+### Environment Variables
+
+The setup script creates a `.env` file with your system's configuration. Key settings you might want to adjust:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_KEEP_ALIVE` | `10m` | How long to keep models loaded in GPU memory |
+| `OLLAMA_NUM_PARALLEL` | `2` | How many requests to handle at once |
+| `OLLAMA_MAX_LOADED_MODELS` | `1` | Maximum models loaded simultaneously |
+
+### OpenCode Configuration
+
+Located at `~/.config/opencode/opencode.json`. This is automatically generated by setup.
+
+To sync after adding new models:
+
+```bash
+./sync-opencode-config.sh          # Replace config with installed models
+./sync-opencode-config.sh --merge  # Add new models, keep manual additions
+./sync-opencode-config.sh --dry-run # Preview without writing
+```
+
+### Uninstalling
+
+```bash
+./uninstall.sh           # Interactive - choose what to remove
+./uninstall.sh --all     # Remove everything
+./uninstall.sh --dry-run # Preview what would be removed
+```
+
+## Performance Tuning
+
+### VRAM Management
+
+| GPU VRAM | Recommended Settings |
+|----------|---------------------|
+| 24GB | `NUM_PARALLEL=2-4`, 32B models work great |
+| 16GB | `NUM_PARALLEL=1-2`, prefer q4 quantization for 32B models |
+| 12GB | `NUM_PARALLEL=1`, prefer 14B or smaller models |
+| 8GB | `NUM_PARALLEL=1`, use 7B models or smaller |
+
+### Quantization
+
+Models come in different "quantizations" - smaller quantizations use less memory but may have lower quality:
+
+| Quantization | Quality | Size | When to Use |
+|--------------|---------|------|-------------|
+| `q8_0` | Best | Largest | When you have plenty of VRAM |
+| `q6_K` | Excellent | Large | Good balance for most users |
+| `q4_K_M` | Good | Small | **Default** - works for most setups |
+| `q3_K_S` | Acceptable | Tiny | When VRAM is very limited |
+
+### Monitor GPU Usage
+
+```bash
+# Watch GPU during inference
+watch -n 1 rocm-smi
+
+# Inside container
+docker exec ollama rocm-smi
+```
+
+## Detailed Troubleshooting
+
+### Dependency Check Failed
+
+Run setup to see what's missing:
+
+```bash
+./setup.sh
+```
+
+Common fixes:
+
+```bash
+# Docker not installed
+sudo pacman -S docker        # Arch
+sudo apt install docker.io   # Ubuntu/Debian
+sudo dnf install docker      # Fedora
+
+# Add yourself to docker group
+sudo usermod -aG docker $USER
+# Then log out and back in
+```
+
+### GPU Not Detected
+
+```bash
+# Check GPU devices exist
+ls -la /dev/kfd /dev/dri
+
+# Check AMD driver is loaded
+lsmod | grep amdgpu
+
+# Check GPU is recognized
+lspci | grep -i vga
+```
+
+### Container Won't Start
+
+```bash
+# Check logs
+docker compose logs
+
+# Check if port 11434 is already in use
+ss -tlnp | grep 11434
+
+# Remove old container and retry
+docker rm -f ollama
+docker compose up -d
+```
+
+### Out of GPU Memory
+
+```bash
+# See what's loaded
+docker exec ollama ollama ps
+
+# Unload a model
+curl http://localhost:11434/api/generate -d '{"model": "qwen3:32b", "keep_alive": 0}'
+
+# Use a smaller model or quantization
+docker exec ollama ollama pull qwen3:14b
+```
+
+### API Not Responding
+
+```bash
+# Check container is running
+docker ps | grep ollama
+
+# Test API
+curl http://localhost:11434/api/tags
+
+# Restart
+docker compose restart
+```
+
+### OpenCode Can't Connect
+
+```bash
+# Verify Ollama is running
+curl http://localhost:11434/api/tags
+
+# Check config exists
+cat ~/.config/opencode/opencode.json
+
+# Sync config with installed models
+./sync-opencode-config.sh
+```
 
 ## Project Structure
 
@@ -93,571 +451,12 @@ ollama-rocm/
 ├── models.conf               # Model selection menu configuration
 ├── models-metadata.conf      # Model display names and context limits
 ├── .env.example              # Template for configuration
-├── .env                      # Your local config (generated by setup.sh)
-├── .gitignore                # Git ignore rules
-├── LICENSE                   # MIT License
+├── .env                      # Your local config (generated by setup)
 └── README.md                 # This file
 
-~/.ollama/                    # Model storage (created by setup)
+~/.ollama/                    # Where models are stored (created by setup)
 ~/.config/opencode/           # OpenCode configuration (created by setup)
 ```
-
-## Customizing Models
-
-Edit `models.conf` before running setup to customize which models appear in the selection menu:
-
-```bash
-# Format: category|model:tag|size|description
-autocomplete|qwen2.5-coder:3b|2GB|Fast code completion for IDE
-general|qwen3:14b|9GB|Fast all-rounder with good quality
-reasoning|deepseek-r1:32b|20GB|Deep reasoning, shows thinking
-coding|qwen3-coder:30b|18GB|Newest for agentic tasks and coding
-
-# Add your own models or custom categories:
-coding|codellama:34b|19GB|Metas code-focused model
-mycategory|some-model:7b|4GB|My custom category
-```
-
-**Default Selection:** The first model in each category is automatically pre-selected during setup. Reorder models within a category to change which one is selected by default.
-
-Categories can be any name you choose. Built-in categories: `autocomplete`, `general`, `reasoning`, `coding`, `specialized`
-
-Browse available models at: https://ollama.com/library
-
-## Default Models
-
-The setup script pre-selects the first model in each category by default (you can change selection during setup):
-
-### For IDE Autocomplete
-| Model | Size | Purpose |
-|-------|------|---------|
-| `qwen2.5-coder:3b` | ~2GB | Fast code completion |
-
-### For Chat/Coding
-| Model | Size | Best For | Speed |
-|-------|------|----------|-------|
-| `qwen3:14b` | ~9GB | General purpose, balanced | Fast |
-| `deepseek-r1:32b` | ~20GB | Deep reasoning, shows thinking | Slower |
-| `qwen3-coder:30b` | ~18GB | Agentic tasks, coding focus | Medium |
-
-## Usage
-
-### Start/Stop Ollama
-
-```bash
-# Start (auto-starts on boot due to restart policy)
-docker compose up -d
-
-# Stop
-docker compose down
-
-# View logs
-docker compose logs -f
-
-# Restart
-docker compose restart
-```
-
-### Using with OpenCode
-
-```bash
-# Start OpenCode in any project directory
-cd ~/my-project
-opencode
-
-# Inside OpenCode, use /models to switch between local models
-```
-
-### Direct CLI Chat
-
-```bash
-# Interactive chat
-docker exec -it ollama ollama run qwen3:32b
-
-# One-off question
-docker exec ollama ollama run qwen3:32b "Explain this regex: ^[a-z]+$"
-
-# Use reasoning model for complex problems
-docker exec -it ollama ollama run deepseek-r1:32b
-```
-
-### Model Management
-
-```bash
-# List installed models
-docker exec ollama ollama list
-
-# Pull a new model
-docker exec ollama ollama pull codellama:13b
-
-# Remove a model
-docker exec ollama ollama rm <model-name>
-
-# Show model details
-docker exec ollama ollama show qwen3:32b
-
-# Check loaded models (in VRAM)
-docker exec ollama ollama ps
-```
-
-### API Usage
-
-```bash
-# Test API
-curl http://localhost:11434/api/tags
-
-# Generate completion
-curl http://localhost:11434/api/generate -d '{
-  "model": "qwen3:32b",
-  "prompt": "Write a Python function to check if a number is prime",
-  "stream": false
-}'
-
-# Chat format
-curl http://localhost:11434/api/chat -d '{
-  "model": "qwen3:32b",
-  "messages": [{"role": "user", "content": "Explain async/await in JavaScript"}],
-  "stream": false
-}'
-```
-
-## Configuration
-
-### Environment Variables (.env)
-
-The setup script auto-generates `.env` with detected values. Key settings:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VIDEO_GROUP_ID` | (detected) | System video group ID |
-| `RENDER_GROUP_ID` | (detected) | System render group ID |
-| `HSA_OVERRIDE_GFX_VERSION` | (detected) | GPU architecture override |
-| `OLLAMA_KEEP_ALIVE` | `10m` | How long to keep models in VRAM |
-| `OLLAMA_NUM_PARALLEL` | `2` | Concurrent requests |
-| `OLLAMA_MAX_LOADED_MODELS` | `1` | Max models in VRAM |
-| `OLLAMA_FLASH_ATTENTION` | `1` | Enable flash attention |
-| `OLLAMA_VERSION` | `rocm` | Docker image tag (for version pinning) |
-
-### Version Pinning
-
-By default, the setup uses the latest `rocm` tag. To pin to a specific version:
-
-```bash
-# Edit .env and add:
-OLLAMA_VERSION=rocm-0.3.6
-
-# Then restart:
-docker compose down
-docker compose pull
-docker compose up -d
-```
-
-Find available versions at: https://hub.docker.com/r/ollama/ollama/tags
-
-### Regenerating Configuration
-
-```bash
-# Regenerate .env with fresh detection
-./setup.sh --force-env
-
-# Re-run setup but skip model selection/downloads
-./setup.sh --skip-models
-
-# Non-interactive mode (use defaults, no prompts)
-./setup.sh --non-interactive
-
-# Fix permission issues (adds user to required groups)
-./setup.sh --fix-permissions
-
-# Continue setup despite warnings
-./setup.sh --ignore-warnings
-```
-
-### Command Line Options
-
-#### Commands
-
-| Option | Description |
-|--------|-------------|
-| `--status` | Show current Ollama status, GPU info, and loaded models |
-| `--update` | Update Ollama to the latest version |
-
-#### Setup Options
-
-| Option | Description |
-|--------|-------------|
-| `--skip-models` | Skip model selection and downloading |
-| `--force-env` | Regenerate .env file even if it exists |
-| `--non-interactive` | Use default selections, no prompts |
-| `--fix-permissions` | Add user to video/render/docker groups (requires sudo) |
-| `--ignore-warnings` | Continue setup even with permission warnings |
-| `--help` | Show help message |
-
-### Updating Ollama
-
-```bash
-# Check current status
-./setup.sh --status
-
-# Update to latest version
-./setup.sh --update
-```
-
-### Uninstalling
-
-```bash
-# Interactive mode - select what to remove
-./uninstall.sh
-
-# Remove everything (container, models, OpenCode config)
-./uninstall.sh --all
-
-# Preview what would be removed
-./uninstall.sh --dry-run
-
-# Skip confirmation prompts
-./uninstall.sh --force
-
-# Non-interactive mode (uses defaults)
-./uninstall.sh --non-interactive
-```
-
-### OpenCode Configuration
-
-Located at `~/.config/opencode/opencode.json`. The setup script automatically generates this config based on the models you select. 
-
-**Syncing after pulling new models:**
-
-```bash
-# Full sync - replaces config with currently installed models
-./sync-opencode-config.sh
-
-# Merge mode - adds new models but keeps manually added entries
-./sync-opencode-config.sh --merge
-
-# Preview what would be generated without writing
-./sync-opencode-config.sh --dry-run
-
-# Restore from a backup (interactive selection)
-./sync-opencode-config.sh --restore
-
-# Restore the most recent backup automatically
-./sync-opencode-config.sh --restore-latest
-
-# Force Docker mode (Linux) or native mode (macOS)
-./sync-opencode-config.sh --docker
-./sync-opencode-config.sh --native
-```
-
-**Note:** By default, the sync script replaces your entire config with only the models currently installed in Ollama. If you have manually added models (e.g., for a remote server), use `--merge` to preserve them.
-
-**Backups** are automatically created before each sync. Use `--restore` to see available backups and select one to restore, or `--restore-latest` to quickly revert to the most recent backup.
-
-**Model metadata** is stored in `models-metadata.conf`. This file contains display names and context limits for known models. Add new entries here when you add models to `models.conf`:
-
-```bash
-# Format: model:tag|display_name|context_limit|output_limit
-qwen3:14b|Qwen3 14B (Balanced)|32768|8192
-my-model:7b|My Custom Model|32768|8192
-```
-
-Unknown models (not in metadata) will still work with auto-generated display names and default limits.
-
-**Manual editing** - you can also manually add models to the config:
-
-```json
-{
-  "provider": {
-    "ollama": {
-      "models": {
-        "your-model:tag": {
-          "name": "Display Name",
-          "limit": { "context": 32768, "output": 8192 }
-        }
-      }
-    }
-  }
-}
-```
-
-## Performance Tuning
-
-### VRAM Management
-
-| GPU VRAM | Recommended Settings |
-|----------|---------------------|
-| 24GB | `NUM_PARALLEL=2-4`, 32B models work great |
-| 16GB | `NUM_PARALLEL=1-2`, 32B models may need q4 quantization |
-| 12GB | `NUM_PARALLEL=1`, prefer 14B or smaller models |
-| 8GB | `NUM_PARALLEL=1`, use 7B models or smaller |
-
-### Quantization Guide
-
-| Quantization | Quality | Size | Speed | Notes |
-|--------------|---------|------|-------|-------|
-| `q8_0` | Best | Largest | Slowest | Near-original quality |
-| `q6_K` | Excellent | Large | Medium | Recommended if VRAM allows |
-| `q5_K_M` | Very Good | Medium | Medium | Good balance |
-| `q4_K_M` | Good | Small | Fast | **Default for most models** |
-| `q4_K_S` | Good | Smaller | Fast | Slightly smaller |
-| `q3_K_S` | Acceptable | Tiny | Fastest | Quality loss noticeable |
-
-### Monitor GPU Usage
-
-```bash
-# Watch GPU during inference
-watch -n 1 rocm-smi
-
-# Or inside container
-docker exec ollama rocm-smi
-```
-
-## Troubleshooting
-
-### Quick Diagnostics
-
-```bash
-# Check overall status
-./setup.sh --status
-
-# This shows: container status, API health, GPU access, loaded models, storage usage
-```
-
-### Permission Issues (Most Common)
-
-**Symptoms**: "permission denied", GPU not accessible, container can't access `/dev/kfd`
-
-```bash
-# Automatic fix (recommended)
-./setup.sh --fix-permissions
-# Then LOG OUT and LOG BACK IN (required!)
-# Then run setup again:
-./setup.sh
-
-# Manual fix
-sudo usermod -aG video,render,docker $USER
-# Then LOG OUT and LOG BACK IN
-```
-
-### Dependency Check Failed
-
-Run the setup script to see what's missing:
-
-```bash
-./setup.sh
-```
-
-Common fixes:
-
-```bash
-# Docker not installed
-sudo pacman -S docker  # Arch
-sudo apt install docker.io  # Ubuntu
-sudo dnf install docker  # Fedora
-
-# Docker not running
-sudo systemctl start docker
-sudo systemctl enable docker
-
-# User not in docker group
-sudo usermod -aG docker $USER
-# Then log out and back in
-```
-
-### GPU Not Detected
-
-**Symptoms**: "AMD GPU (/dev/kfd) not found", models run on CPU
-
-```bash
-# Check devices exist
-ls -la /dev/kfd /dev/dri
-
-# Check amdgpu driver is loaded
-lsmod | grep amdgpu
-
-# If driver not loaded, try:
-sudo modprobe amdgpu
-
-# Check user groups
-groups  # Should show: video render
-
-# Check GPU is recognized
-lspci | grep -i vga
-```
-
-### Container Won't Start
-
-**Symptoms**: Container exits immediately, "error starting container"
-
-```bash
-# Check logs for specific error
-docker compose logs
-
-# Check if port is already in use
-ss -tlnp | grep 11434
-
-# If port in use, find and kill the process:
-sudo kill $(sudo lsof -t -i:11434)
-
-# Check if old container exists
-docker ps -a | grep ollama
-docker rm -f ollama  # Remove if exists
-
-# Verify GPU access works
-docker run --rm --device /dev/kfd --device /dev/dri ollama/ollama:rocm ollama --version
-```
-
-### Out of VRAM (OOM)
-
-**Symptoms**: "CUDA out of memory", inference crashes, very slow responses
-
-```bash
-# Check what's currently loaded
-docker exec ollama ollama ps
-
-# Unload a specific model
-curl http://localhost:11434/api/generate -d '{"model": "qwen3:32b", "keep_alive": 0}'
-
-# Reduce parallel requests in .env
-OLLAMA_NUM_PARALLEL=1
-OLLAMA_MAX_LOADED_MODELS=1
-
-# Then restart
-docker compose restart
-
-# Use smaller model or quantization
-docker exec ollama ollama pull qwen3:32b-q4_K_S  # Smaller quantization
-docker exec ollama ollama pull qwen3:14b         # Smaller model
-```
-
-### Slow Inference / Not Using GPU
-
-**Symptoms**: Very slow responses (minutes instead of seconds), CPU at 100%
-
-```bash
-# Watch GPU during inference - usage should spike
-watch -n 1 rocm-smi
-
-# Check model is loaded with GPU layers
-docker exec ollama ollama ps
-# Should show "100% GPU" or similar
-
-# Check GPU is accessible inside container
-docker exec ollama ls -la /dev/kfd /dev/dri
-
-# Check HSA version is correct for your GPU
-cat .env | grep HSA_OVERRIDE_GFX_VERSION
-# Compare with supported GPUs table above
-```
-
-### API Not Responding
-
-**Symptoms**: "connection refused", curl fails, OpenCode can't connect
-
-```bash
-# Check container is running
-docker ps | grep ollama
-
-# Check container health
-docker inspect ollama --format='{{.State.Health.Status}}'
-
-# Test API directly
-curl http://localhost:11434/api/tags
-
-# Check container logs
-docker compose logs --tail 50
-
-# Restart container
-docker compose restart
-
-# If still failing, full reset:
-docker compose down
-docker compose up -d
-```
-
-### Models Download Slowly or Fail
-
-**Symptoms**: Downloads hang, timeout errors, incomplete models
-
-```bash
-# Check disk space
-df -h ~/.ollama
-
-# Pull with verbose output
-docker exec ollama ollama pull qwen3:32b --verbose
-
-# If download interrupted, remove partial and retry
-docker exec ollama ollama rm qwen3:32b
-docker exec ollama ollama pull qwen3:32b
-
-# Check network connectivity
-docker exec ollama curl -I https://ollama.com
-```
-
-### OpenCode Can't Connect
-
-**Symptoms**: "connection refused" in OpenCode, model not found
-
-```bash
-# Verify Ollama is running
-curl http://localhost:11434/api/tags
-
-# Check OpenCode config exists and is valid
-cat ~/.config/opencode/opencode.json
-
-# Verify model names match what's installed
-docker exec ollama ollama list
-
-# Restart Ollama
-docker compose restart
-```
-
-### Wrong GPU Architecture / HSA Version
-
-**Symptoms**: "HSA_STATUS_ERROR", GPU errors in logs, fallback to CPU
-
-```bash
-# Check what GPU you have
-lspci | grep -i vga
-
-# Check current HSA setting
-cat .env | grep HSA_OVERRIDE_GFX_VERSION
-
-# Regenerate .env with fresh detection
-./setup.sh --force-env
-
-# Or manually edit .env with correct version:
-# RX 7900 series: 11.0.0
-# RX 7800/7700 series: 11.0.0
-# RX 7600: 11.0.0
-# RX 6900/6800 series: 10.3.0
-# RX 6700 series: 10.3.0
-# RX 6600 series: 10.3.0
-# RX 5700 series: 10.1.0
-```
-
-## Additional Models
-
-```bash
-# Alternative coding models
-docker exec ollama ollama pull deepseek-coder-v2:16b    # ~10GB
-docker exec ollama ollama pull codestral:22b            # ~13GB
-docker exec ollama ollama pull devstral:24b             # ~14GB
-
-# General purpose
-docker exec ollama ollama pull mistral-small:24b        # ~14GB
-
-# Specialized
-docker exec ollama ollama pull sqlcoder:15b             # SQL generation
-```
-
-After pulling new models, sync your OpenCode configuration:
-
-```bash
-./sync-opencode-config.sh
-```
-
-This will detect all installed models and regenerate `~/.config/opencode/opencode.json` with proper display names and context limits. Use `--merge` if you have manually added models you want to preserve.
 
 ## License
 

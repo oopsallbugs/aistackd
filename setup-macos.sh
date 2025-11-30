@@ -155,6 +155,111 @@ for arg in "$@"; do
 done
 
 # -----------------------------------------------------------------------------
+# Hardware Detection for Model Recommendations
+# -----------------------------------------------------------------------------
+
+DETECTED_MEMORY_GB=""
+IGNORE_HARDWARE_RECOMMENDATIONS=false
+
+get_usable_memory_gb() {
+    # Detect usable memory for models on macOS
+    # Apple Silicon uses unified memory - models can use ~70-75% of total RAM
+    # Intel Macs run on CPU and have similar constraints
+    
+    if [[ -n "$DETECTED_MEMORY_GB" ]]; then
+        echo "$DETECTED_MEMORY_GB"
+        return
+    fi
+    
+    local total_bytes total_gb usable_gb
+    
+    # Get total physical memory
+    total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo "0")
+    
+    if [[ "$total_bytes" -gt 0 ]]; then
+        # Convert to GB
+        total_gb=$((total_bytes / 1024 / 1024 / 1024))
+        # Use 70% as usable for models (leaves room for OS and other apps)
+        usable_gb=$((total_gb * 70 / 100))
+        DETECTED_MEMORY_GB=$usable_gb
+        echo "$usable_gb"
+    else
+        DETECTED_MEMORY_GB=0
+        echo "0"
+    fi
+}
+
+get_total_memory_gb() {
+    # Get total memory (for display purposes)
+    local total_bytes
+    total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo "0")
+    echo $((total_bytes / 1024 / 1024 / 1024))
+}
+
+get_model_size_gb() {
+    # Extract numeric GB value from model size string (e.g., "20GB" -> 20, "0.6GB" -> 0.6)
+    local size_str="$1"
+    echo "$size_str" | grep -oE '[0-9]+\.?[0-9]*' | head -1
+}
+
+get_model_hardware_status() {
+    # Returns hardware status for a model: "recommended", "may_struggle", or "wont_fit"
+    # Args: model_size_gb, usable_memory_gb
+    local model_size="$1"
+    local memory="$2"
+    
+    # If memory unknown or recommendations disabled, return empty
+    if [[ "$memory" == "0" || -z "$memory" || "$IGNORE_HARDWARE_RECOMMENDATIONS" == "true" ]]; then
+        echo ""
+        return
+    fi
+    
+    # Calculate thresholds
+    # - Model <= 80% usable memory = recommended
+    # - Model 80-100% usable memory = may struggle
+    # - Model > 100% usable memory = won't fit
+    
+    local threshold_recommended threshold_struggle
+    threshold_recommended=$((memory * 80 / 100))
+    threshold_struggle=$memory
+    
+    # Compare (integer comparison - use floor of model size)
+    local model_int
+    model_int=$(echo "$model_size" | cut -d. -f1)
+    [[ -z "$model_int" ]] && model_int=0
+    
+    if (( model_int <= threshold_recommended )); then
+        echo "recommended"
+    elif (( model_int <= threshold_struggle )); then
+        echo "may_struggle"
+    else
+        echo "wont_fit"
+    fi
+}
+
+format_hardware_tag() {
+    # Format the hardware status tag for display
+    # Args: status, memory_gb
+    local status="$1"
+    local memory="$2"
+    
+    case "$status" in
+        recommended)
+            echo -e "${GREEN}[✓ recommended - fits ${memory}GB memory]${NC}"
+            ;;
+        may_struggle)
+            echo -e "${YELLOW}[⚠ may struggle - exceeds ${memory}GB memory]${NC}"
+            ;;
+        wont_fit)
+            echo -e "${RED}[✗ won't fit - requires more memory]${NC}"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
 # Model Selection Functions
 # -----------------------------------------------------------------------------
 
@@ -162,6 +267,7 @@ declare -A MODEL_SELECTED
 declare -a MODEL_ORDER
 declare -A MODEL_INFO
 declare -A CATEGORY_SEEN
+declare -A CATEGORY_RECOMMENDED_FOUND
 
 # Model metadata for OpenCode config
 declare -A MODEL_DISPLAY_NAME
@@ -286,8 +392,21 @@ load_models_conf() {
         return
     fi
     
+    # First pass: check for config options
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Look for IGNORE_HARDWARE_RECOMMENDATIONS setting
+        if [[ "$line" =~ ^[[:space:]]*IGNORE_HARDWARE_RECOMMENDATIONS[[:space:]]*=[[:space:]]*(true|false) ]]; then
+            IGNORE_HARDWARE_RECOMMENDATIONS="${BASH_REMATCH[1]}"
+        fi
+    done < "$MODELS_CONF"
+    
+    # Get usable memory for hardware recommendations
+    local memory_gb
+    memory_gb=$(get_usable_memory_gb)
+    
     while IFS='|' read -r category model size description || [[ -n "$category" ]]; do
         [[ "$category" =~ ^[[:space:]]*# ]] && continue
+        [[ "$category" =~ ^[[:space:]]*IGNORE_HARDWARE_RECOMMENDATIONS ]] && continue
         [[ -z "$category" ]] && continue
         
         category="${category#"${category%%[![:space:]]*}"}"
@@ -302,24 +421,54 @@ load_models_conf() {
         MODEL_ORDER+=("$model")
         MODEL_INFO["$model"]="$category|$size|$description"
         
-        # Default: select smaller models suitable for macOS
-        # For any category, auto-select the first small model (8B or less)
-        # This works with any category name, not just predefined ones
-        if [[ -z "${CATEGORY_SEEN[$category]:-}" ]]; then
-            # First model in this category - check if it's small enough for macOS
-            case "$model" in
-                *:3b|*:7b|*:8b)
+        # Default selection logic:
+        # If IGNORE_HARDWARE_RECOMMENDATIONS=true: select first model in each category (with size limits for macOS)
+        # Otherwise: select first RECOMMENDED model in each category
+        
+        if [[ "$IGNORE_HARDWARE_RECOMMENDATIONS" == "true" ]]; then
+            # Original behavior: first model in category (with macOS size filter)
+            if [[ -z "${CATEGORY_SEEN[$category]:-}" ]]; then
+                if [[ "$category" == "small" ]]; then
+                    # Always select first small model
                     MODEL_SELECTED["$model"]=1
                     CATEGORY_SEEN[$category]=1
-                    ;;
-                *)
-                    # Larger model - don't auto-select, but mark category as seen
-                    # so we can still select the first small model if one comes later
-                    MODEL_SELECTED["$model"]=0
-                    ;;
-            esac
+                else
+                    # Only auto-select smaller models for macOS
+                    case "$model" in
+                        *:0.5b|*:1b|*:3b|*:7b|*:8b|*:135m|*:360m|*:latest)
+                            MODEL_SELECTED["$model"]=1
+                            CATEGORY_SEEN[$category]=1
+                            ;;
+                        *)
+                            MODEL_SELECTED["$model"]=0
+                            ;;
+                    esac
+                fi
+            else
+                MODEL_SELECTED["$model"]=0
+            fi
         else
-            MODEL_SELECTED["$model"]=0
+            # New behavior: first RECOMMENDED model in each category
+            local model_size_gb hw_status
+            model_size_gb=$(get_model_size_gb "$size")
+            hw_status=$(get_model_hardware_status "$model_size_gb" "$memory_gb")
+            
+            if [[ -z "${CATEGORY_RECOMMENDED_FOUND[$category]:-}" ]]; then
+                # Haven't found a recommended model for this category yet
+                if [[ "$hw_status" == "recommended" || -z "$hw_status" ]]; then
+                    # This model is recommended (or recommendations disabled) - select it
+                    MODEL_SELECTED["$model"]=1
+                    CATEGORY_RECOMMENDED_FOUND["$category"]=1
+                    CATEGORY_SEEN["$category"]=1
+                else
+                    # Not recommended - don't select
+                    MODEL_SELECTED["$model"]=0
+                    CATEGORY_SEEN["$category"]=1
+                fi
+            else
+                # Already found a recommended model for this category
+                MODEL_SELECTED["$model"]=0
+            fi
         fi
     done < "$MODELS_CONF"
 }
@@ -352,8 +501,19 @@ display_model_menu() {
     echo -e "${CYAN}${BOLD}  Select Models to Install${NC}"
     echo -e "${CYAN}${BOLD}============================================${NC}"
     echo ""
-    echo -e "${DIM}Use number keys to toggle selection, then press Enter to continue${NC}"
-    echo -e "${DIM}Tip: Start with smaller models (8B or less) for best performance${NC}"
+    
+    # Show memory info if detected
+    local memory_gb total_gb
+    memory_gb=$(get_usable_memory_gb)
+    total_gb=$(get_total_memory_gb)
+    
+    if [[ "$memory_gb" -gt 0 && "$IGNORE_HARDWARE_RECOMMENDATIONS" != "true" ]]; then
+        echo -e "  ${BOLD}System Memory:${NC} ${GREEN}${total_gb}GB${NC} (${memory_gb}GB usable for models)"
+        echo ""
+    else
+        echo -e "${DIM}Use number keys to toggle selection, then press Enter to continue${NC}"
+        echo -e "${DIM}Tip: Start with smaller models (8B or less) for best performance${NC}"
+    fi
     echo ""
     
     local current_category=""
@@ -368,6 +528,7 @@ display_model_menu() {
             current_category="$category"
             echo ""
             case "$category" in
+                small)        echo -e "  ${BOLD}Small/Fast:${NC}" ;;
                 autocomplete) echo -e "  ${BOLD}IDE Autocomplete:${NC}" ;;
                 general)      echo -e "  ${BOLD}General Purpose:${NC}" ;;
                 reasoning)    echo -e "  ${BOLD}Reasoning:${NC}" ;;
@@ -384,8 +545,19 @@ display_model_menu() {
             checkbox="[ ]"
         fi
         
-        printf "    %b ${YELLOW}%2d${NC}) %-28s ${DIM}(~%-5s)${NC} %s\n" \
-            "$checkbox" "$index" "$model" "$size" "$description"
+        # Get hardware status tag
+        local model_size_gb hw_status hw_tag=""
+        model_size_gb=$(get_model_size_gb "$size")
+        hw_status=$(get_model_hardware_status "$model_size_gb" "$memory_gb")
+        
+        case "$hw_status" in
+            recommended)  hw_tag=" ${GREEN}[✓ recommended]${NC}" ;;
+            may_struggle) hw_tag=" ${YELLOW}[⚠ may struggle]${NC}" ;;
+            wont_fit)     hw_tag=" ${RED}[✗ won't fit]${NC}" ;;
+        esac
+        
+        printf "    %b ${YELLOW}%2d${NC}) %-28s ${DIM}(~%-5s)${NC} %s%b\n" \
+            "$checkbox" "$index" "$model" "$size" "$description" "$hw_tag"
         
         index=$((index + 1))
     done
@@ -595,7 +767,7 @@ if [[ " ${MISSING_REQUIRED[*]} " =~ " xcode-cli " ]]; then
     xcode-select --install 2>/dev/null || true
     echo ""
     print_warning "After installation completes, run this script again:"
-    echo "    ./setup-macos.sh"
+    echo "    /opt/homebrew/bin/bash ./setup-macos.sh"
     echo ""
     exit 1
 fi
@@ -766,11 +938,15 @@ if [ "$SKIP_MODELS" = false ]; then
         echo ""
         
         if [ "$NON_INTERACTIVE" = false ]; then
-            print_warning "This may take a while depending on your connection."
-            read -p "Proceed with download? (Y/n) " -n 1 -r
+            echo -e "  ${DIM}Download time depends on your internet speed.${NC}"
+            echo -e "  ${DIM}Rough estimate: 5-15 minutes per 10GB on typical broadband.${NC}"
+            echo -e "  ${DIM}Downloads can be resumed if interrupted.${NC}"
+            echo ""
+            echo -e "  Press ${BOLD}Enter${NC} to start downloading, or ${BOLD}n${NC} to skip for now."
+            read -p "  Download now? [Y/n] " -n 1 -r
             echo
             if [[ $REPLY =~ ^[Nn]$ ]]; then
-                print_status "Skipping downloads. Pull models later with:"
+                print_status "Skipping downloads. You can download models later with:"
                 echo "    ollama pull <model-name>"
                 SELECTED_MODELS=()
             fi
