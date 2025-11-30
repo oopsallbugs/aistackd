@@ -1,7 +1,11 @@
 ---
 # Ollama with AMD ROCm GPU Support
+#
+# IMPORTANT: This file requires a .env file with GPU-specific settings.
+# Run ./setup.sh first to generate .env, or copy .env.example and customize it.
+# Running "docker compose up" without .env will fail.
+#
 # Configuration loaded from .env file - run setup.sh to generate it
-
 services:
   ollama:
     image: ollama/ollama:${OLLAMA_VERSION:-rocm}

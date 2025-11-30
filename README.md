@@ -18,6 +18,8 @@ cd ollama-rocm
 ./setup.sh
 ```
 
+> **Important**: The setup script auto-generates a `.env` file with your GPU-specific settings. Do not run `docker compose up` directly without first running `./setup.sh` — it will fail without the generated `.env` file.
+
 ### macOS Setup
 
 ```bash

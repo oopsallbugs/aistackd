@@ -1837,7 +1837,11 @@ echo "  1. Run 'opencode' in any project directory"
 echo "  2. Use '/models' to select a local Ollama model"
 echo ""
 echo -e "${BOLD}Direct CLI chat:${NC}"
-echo "  docker exec -it ollama ollama run qwen3:32b"
+if [[ ${#CONFIG_MODELS[@]} -gt 0 ]]; then
+    echo "  docker exec -it ollama ollama run ${CONFIG_MODELS[0]}"
+else
+    echo "  docker exec -it ollama ollama run <model-name>"
+fi
 echo ""
 
 if [ "$OPENCODE_INSTALLED" = false ]; then
