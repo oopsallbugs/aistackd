@@ -71,6 +71,57 @@ print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 print_header() { echo -e "\n${CYAN}${BOLD}$1${NC}"; }
 
+# Spinner for operations without their own progress indicator
+SPINNER_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+SPINNER_PID=""
+
+cleanup_spinner() {
+    if [[ -n "$SPINNER_PID" ]] && kill -0 "$SPINNER_PID" 2>/dev/null; then
+        kill "$SPINNER_PID" 2>/dev/null
+        wait "$SPINNER_PID" 2>/dev/null
+    fi
+    SPINNER_PID=""
+    printf "\r\033[K"  # Clear the line
+}
+
+trap cleanup_spinner EXIT
+
+start_spinner() {
+    local message="$1"
+    local start_time=$SECONDS
+    (
+        local i=0
+        local spin_len=${#SPINNER_CHARS}
+        while true; do
+            local elapsed=$((SECONDS - start_time))
+            printf "\r  ${CYAN}%s${NC} %s ${DIM}(%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$elapsed"
+            i=$(( (i + 1) % spin_len ))
+            sleep 0.1
+        done
+    ) &
+    SPINNER_PID=$!
+}
+
+stop_spinner() {
+    local success=${1:-true}
+    local message="${2:-}"
+    
+    if [[ -n "$SPINNER_PID" ]]; then
+        kill "$SPINNER_PID" 2>/dev/null
+        wait "$SPINNER_PID" 2>/dev/null
+        SPINNER_PID=""
+    fi
+    printf "\r\033[K"  # Clear the line
+    
+    if [[ -n "$message" ]]; then
+        if [[ "$success" == "true" ]]; then
+            print_success "$message"
+        else
+            print_error "$message"
+        fi
+    fi
+}
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -457,6 +508,48 @@ get_selected_models() {
     echo "${selected[@]}"
 }
 
+has_small_model_selected() {
+    # Check if any model from the 'small' category is selected
+    for model in "${MODEL_ORDER[@]}"; do
+        if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
+            IFS='|' read -r category _ _ <<< "${MODEL_INFO[$model]}"
+            if [[ "$category" == "small" ]]; then
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+get_smallest_selected_model() {
+    # Returns the smallest selected model (preferring 'small' category)
+    local smallest_model=""
+    local smallest_size=999999
+    
+    for model in "${MODEL_ORDER[@]}"; do
+        if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
+            IFS='|' read -r category size _ <<< "${MODEL_INFO[$model]}"
+            # Extract numeric value from size (e.g., "0.6GB" -> 0.6)
+            local num
+            num=$(echo "$size" | grep -oE '[0-9]+\.?[0-9]*')
+            
+            # Prefer small category models, otherwise use size
+            if [[ "$category" == "small" ]]; then
+                echo "$model"
+                return
+            fi
+            
+            # Track smallest model as fallback
+            if (( $(echo "$num < $smallest_size" | bc -l) )); then
+                smallest_size=$num
+                smallest_model=$model
+            fi
+        fi
+    done
+    
+    echo "$smallest_model"
+}
+
 # -----------------------------------------------------------------------------
 # GPU Detection Functions
 # -----------------------------------------------------------------------------
@@ -644,20 +737,17 @@ if [ "$RUN_UPDATE" = true ]; then
         docker compose up -d
         
         # Wait for startup
-        print_status "Waiting for Ollama to start..."
+        start_spinner "Waiting for Ollama to start"
         ATTEMPT=0
         while ! curl -sf http://localhost:11434/api/tags &>/dev/null; do
             ATTEMPT=$((ATTEMPT + 1))
             if [ $ATTEMPT -ge 30 ]; then
-                print_error "Ollama failed to start after update"
+                stop_spinner false "Ollama failed to start after update"
                 exit 1
             fi
             sleep 1
-            echo -n "."
         done
-        echo ""
-        
-        print_success "Ollama updated successfully"
+        stop_spinner true "Ollama updated successfully"
         
         # Show new version
         OLLAMA_VERSION=$(docker exec ollama ollama --version 2>/dev/null || echo "unknown")
@@ -1099,6 +1189,7 @@ fi
 print_success "Directory ready"
 
 print_status "Pulling Ollama ROCm Docker image..."
+print_status "This may take a few minutes on first run..."
 if ! docker compose pull 2>&1; then
     print_error "Failed to pull Docker image"
     echo ""
@@ -1113,6 +1204,7 @@ if ! docker compose pull 2>&1; then
     echo "  - Retry later if rate limited"
     exit 1
 fi
+print_success "Docker image pulled"
 
 print_status "Starting Ollama container..."
 if ! docker compose up -d 2>&1; then
@@ -1137,15 +1229,16 @@ if ! docker compose up -d 2>&1; then
     echo "View detailed logs: docker compose logs"
     exit 1
 fi
+print_success "Container started"
 
 print_status "Waiting for Ollama to start..."
 MAX_ATTEMPTS=60
 ATTEMPT=0
+start_spinner "Waiting for Ollama API to respond"
 while ! curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; do
     ATTEMPT=$((ATTEMPT + 1))
     if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
-        echo ""
-        print_error "Ollama failed to start after ${MAX_ATTEMPTS} seconds"
+        stop_spinner false "Ollama failed to start after ${MAX_ATTEMPTS} seconds"
         echo ""
         echo "Troubleshooting:"
         echo "  1. Check container status: docker ps -a | grep ollama"
@@ -1169,10 +1262,8 @@ while ! curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; do
         exit 1
     fi
     sleep 1
-    echo -n "."
 done
-echo ""
-print_success "Ollama is running"
+stop_spinner true "Ollama is running"
 
 # Verify GPU is being used
 print_status "Verifying GPU access..."
@@ -1201,6 +1292,26 @@ if [ "$SKIP_MODELS" = false ]; then
     if [ "$NON_INTERACTIVE" = false ]; then
         # Interactive model selection using gum
         interactive_model_selection
+        
+        # Warn if no small model selected for inference testing
+        if ! has_small_model_selected; then
+            TEST_MODEL=$(get_smallest_selected_model)
+            if [ -n "$TEST_MODEL" ]; then
+                echo ""
+                print_warning "No small model selected for inference testing."
+                print_status "The inference test will use '$TEST_MODEL' which may take longer."
+                echo ""
+                echo -e "  ${DIM}Tip: Add a model from the 'Small/Fast' category (e.g., tinyllama)${NC}"
+                echo -e "  ${DIM}for quick setup verification.${NC}"
+                echo ""
+                read -p "Continue without a small model? (Y/n) " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Nn]$ ]]; then
+                    print_status "Returning to model selection..."
+                    interactive_model_selection
+                fi
+            fi
+        fi
     else
         print_status "Using default model selection (--non-interactive)"
     fi
@@ -1316,15 +1427,58 @@ print_status "Run ./sync-opencode-config.sh to refresh config after pulling new 
 
 print_header "Testing GPU Acceleration"
 
-INSTALLED_MODELS=$(docker exec ollama ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' | head -1)
-if [ -n "$INSTALLED_MODELS" ]; then
-    print_status "Running quick inference test with $INSTALLED_MODELS..."
-    TEST_RESPONSE=$(docker exec ollama ollama run "$INSTALLED_MODELS" "Reply with exactly: GPU TEST OK" 2>&1 | head -3)
+# Find the best model for testing (prefer small category)
+TEST_MODEL=""
+if [[ ${#MODEL_ORDER[@]} -gt 0 ]] && has_small_model_selected; then
+    TEST_MODEL=$(get_smallest_selected_model)
+fi
+
+# Fallback: use first installed model
+if [ -z "$TEST_MODEL" ]; then
+    TEST_MODEL=$(docker exec ollama ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' | head -1)
+fi
+
+if [ -n "$TEST_MODEL" ]; then
+    # Check if this is a small model for timing expectations
+    IS_SMALL_MODEL=false
+    if [[ ${#MODEL_INFO[@]} -gt 0 ]]; then
+        IFS='|' read -r category _ _ <<< "${MODEL_INFO[$TEST_MODEL]:-}"
+        [[ "$category" == "small" ]] && IS_SMALL_MODEL=true
+    fi
+    
+    if [ "$IS_SMALL_MODEL" = true ]; then
+        print_status "Running quick inference test with $TEST_MODEL (small model)..."
+    else
+        print_status "Running inference test with $TEST_MODEL..."
+        print_warning "This may take a minute since no small model was selected."
+    fi
+    
+    # Run the inference test with spinner (first run loads model into VRAM)
+    TEST_OUTPUT_FILE=$(mktemp)
+    start_spinner "Loading model into VRAM and running inference"
+    START_TIME=$(date +%s)
+    docker exec ollama ollama run "$TEST_MODEL" "Reply with exactly: GPU TEST OK" > "$TEST_OUTPUT_FILE" 2>&1 || true
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    stop_spinner true
+    
+    # Show the response
+    TEST_RESPONSE=$(head -5 "$TEST_OUTPUT_FILE")
+    rm -f "$TEST_OUTPUT_FILE"
+    
     echo "$TEST_RESPONSE"
-    print_success "Inference test complete"
+    echo ""
+    print_success "Inference test complete (${DURATION}s)"
+    
+    # Provide feedback on GPU vs CPU
+    if docker exec ollama ls /dev/kfd &>/dev/null; then
+        print_success "GPU acceleration is available"
+    else
+        print_warning "Running on CPU (GPU device not detected)"
+    fi
 else
     print_warning "No models installed yet - skipping inference test"
-    print_status "Run a test later with: docker exec ollama ollama run qwen2.5-coder:3b 'Hello'"
+    print_status "Run a test later with: docker exec ollama ollama run tinyllama 'Hello'"
 fi
 
 # -----------------------------------------------------------------------------

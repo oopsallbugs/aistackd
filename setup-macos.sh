@@ -70,6 +70,57 @@ print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 print_header() { echo -e "\n${CYAN}${BOLD}$1${NC}"; }
 
+# Spinner for operations without their own progress indicator
+SPINNER_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+SPINNER_PID=""
+
+cleanup_spinner() {
+    if [[ -n "$SPINNER_PID" ]] && kill -0 "$SPINNER_PID" 2>/dev/null; then
+        kill "$SPINNER_PID" 2>/dev/null
+        wait "$SPINNER_PID" 2>/dev/null
+    fi
+    SPINNER_PID=""
+    printf "\r\033[K"  # Clear the line
+}
+
+trap cleanup_spinner EXIT
+
+start_spinner() {
+    local message="$1"
+    local start_time=$SECONDS
+    (
+        local i=0
+        local spin_len=${#SPINNER_CHARS}
+        while true; do
+            local elapsed=$((SECONDS - start_time))
+            printf "\r  ${CYAN}%s${NC} %s ${DIM}(%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$elapsed"
+            i=$(( (i + 1) % spin_len ))
+            sleep 0.1
+        done
+    ) &
+    SPINNER_PID=$!
+}
+
+stop_spinner() {
+    local success=${1:-true}
+    local message="${2:-}"
+    
+    if [[ -n "$SPINNER_PID" ]]; then
+        kill "$SPINNER_PID" 2>/dev/null
+        wait "$SPINNER_PID" 2>/dev/null
+        SPINNER_PID=""
+    fi
+    printf "\r\033[K"  # Clear the line
+    
+    if [[ -n "$message" ]]; then
+        if [[ "$success" == "true" ]]; then
+            print_success "$message"
+        else
+            print_error "$message"
+        fi
+    fi
+}
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -405,6 +456,48 @@ get_selected_models() {
     echo "${selected[@]}"
 }
 
+has_small_model_selected() {
+    # Check if any model from the 'small' category is selected
+    for model in "${MODEL_ORDER[@]}"; do
+        if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
+            IFS='|' read -r category _ _ <<< "${MODEL_INFO[$model]}"
+            if [[ "$category" == "small" ]]; then
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+get_smallest_selected_model() {
+    # Returns the smallest selected model (preferring 'small' category)
+    local smallest_model=""
+    local smallest_size=999999
+    
+    for model in "${MODEL_ORDER[@]}"; do
+        if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
+            IFS='|' read -r category size _ <<< "${MODEL_INFO[$model]}"
+            # Extract numeric value from size (e.g., "0.6GB" -> 0.6)
+            local num
+            num=$(echo "$size" | grep -oE '[0-9]+\.?[0-9]*')
+            
+            # Prefer small category models, otherwise use size
+            if [[ "$category" == "small" ]]; then
+                echo "$model"
+                return
+            fi
+            
+            # Track smallest model as fallback
+            if (( $(echo "$num < $smallest_size" | bc -l 2>/dev/null || echo "0") )); then
+                smallest_size=$num
+                smallest_model=$model
+            fi
+        fi
+    done
+    
+    echo "$smallest_model"
+}
+
 # -----------------------------------------------------------------------------
 # Banner
 # -----------------------------------------------------------------------------
@@ -599,13 +692,13 @@ else
     fi
     
     # Wait for Ollama to start
-    print_status "Waiting for Ollama to start..."
+    start_spinner "Waiting for Ollama to start"
     MAX_ATTEMPTS=30
     ATTEMPT=0
     while ! curl -sf http://localhost:11434/api/tags &>/dev/null; do
         ATTEMPT=$((ATTEMPT + 1))
         if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
-            print_error "Ollama failed to start after ${MAX_ATTEMPTS} seconds"
+            stop_spinner false "Ollama failed to start after ${MAX_ATTEMPTS} seconds"
             echo ""
             echo "Try starting manually:"
             echo "  ollama serve"
@@ -613,10 +706,8 @@ else
             exit 1
         fi
         sleep 1
-        echo -n "."
     done
-    echo ""
-    print_success "Ollama is running"
+    stop_spinner true "Ollama is running"
 fi
 
 # -----------------------------------------------------------------------------
@@ -633,6 +724,26 @@ if [ "$SKIP_MODELS" = false ]; then
         print_status "Loading model selection menu..."
         sleep 1
         interactive_model_selection
+        
+        # Warn if no small model selected for inference testing
+        if ! has_small_model_selected; then
+            TEST_MODEL=$(get_smallest_selected_model)
+            if [ -n "$TEST_MODEL" ]; then
+                echo ""
+                print_warning "No small model selected for inference testing."
+                print_status "The inference test will use '$TEST_MODEL' which may take longer."
+                echo ""
+                echo -e "  ${DIM}Tip: Add a model from the 'Small/Fast' category (e.g., tinyllama)${NC}"
+                echo -e "  ${DIM}for quick setup verification.${NC}"
+                echo ""
+                read -p "Continue without a small model? (Y/n) " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Nn]$ ]]; then
+                    print_status "Returning to model selection..."
+                    interactive_model_selection
+                fi
+            fi
+        fi
     else
         print_status "Using default model selection (--non-interactive)"
     fi
@@ -746,15 +857,58 @@ print_status "Run ./sync-opencode-config.sh to refresh config after pulling new 
 
 print_header "Testing Ollama"
 
-INSTALLED_MODELS=$(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' | head -1)
-if [ -n "$INSTALLED_MODELS" ]; then
-    print_status "Running quick inference test with $INSTALLED_MODELS..."
-    TEST_RESPONSE=$(ollama run "$INSTALLED_MODELS" "Reply with exactly: TEST OK" 2>&1 | head -3)
+# Find the best model for testing (prefer small category)
+TEST_MODEL=""
+if [[ ${#MODEL_ORDER[@]} -gt 0 ]] && has_small_model_selected; then
+    TEST_MODEL=$(get_smallest_selected_model)
+fi
+
+# Fallback: use first installed model
+if [ -z "$TEST_MODEL" ]; then
+    TEST_MODEL=$(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' | head -1)
+fi
+
+if [ -n "$TEST_MODEL" ]; then
+    # Check if this is a small model for timing expectations
+    IS_SMALL_MODEL=false
+    if [[ ${#MODEL_INFO[@]} -gt 0 ]]; then
+        IFS='|' read -r category _ _ <<< "${MODEL_INFO[$TEST_MODEL]:-}"
+        [[ "$category" == "small" ]] && IS_SMALL_MODEL=true
+    fi
+    
+    if [ "$IS_SMALL_MODEL" = true ]; then
+        print_status "Running quick inference test with $TEST_MODEL (small model)..."
+    else
+        print_status "Running inference test with $TEST_MODEL..."
+        print_warning "This may take a minute since no small model was selected."
+    fi
+    
+    # Run the inference test with spinner (first run loads model into memory)
+    TEST_OUTPUT_FILE=$(mktemp)
+    start_spinner "Loading model and running inference"
+    START_TIME=$(date +%s)
+    ollama run "$TEST_MODEL" "Reply with exactly: TEST OK" > "$TEST_OUTPUT_FILE" 2>&1 || true
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    stop_spinner true
+    
+    # Show the response
+    TEST_RESPONSE=$(head -5 "$TEST_OUTPUT_FILE")
+    rm -f "$TEST_OUTPUT_FILE"
+    
     echo "$TEST_RESPONSE"
-    print_success "Inference test complete"
+    echo ""
+    print_success "Inference test complete (${DURATION}s)"
+    
+    # Provide feedback on acceleration
+    if [ "$APPLE_SILICON" = true ]; then
+        print_success "Metal GPU acceleration is available"
+    else
+        print_status "Running on CPU (Intel Mac)"
+    fi
 else
     print_warning "No models installed yet - skipping inference test"
-    print_status "Run a test later with: ollama run qwen3:8b 'Hello'"
+    print_status "Run a test later with: ollama run tinyllama 'Hello'"
 fi
 
 # -----------------------------------------------------------------------------

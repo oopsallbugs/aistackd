@@ -30,6 +30,57 @@ print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 print_header() { echo -e "\n${CYAN}${BOLD}$1${NC}"; }
 
+# Spinner for operations without their own progress indicator
+SPINNER_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+SPINNER_PID=""
+
+cleanup_spinner() {
+    if [[ -n "$SPINNER_PID" ]] && kill -0 "$SPINNER_PID" 2>/dev/null; then
+        kill "$SPINNER_PID" 2>/dev/null
+        wait "$SPINNER_PID" 2>/dev/null
+    fi
+    SPINNER_PID=""
+    printf "\r\033[K"  # Clear the line
+}
+
+trap cleanup_spinner EXIT
+
+start_spinner() {
+    local message="$1"
+    local start_time=$SECONDS
+    (
+        local i=0
+        local spin_len=${#SPINNER_CHARS}
+        while true; do
+            local elapsed=$((SECONDS - start_time))
+            printf "\r  ${CYAN}%s${NC} %s ${DIM}(%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$elapsed"
+            i=$(( (i + 1) % spin_len ))
+            sleep 0.1
+        done
+    ) &
+    SPINNER_PID=$!
+}
+
+stop_spinner() {
+    local success=${1:-true}
+    local message="${2:-}"
+    
+    if [[ -n "$SPINNER_PID" ]]; then
+        kill "$SPINNER_PID" 2>/dev/null
+        wait "$SPINNER_PID" 2>/dev/null
+        SPINNER_PID=""
+    fi
+    printf "\r\033[K"  # Clear the line
+    
+    if [[ -n "$message" ]]; then
+        if [[ "$success" == "true" ]]; then
+            print_success "$message"
+        else
+            print_error "$message"
+        fi
+    fi
+}
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -409,15 +460,18 @@ fi
 
 # Remove models directory
 if should_remove "models"; then
-    print_status "Removing models directory: $OLLAMA_DATA_DIR"
     if [ "$DRY_RUN" = false ]; then
+        start_spinner "Removing models directory: $OLLAMA_DATA_DIR"
         # Try normal removal first, fall back to sudo if permission denied
         if ! rm -rf "$OLLAMA_DATA_DIR" 2>/dev/null; then
+            stop_spinner false
             print_warning "Permission denied, trying with sudo..."
             sudo rm -rf "$OLLAMA_DATA_DIR"
         fi
+        stop_spinner true "Models removed"
+    else
+        print_status "Would remove: $OLLAMA_DATA_DIR"
     fi
-    print_success "Models removed"
 fi
 
 # Remove OpenCode config
