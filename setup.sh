@@ -304,8 +304,8 @@ get_model_hardware_status() {
         threshold_recommended=$((vram * 80 / 100))
     fi
     
-    # Compare (using bc for float comparison)
-    local model_int vram_int
+    # Compare
+    local model_int
     model_int=$(echo "$model_size" | cut -d. -f1)
     [[ -z "$model_int" ]] && model_int=0
     
@@ -1150,7 +1150,6 @@ if [ ${#MISSING_REQUIRED[@]} -gt 0 ]; then
     
     # Track if we can offer to fix some issues automatically
     CAN_AUTO_FIX=false
-    NEEDS_LOGOUT=false
     
     for dep in "${MISSING_REQUIRED[@]}"; do
         case $dep in

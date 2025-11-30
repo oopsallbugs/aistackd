@@ -7,7 +7,7 @@ Run local AI models with GPU acceleration. Supports:
 
 ## Quick Start
 
-### Linux (AMD GPU)
+### Linux Setup
 
 ```bash
 # 1. Clone the repository
@@ -18,7 +18,7 @@ cd ollama-rocm
 ./setup.sh
 ```
 
-### macOS
+### macOS Setup
 
 ```bash
 # 1. Clone the repository
@@ -43,7 +43,7 @@ The setup scripts will:
 
 ## Requirements
 
-### Linux (AMD GPU)
+### Linux with AMD GPU
 
 | Requirement | Notes |
 |-------------|-------|
@@ -55,7 +55,7 @@ The setup scripts will:
 
 The setup script will check for everything else and guide you through fixing any issues.
 
-### macOS
+### macOS Requirements
 
 | Requirement | Notes |
 |-------------|-------|
@@ -110,7 +110,7 @@ coding|qwen3-coder:30b|18GB|Newest for agentic tasks and coding
 
 **Categories**: You can use any category name. Built-in ones are: `small`, `autocomplete`, `general`, `reasoning`, `coding`, `specialized`
 
-**Finding more models**: Browse https://ollama.com/library
+**Finding more models**: Browse <https://ollama.com/library>
 
 ### Adding More Models Later
 
@@ -276,6 +276,7 @@ See the [detailed troubleshooting section](#detailed-troubleshooting) below for 
 ./setup.sh --skip-models       # Re-run setup without model selection
 ./setup.sh --force-env         # Regenerate configuration
 ./setup.sh --non-interactive   # Use defaults, no prompts
+./setup.sh --ignore-warnings   # Continue despite permission warnings
 ```
 
 ### Hardware Recommendations Toggle
@@ -305,9 +306,10 @@ Located at `~/.config/opencode/opencode.json`. This is automatically generated b
 To sync after adding new models:
 
 ```bash
-./sync-opencode-config.sh          # Replace config with installed models
-./sync-opencode-config.sh --merge  # Add new models, keep manual additions
-./sync-opencode-config.sh --dry-run # Preview without writing
+./sync-opencode-config.sh              # Replace config with installed models
+./sync-opencode-config.sh --merge      # Add new models, keep manual additions
+./sync-opencode-config.sh --dry-run    # Preview without writing
+./sync-opencode-config.sh --restore    # List and restore from backups
 ```
 
 ### Uninstalling
@@ -441,7 +443,7 @@ cat ~/.config/opencode/opencode.json
 
 ## Project Structure
 
-```
+```text
 ollama-rocm/
 ├── setup.sh                  # Main setup script (Linux)
 ├── setup-macos.sh            # macOS setup script

@@ -380,15 +380,15 @@ load_models_conf() {
     if [[ ! -f "$MODELS_CONF" ]]; then
         print_warning "models.conf not found, using default models"
         # Default models if config doesn't exist
-        MODEL_ORDER=("qwen2.5-coder:3b" "qwen3:8b" "deepseek-r1:8b" "qwen3-coder:14b")
+        MODEL_ORDER=("qwen2.5-coder:3b" "qwen3:8b" "deepseek-r1:8b" "qwen2.5-coder:14b")
         MODEL_INFO["qwen2.5-coder:3b"]="autocomplete|2GB|Fast code completion for IDE"
         MODEL_INFO["qwen3:8b"]="general|5GB|Good all-rounder for limited resources"
         MODEL_INFO["deepseek-r1:8b"]="reasoning|5GB|Reasoning model, smaller size"
-        MODEL_INFO["qwen3-coder:14b"]="coding|9GB|Coding focus, moderate size"
+        MODEL_INFO["qwen2.5-coder:14b"]="coding|9GB|Coding focus, moderate size"
         MODEL_SELECTED["qwen2.5-coder:3b"]=1
         MODEL_SELECTED["qwen3:8b"]=1
         MODEL_SELECTED["deepseek-r1:8b"]=0
-        MODEL_SELECTED["qwen3-coder:14b"]=0
+        MODEL_SELECTED["qwen2.5-coder:14b"]=0
         return
     fi
     
