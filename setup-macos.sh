@@ -37,6 +37,25 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     if [[ "$(uname -s)" == "Linux" ]]; then
         echo "For Linux with AMD GPUs, use the main setup script:"
         echo "  ./setup.sh"
+    elif [[ "$(uname -s)" =~ MINGW|MSYS|CYGWIN ]] || [[ -n "${OS:-}" && "${OS}" == "Windows_NT" ]]; then
+        echo "Windows detected."
+        echo ""
+        echo "It would be a mass pro gamer move for you to install Linux right now."
+        echo ""
+        echo "Your options:"
+        echo "  1. WSL2 with Ubuntu (cringe)"
+        echo "  2. Dual boot Linux (acceptable)"
+        echo "  3. Full Linux install (legendary)"
+        echo ""
+        echo "Get started:"
+        echo "  Stock standard: https://ubuntu.com/download"
+        echo "  If you are an insane person: https://omarchy.org/"
+        echo "  Giga chads: https://archlinux.org/download/"
+        echo ""
+        echo "Then run ./setup.sh inside your new premium Linux environment."
+        echo ""
+        echo "Alternatively, if you insist on staying in macOS territory:"
+        echo "  Get a Mac, then use: ./setup-macos.sh"
     else
         echo "For other platforms, see: https://ollama.com/download"
     fi
@@ -132,15 +151,23 @@ OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
 # Parse command line arguments
 SKIP_MODELS=false
 NON_INTERACTIVE=false
+RUN_STATUS=false
+RUN_UPDATE=false
 SELECTED_MODELS=()
 for arg in "$@"; do
     case $arg in
         --skip-models) SKIP_MODELS=true ;;
         --non-interactive) NON_INTERACTIVE=true ;;
+        --status) RUN_STATUS=true ;;
+        --update) RUN_UPDATE=true ;;
         --help|-h)
             echo "Usage: ./setup-macos.sh [OPTIONS]"
             echo ""
-            echo "Options:"
+            echo "Commands:"
+            echo "  --status            Show current Ollama status and configuration"
+            echo "  --update            Update Ollama to latest version"
+            echo ""
+            echo "Setup Options:"
             echo "  --skip-models       Skip model selection and downloading"
             echo "  --non-interactive   Use default selections (no prompts)"
             echo "  --help, -h          Show this help message"
@@ -148,11 +175,44 @@ for arg in "$@"; do
             echo "This script installs Ollama natively on macOS using Homebrew."
             echo "macOS uses Metal for GPU acceleration (Apple Silicon) or CPU."
             echo ""
+            echo "Examples:"
+            echo "  ./setup-macos.sh                  # Interactive setup"
+            echo "  ./setup-macos.sh --status         # Check current status"
+            echo "  ./setup-macos.sh --update         # Update Ollama"
+            echo "  ./setup-macos.sh --skip-models    # Setup without downloading models"
+            echo "  ./setup-macos.sh --non-interactive # Automated setup with defaults"
+            echo ""
             echo "For Linux with AMD GPUs, use ./setup.sh instead."
             exit 0
             ;;
     esac
 done
+
+# -----------------------------------------------------------------------------
+# Error Handling
+# -----------------------------------------------------------------------------
+
+trap 'handle_error $? $LINENO' ERR
+
+handle_error() {
+    local exit_code=$1
+    local line_number=$2
+    echo ""
+    print_error "Something went wrong during setup."
+    echo ""
+    echo "Common solutions:"
+    echo "  1. Make sure Ollama service is running:"
+    echo "     brew services start ollama"
+    echo ""
+    echo "  2. Check Homebrew is working:"
+    echo "     brew doctor"
+    echo ""
+    echo "  3. Try running setup again:"
+    echo "     /opt/homebrew/bin/bash ./setup-macos.sh"
+    echo ""
+    echo -e "${DIM}(Technical: error on line $line_number, exit code $exit_code)${NC}"
+    exit "$exit_code"
+}
 
 # -----------------------------------------------------------------------------
 # Hardware Detection for Model Recommendations
@@ -494,17 +554,32 @@ count_selected() {
     echo "$count"
 }
 
+# Get list of already installed models from Ollama
+get_installed_models() {
+    ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' || true
+}
+
+# Check if a model is already installed
+is_model_installed() {
+    local model="$1"
+    local installed_models="$2"
+    echo "$installed_models" | grep -qx "$model"
+}
+
 # -----------------------------------------------------------------------------
-# Gum-based Model Selection (used when gum is available)
+# Interactive Model Selection (using gum)
 # -----------------------------------------------------------------------------
 
 gum_model_selection() {
+    # Build options array and list of preselected labels
+    local options=()
+    local preselected_labels=()
     local memory_gb
     memory_gb=$(get_usable_memory_gb)
     
-    # Build labels array for gum
-    local labels=()
-    local preselected_labels=()
+    # Get list of already installed models
+    local installed_models
+    installed_models=$(get_installed_models)
     
     for model in "${MODEL_ORDER[@]}"; do
         IFS='|' read -r category size description <<< "${MODEL_INFO[$model]}"
@@ -520,16 +595,21 @@ gum_model_selection() {
             wont_fit)     hw_tag=" [✗ won't fit]" ;;
         esac
         
-        # Format: "model:tag (~size) description [status]"
-        local label="${model} (~${size}) ${description}${hw_tag}"
-        labels+=("$label")
+        # Check if model is already installed and add star prefix
+        local installed_prefix=""
+        if is_model_installed "$model" "$installed_models"; then
+            installed_prefix="★ "
+        fi
+        
+        # Format: "★ model_name (~size) - description [status]" (star prefix if installed)
+        local label="${installed_prefix}${model} (~${size}) - ${description}${hw_tag}"
+        options+=("$label")
         
         if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
             preselected_labels+=("$label")
         fi
     done
     
-    clear
     echo ""
     echo -e "${CYAN}${BOLD}============================================${NC}"
     echo -e "${CYAN}${BOLD}  Select Models to Install${NC}"
@@ -548,7 +628,7 @@ gum_model_selection() {
     echo -e "${DIM}Edit models.conf to add more models to this list${NC}"
     echo ""
     
-    # Build comma-separated string of preselected labels
+    # Build comma-separated string of preselected labels (descriptions must not contain commas!)
     local selected_csv=""
     if [ ${#preselected_labels[@]} -gt 0 ]; then
         selected_csv=$(IFS=,; echo "${preselected_labels[*]}")
@@ -563,10 +643,12 @@ gum_model_selection() {
             --unselected-prefix="○ " \
             --cursor.foreground="212" \
             --selected.foreground="212" \
+            --height=20 \
             --selected="$selected_csv" \
-            "${labels[@]}") || {
+            "${options[@]}") || {
+            # User cancelled with Ctrl+C
             echo ""
-            print_status "Selection cancelled"
+            print_status "Model selection cancelled"
             exit 0
         }
     else
@@ -576,9 +658,11 @@ gum_model_selection() {
             --unselected-prefix="○ " \
             --cursor.foreground="212" \
             --selected.foreground="212" \
-            "${labels[@]}") || {
+            --height=20 \
+            "${options[@]}") || {
+            # User cancelled with Ctrl+C
             echo ""
-            print_status "Selection cancelled"
+            print_status "Model selection cancelled"
             exit 0
         }
     fi
@@ -590,147 +674,28 @@ gum_model_selection() {
     
     # Parse selections and update MODEL_SELECTED
     while IFS= read -r line; do
-        # Extract model name (first word before space)
-        local selected_model="${line%% *}"
+        # Strip star prefix if present (installed models have ★ prefix)
+        line="${line#★ }"
+        # Extract the model name (everything before " (~")
+        local selected_model="${line%% (~*}"
         if [[ -n "$selected_model" && -n "${MODEL_INFO[$selected_model]+x}" ]]; then
             MODEL_SELECTED["$selected_model"]=1
         fi
     done <<< "$selections"
     
-    clear
-}
-
-display_model_menu() {
-    clear
-    echo ""
-    echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo -e "${CYAN}${BOLD}  Select Models to Install${NC}"
-    echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo ""
-    
-    # Show memory info if detected
-    local memory_gb total_gb
-    memory_gb=$(get_usable_memory_gb)
-    total_gb=$(get_total_memory_gb)
-    
-    if [[ "$memory_gb" -gt 0 && "$IGNORE_HARDWARE_RECOMMENDATIONS" != "true" ]]; then
-        echo -e "  ${BOLD}System Memory:${NC} ${GREEN}${total_gb}GB${NC} (${memory_gb}GB usable for models)"
-        echo ""
-    else
-        echo -e "${DIM}Use number keys to toggle selection, then press Enter to continue${NC}"
-        echo -e "${DIM}Tip: Start with smaller models (8B or less) for best performance${NC}"
-    fi
-    echo ""
-    
-    local current_category=""
-    local index=1
+    # Show summary
     local total_size
     local selected_count
-    
-    for model in "${MODEL_ORDER[@]}"; do
-        IFS='|' read -r category size description <<< "${MODEL_INFO[$model]}"
-        
-        if [[ "$category" != "$current_category" ]]; then
-            current_category="$category"
-            echo ""
-            case "$category" in
-                small)        echo -e "  ${BOLD}Small/Fast:${NC}" ;;
-                autocomplete) echo -e "  ${BOLD}IDE Autocomplete:${NC}" ;;
-                general)      echo -e "  ${BOLD}General Purpose:${NC}" ;;
-                reasoning)    echo -e "  ${BOLD}Reasoning:${NC}" ;;
-                coding)       echo -e "  ${BOLD}Coding Focus:${NC}" ;;
-                specialized)  echo -e "  ${BOLD}Specialized:${NC}" ;;
-                *)            echo -e "  ${BOLD}${category^}:${NC}" ;;
-            esac
-        fi
-        
-        local checkbox
-        if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
-            checkbox="${GREEN}[x]${NC}"
-        else
-            checkbox="[ ]"
-        fi
-        
-        # Get hardware status tag
-        local model_size_gb hw_status hw_tag=""
-        model_size_gb=$(get_model_size_gb "$size")
-        hw_status=$(get_model_hardware_status "$model_size_gb" "$memory_gb")
-        
-        case "$hw_status" in
-            recommended)  hw_tag=" ${GREEN}[✓ recommended]${NC}" ;;
-            may_struggle) hw_tag=" ${YELLOW}[⚠ may struggle]${NC}" ;;
-            wont_fit)     hw_tag=" ${RED}[✗ won't fit]${NC}" ;;
-        esac
-        
-        printf "    %b ${YELLOW}%2d${NC}) %-28s ${DIM}(~%-5s)${NC} %s%b\n" \
-            "$checkbox" "$index" "$model" "$size" "$description" "$hw_tag"
-        
-        index=$((index + 1))
-    done
-    
     total_size=$(calculate_total_size)
     selected_count=$(count_selected)
-    local num_models=${#MODEL_ORDER[@]}
     
     echo ""
-    echo -e "  ─────────────────────────────────────────────"
-    echo -e "  ${BOLD}Selected:${NC} $selected_count models (~${total_size}GB total)"
-    echo ""
-    echo -e "  ${DIM}Commands:${NC}"
-    echo -e "    ${YELLOW}1-${num_models}${NC}   Toggle model       ${YELLOW}a${NC}  Select all"
-    echo -e "    ${YELLOW}c${NC}      Clear all          ${YELLOW}Enter${NC}  Continue"
-    echo ""
-    echo -ne "  Enter selection: "
+    echo -e "${BOLD}Selected:${NC} $selected_count models (~${total_size}GB total)"
 }
 
 interactive_model_selection() {
-    # Use gum if available, otherwise fall back to number-key menu
-    if [ "$GUM_AVAILABLE" = true ]; then
-        gum_model_selection
-        return
-    fi
-    
-    # Fallback: number-key based menu
-    local num_models=${#MODEL_ORDER[@]}
-    
-    while true; do
-        display_model_menu
-        
-        read -r input
-        
-        # Trim whitespace
-        input="${input#"${input%%[![:space:]]*}"}"
-        input="${input%"${input##*[![:space:]]}"}"
-        
-        case "$input" in
-            "")
-                break
-                ;;
-            [0-9]|[0-9][0-9])
-                local idx=$((input - 1))
-                if [[ $idx -ge 0 && $idx -lt $num_models ]]; then
-                    local model="${MODEL_ORDER[$idx]}"
-                    if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
-                        MODEL_SELECTED["$model"]=0
-                    else
-                        MODEL_SELECTED["$model"]=1
-                    fi
-                fi
-                ;;
-            a|A)
-                for model in "${MODEL_ORDER[@]}"; do
-                    MODEL_SELECTED["$model"]=1
-                done
-                ;;
-            c|C)
-                for model in "${MODEL_ORDER[@]}"; do
-                    MODEL_SELECTED["$model"]=0
-                done
-                ;;
-        esac
-    done
-    
-    clear
+    # gum is required for interactive mode (checked during dependency validation)
+    gum_model_selection
 }
 
 get_selected_models() {
@@ -806,6 +771,154 @@ fi
 echo ""
 
 # -----------------------------------------------------------------------------
+# Status Mode
+# -----------------------------------------------------------------------------
+
+if [ "$RUN_STATUS" = true ]; then
+    print_header "Ollama Status"
+    echo ""
+    
+    # Service status
+    echo -e "  ${BOLD}Service:${NC}"
+    if brew services info ollama 2>/dev/null | grep -q "running"; then
+        echo -e "    $CHECKMARK Status: ${GREEN}running${NC}"
+    elif pgrep -x "ollama" &>/dev/null; then
+        echo -e "    $CHECKMARK Status: ${GREEN}running${NC} (manual)"
+    else
+        echo -e "    $CROSSMARK Status: ${RED}stopped${NC}"
+        echo -e "    ${DIM}Start with: brew services start ollama${NC}"
+    fi
+    
+    # API status
+    echo ""
+    echo -e "  ${BOLD}API:${NC}"
+    if curl -sf http://localhost:11434/api/tags &>/dev/null; then
+        echo -e "    $CHECKMARK Endpoint: ${GREEN}http://localhost:11434${NC}"
+        OLLAMA_VERSION=$(ollama --version 2>/dev/null || echo "unknown")
+        echo -e "    $CHECKMARK Version: $OLLAMA_VERSION"
+    else
+        echo -e "    $CROSSMARK Endpoint: ${RED}not responding${NC}"
+    fi
+    
+    # Hardware
+    echo ""
+    echo -e "  ${BOLD}Hardware:${NC}"
+    if [[ "$APPLE_SILICON" = true ]]; then
+        echo -e "    $CHECKMARK ${GREEN}Apple Silicon${NC} (Metal GPU)"
+    else
+        echo -e "    $WARNMARK ${YELLOW}Intel Mac${NC} (CPU only)"
+    fi
+    TOTAL_MEM=$(get_total_memory_gb)
+    echo -e "    $CHECKMARK Memory: ${TOTAL_MEM}GB"
+    
+    # Models
+    echo ""
+    echo -e "  ${BOLD}Models:${NC}"
+    if curl -sf http://localhost:11434/api/tags &>/dev/null; then
+        MODEL_LIST=$(ollama list 2>/dev/null | tail -n +2)
+        if [ -n "$MODEL_LIST" ]; then
+            MODEL_COUNT=$(echo "$MODEL_LIST" | wc -l | tr -d ' ')
+            echo -e "    $CHECKMARK Installed: $MODEL_COUNT model(s)"
+            echo "$MODEL_LIST" | while read -r line; do
+                MODEL_NAME=$(echo "$line" | awk '{print $1}')
+                MODEL_SIZE=$(echo "$line" | awk '{print $3}')
+                echo -e "      - $MODEL_NAME (${MODEL_SIZE})"
+            done
+        else
+            echo -e "    $WARNMARK No models installed"
+        fi
+        
+        # Loaded models
+        LOADED=$(ollama ps 2>/dev/null | tail -n +2)
+        if [ -n "$LOADED" ]; then
+            echo ""
+            echo -e "  ${BOLD}Currently Loaded (in memory):${NC}"
+            echo "$LOADED" | while read -r line; do
+                echo -e "    $CHECKMARK $line"
+            done
+        fi
+    else
+        echo -e "    ${DIM}(API not available)${NC}"
+    fi
+    
+    # Storage
+    echo ""
+    echo -e "  ${BOLD}Storage:${NC}"
+    OLLAMA_DIR="$HOME/.ollama"
+    if [ -d "$OLLAMA_DIR" ]; then
+        DIR_SIZE=$(du -sh "$OLLAMA_DIR" 2>/dev/null | cut -f1 || echo "unknown")
+        echo -e "    $CHECKMARK Location: $OLLAMA_DIR"
+        echo -e "    $CHECKMARK Size: $DIR_SIZE"
+    else
+        echo -e "    $CROSSMARK Directory not found: $OLLAMA_DIR"
+    fi
+    
+    echo ""
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# Update Mode
+# -----------------------------------------------------------------------------
+
+if [ "$RUN_UPDATE" = true ]; then
+    print_header "Updating Ollama"
+    echo ""
+    
+    print_status "Checking for updates via Homebrew..."
+    
+    # Get current version
+    CURRENT_VERSION=$(ollama --version 2>/dev/null || echo "unknown")
+    
+    # Run upgrade
+    if brew upgrade ollama 2>&1; then
+        NEW_VERSION=$(ollama --version 2>/dev/null || echo "unknown")
+        if [ "$CURRENT_VERSION" = "$NEW_VERSION" ]; then
+            print_success "Ollama is already up to date ($CURRENT_VERSION)"
+        else
+            print_success "Ollama updated: $CURRENT_VERSION → $NEW_VERSION"
+        fi
+    else
+        # brew upgrade returns non-zero if already up to date
+        if brew list ollama &>/dev/null; then
+            print_success "Ollama is already up to date"
+        else
+            print_error "Failed to update Ollama"
+            exit 1
+        fi
+    fi
+    
+    # Restart service if running
+    if brew services info ollama 2>/dev/null | grep -q "running"; then
+        print_status "Restarting Ollama service..."
+        brew services restart ollama
+        
+        # Wait for startup
+        start_spinner "Waiting for Ollama to start"
+        ATTEMPT=0
+        while ! curl -sf http://localhost:11434/api/tags &>/dev/null; do
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ $ATTEMPT -ge 30 ]; then
+                stop_spinner false "Ollama failed to start after update"
+                exit 1
+            fi
+            sleep 1
+        done
+        stop_spinner true "Ollama restarted successfully"
+    elif pgrep -x "ollama" &>/dev/null; then
+        print_warning "Ollama is running manually. Restart it to use the new version:"
+        echo "    pkill ollama && ollama serve &"
+    fi
+    
+    # Show version
+    OLLAMA_VERSION=$(ollama --version 2>/dev/null || echo "unknown")
+    print_status "Version: $OLLAMA_VERSION"
+    
+    echo ""
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
 # Dependency Check
 # -----------------------------------------------------------------------------
 
@@ -859,14 +972,15 @@ else
     echo -e "  $WARNMARK bc                  not installed (size calculation may fail)"
 fi
 
-# gum (for interactive menus - optional)
-GUM_AVAILABLE=false
-if command -v gum &>/dev/null; then
-    GUM_VERSION=$(gum --version 2>/dev/null | head -1 || echo "unknown")
-    echo -e "  $CHECKMARK gum                 installed ($GUM_VERSION)"
-    GUM_AVAILABLE=true
-else
-    echo -e "  $WARNMARK gum                 not installed (optional - brew install gum)"
+# gum (for interactive menus) - required for interactive mode
+if [ "$NON_INTERACTIVE" = false ]; then
+    if command -v gum &>/dev/null; then
+        GUM_VERSION=$(gum --version 2>/dev/null | head -1 || echo "unknown")
+        echo -e "  $CHECKMARK gum                 installed ($GUM_VERSION)"
+    else
+        echo -e "  $CROSSMARK gum                 not installed (required for interactive mode)"
+        MISSING_REQUIRED+=("gum")
+    fi
 fi
 
 echo ""
@@ -899,6 +1013,21 @@ fi
 if [[ " ${MISSING_REQUIRED[*]} " =~ " curl " ]]; then
     print_error "curl is required but not installed"
     print_status "This is unusual for macOS. Try reinstalling Xcode CLI tools."
+    exit 1
+fi
+
+# Handle missing gum (required for interactive mode)
+if [[ " ${MISSING_REQUIRED[*]} " =~ " gum " ]]; then
+    print_header "Missing Required Dependency: gum"
+    echo ""
+    print_status "gum is required for interactive model selection."
+    echo ""
+    echo -e "  ${BOLD}Install with Homebrew:${NC}"
+    echo "    brew install gum"
+    echo ""
+    echo -e "  ${BOLD}Or run in non-interactive mode:${NC}"
+    echo "    /opt/homebrew/bin/bash ./setup-macos.sh --non-interactive"
+    echo ""
     exit 1
 fi
 
@@ -1109,7 +1238,8 @@ if [ -f "$OPENCODE_CONFIG" ]; then
         read -p "Overwrite? (y/N) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_status "Keeping existing OpenCode config"
+            print_status "Merging new models into existing OpenCode config..."
+            "$SCRIPT_DIR/sync-opencode-config.sh" --merge
             SKIP_OPENCODE_CONFIG=true
         else
             BACKUP_FILE="$OPENCODE_CONFIG.backup.$(date +%Y%m%d_%H%M%S)"
@@ -1156,22 +1286,36 @@ print_status "Run ./sync-opencode-config.sh to refresh config after pulling new 
 
 print_header "Testing Ollama"
 
-# Find the best model for testing (prefer small category)
-TEST_MODEL=""
-if [[ ${#MODEL_ORDER[@]} -gt 0 ]] && has_small_model_selected; then
-    TEST_MODEL=$(get_smallest_selected_model)
+# Ensure model info is loaded for category detection
+if [[ ${#MODEL_INFO[@]} -eq 0 ]]; then
+    load_models_conf
 fi
+
+# Find the best model for testing (prefer small category from installed models)
+TEST_MODEL=""
+INSTALLED_MODELS=$(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}')
+
+# First, try to find a small category model from installed models
+for model in $INSTALLED_MODELS; do
+    if [[ -n "${MODEL_INFO[$model]:-}" ]]; then
+        IFS='|' read -r category _ _ <<< "${MODEL_INFO[$model]}"
+        if [[ "$category" == "small" ]]; then
+            TEST_MODEL="$model"
+            break
+        fi
+    fi
+done
 
 # Fallback: use first installed model
 if [ -z "$TEST_MODEL" ]; then
-    TEST_MODEL=$(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' | head -1)
+    TEST_MODEL=$(echo "$INSTALLED_MODELS" | head -1)
 fi
 
 if [ -n "$TEST_MODEL" ]; then
     # Check if this is a small model for timing expectations
     IS_SMALL_MODEL=false
-    if [[ ${#MODEL_INFO[@]} -gt 0 ]]; then
-        IFS='|' read -r category _ _ <<< "${MODEL_INFO[$TEST_MODEL]:-}"
+    if [[ -n "${MODEL_INFO[$TEST_MODEL]:-}" ]]; then
+        IFS='|' read -r category _ _ <<< "${MODEL_INFO[$TEST_MODEL]}"
         [[ "$category" == "small" ]] && IS_SMALL_MODEL=true
     fi
     
@@ -1179,7 +1323,7 @@ if [ -n "$TEST_MODEL" ]; then
         print_status "Running quick inference test with $TEST_MODEL (small model)..."
     else
         print_status "Running inference test with $TEST_MODEL..."
-        print_warning "This may take a minute since no small model was selected."
+        print_warning "This may take a minute since no small model is installed."
     fi
     
     # Run the inference test with spinner (first run loads model into memory)

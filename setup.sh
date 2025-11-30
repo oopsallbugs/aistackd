@@ -561,12 +561,28 @@ count_selected() {
     echo "$count"
 }
 
-interactive_model_selection() {
+# Get list of already installed models from Ollama
+get_installed_models() {
+    docker exec ollama ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' || true
+}
+
+# Check if a model is already installed
+is_model_installed() {
+    local model="$1"
+    local installed_models="$2"
+    echo "$installed_models" | grep -qx "$model"
+}
+
+gum_model_selection() {
     # Build options array and list of preselected labels
     local options=()
     local preselected_labels=()
     local vram_gb
     vram_gb=$(get_vram_gb)
+    
+    # Get list of already installed models
+    local installed_models
+    installed_models=$(get_installed_models)
     
     for model in "${MODEL_ORDER[@]}"; do
         IFS='|' read -r category size description <<< "${MODEL_INFO[$model]}"
@@ -582,8 +598,14 @@ interactive_model_selection() {
             wont_fit)     hw_tag=" [✗ won't fit]" ;;
         esac
         
-        # Format: "model_name (~size) - description [status]"
-        local label="$model (~$size) - $description$hw_tag"
+        # Check if model is already installed and add star prefix
+        local installed_prefix=""
+        if is_model_installed "$model" "$installed_models"; then
+            installed_prefix="★ "
+        fi
+        
+        # Format: "★ model_name (~size) - description [status]" (star prefix if installed)
+        local label="${installed_prefix}$model (~$size) - $description$hw_tag"
         options+=("$label")
         
         if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
@@ -651,16 +673,12 @@ interactive_model_selection() {
     
     # Parse selections and update MODEL_SELECTED
     while IFS= read -r line; do
-        # Extract the model name (everything before the first space and parenthesis)
+        # Strip star prefix if present (installed models have ★ prefix)
+        line="${line#★ }"
+        # Extract the model name (everything before " (~")
         local selected_model="${line%% (~*}"
-        if [ -n "$selected_model" ]; then
-            # Find matching model in MODEL_ORDER
-            for model in "${MODEL_ORDER[@]}"; do
-                if [[ "$model" == "$selected_model" ]]; then
-                    MODEL_SELECTED["$model"]=1
-                    break
-                fi
-            done
+        if [[ -n "$selected_model" && -n "${MODEL_INFO[$selected_model]+x}" ]]; then
+            MODEL_SELECTED["$selected_model"]=1
         fi
     done <<< "$selections"
     
@@ -672,6 +690,11 @@ interactive_model_selection() {
     
     echo ""
     echo -e "${BOLD}Selected:${NC} $selected_count models (~${total_size}GB total)"
+}
+
+interactive_model_selection() {
+    # gum is required for interactive mode (checked during dependency validation)
+    gum_model_selection
 }
 
 get_selected_models() {
@@ -1683,7 +1706,8 @@ if [ -f "$OPENCODE_CONFIG" ]; then
         read -p "Overwrite? (y/N) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_status "Keeping existing OpenCode config"
+            print_status "Merging new models into existing OpenCode config..."
+            "$SCRIPT_DIR/sync-opencode-config.sh" --merge
             SKIP_OPENCODE_CONFIG=true
         else
             BACKUP_FILE="$OPENCODE_CONFIG.backup.$(date +%Y%m%d_%H%M%S)"
@@ -1733,34 +1757,48 @@ print_status "Run ./sync-opencode-config.sh to refresh config after pulling new 
 
 print_header "Testing GPU Acceleration"
 
-# Find the best model for testing
-# Preference order: qwen models (better instruction following) > other small models > any model
-TEST_MODEL=""
-PREFERRED_TEST_MODELS=("qwen2:0.5b" "qwen3:8b" "qwen3:14b" "qwen2.5-coder:3b")
+# Ensure model info is loaded for category detection
+if [[ ${#MODEL_INFO[@]} -eq 0 ]]; then
+    load_models_conf
+fi
 
-# First, check if any preferred model is installed
-for preferred in "${PREFERRED_TEST_MODELS[@]}"; do
-    if docker exec ollama ollama list 2>/dev/null | grep -q "^${preferred}"; then
-        TEST_MODEL="$preferred"
-        break
+# Find the best model for testing
+# Preference order: small category models > preferred models > any model
+TEST_MODEL=""
+INSTALLED_MODELS=$(docker exec ollama ollama list 2>/dev/null | tail -n +2 | awk '{print $1}')
+
+# First, try to find a small category model from installed models
+for model in $INSTALLED_MODELS; do
+    if [[ -n "${MODEL_INFO[$model]:-}" ]]; then
+        IFS='|' read -r category _ _ <<< "${MODEL_INFO[$model]}"
+        if [[ "$category" == "small" ]]; then
+            TEST_MODEL="$model"
+            break
+        fi
     fi
 done
 
-# Fallback: use smallest selected model from small category
-if [ -z "$TEST_MODEL" ] && [[ ${#MODEL_ORDER[@]} -gt 0 ]] && has_small_model_selected; then
-    TEST_MODEL=$(get_smallest_selected_model)
+# Fallback: check for preferred models (good instruction following)
+if [ -z "$TEST_MODEL" ]; then
+    PREFERRED_TEST_MODELS=("qwen2:0.5b" "qwen3:8b" "qwen3:14b" "qwen2.5-coder:3b")
+    for preferred in "${PREFERRED_TEST_MODELS[@]}"; do
+        if echo "$INSTALLED_MODELS" | grep -qx "$preferred"; then
+            TEST_MODEL="$preferred"
+            break
+        fi
+    done
 fi
 
 # Final fallback: use first installed model
 if [ -z "$TEST_MODEL" ]; then
-    TEST_MODEL=$(docker exec ollama ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' | head -1)
+    TEST_MODEL=$(echo "$INSTALLED_MODELS" | head -1)
 fi
 
 if [ -n "$TEST_MODEL" ]; then
     # Check if this is a small model for timing expectations
     IS_SMALL_MODEL=false
-    if [[ ${#MODEL_INFO[@]} -gt 0 ]]; then
-        IFS='|' read -r category _ _ <<< "${MODEL_INFO[$TEST_MODEL]:-}"
+    if [[ -n "${MODEL_INFO[$TEST_MODEL]:-}" ]]; then
+        IFS='|' read -r category _ _ <<< "${MODEL_INFO[$TEST_MODEL]}"
         [[ "$category" == "small" ]] && IS_SMALL_MODEL=true
     fi
     
@@ -1768,7 +1806,7 @@ if [ -n "$TEST_MODEL" ]; then
         print_status "Running quick inference test with $TEST_MODEL (small model)..."
     else
         print_status "Running inference test with $TEST_MODEL..."
-        print_warning "This may take a minute since no small model was selected."
+        print_warning "This may take a minute since no small model is installed."
     fi
     
     # Run the inference test with spinner (first run loads model into VRAM)

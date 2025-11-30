@@ -98,12 +98,12 @@ The setup script checks for these and provides install instructions if any are m
 
 | Dependency | Install Command | Notes |
 |------------|-----------------|-------|
-| **Bash 4+** | `brew install bash` | macOS ships with Bash 3.2 |
+| **Bash 4+** | `brew install bash` | macOS ships with Bash 3.2; see note above |
 | **Homebrew** | Installed automatically if missing | Package manager |
 | **Ollama** | Installed automatically via Homebrew | AI runtime |
-| **gum** | `brew install gum` | Optional - improves selection menus |
+| **gum** | `brew install gum` | Required for interactive model selection |
 
-Run the setup script with the newer Bash: `/opt/homebrew/bin/bash ./setup-macos.sh`
+> **Tip**: You can skip gum by running `./setup-macos.sh --non-interactive` to use default model selections.
 
 ### Supported AMD GPUs
 
@@ -122,6 +122,7 @@ The setup script shows an interactive menu where you can select which AI models 
 - `[✓ recommended]` - Will run well on your GPU/system
 - `[⚠ may struggle]` - Might work but could be slow
 - `[✗ won't fit]` - Too large for your GPU memory
+- `★` (star prefix) - Already installed on your system
 
 The first recommended model in each category is pre-selected. You can toggle selections with Space or x, and confirm with Enter.
 
@@ -297,10 +298,12 @@ docker exec ollama ls /dev/kfd /dev/dri
 
 ```bash
 # See overall system status
-./setup.sh --status
+./setup.sh --status            # Linux
+./setup-macos.sh --status      # macOS
 
 # Check what's loaded in GPU memory
-docker exec ollama ollama ps
+docker exec ollama ollama ps   # Linux
+ollama ps                      # macOS
 ```
 
 ### Upgrading from Older Installation
@@ -328,6 +331,7 @@ See the [detailed troubleshooting section](#detailed-troubleshooting) below for 
 ### Setup Script Options
 
 ```bash
+# Linux
 ./setup.sh --help              # Show all options
 ./setup.sh --status            # Check Ollama status
 ./setup.sh --update            # Update to latest version
@@ -336,6 +340,14 @@ See the [detailed troubleshooting section](#detailed-troubleshooting) below for 
 ./setup.sh --force-env         # Regenerate configuration
 ./setup.sh --non-interactive   # Use defaults, no prompts
 ./setup.sh --ignore-warnings   # Continue despite permission warnings
+
+# macOS
+./setup-macos.sh --help            # Show all options
+./setup-macos.sh --status          # Check Ollama status (service, hardware, models)
+./setup-macos.sh --update          # Update Ollama via Homebrew
+./setup-macos.sh --skip-models     # Re-run setup without model selection
+./setup-macos.sh --force-env       # Regenerate configuration
+./setup-macos.sh --non-interactive # Use defaults, no prompts
 ```
 
 ### Hardware Recommendations Toggle
@@ -377,7 +389,7 @@ To sync after adding new models:
 
 ```bash
 ./uninstall.sh           # Interactive - choose what to remove
-./uninstall.sh --all     # Remove everything
+./uninstall.sh --all     # Remove everything (confirms model deletion)
 ./uninstall.sh --dry-run # Preview what would be removed
 ```
 

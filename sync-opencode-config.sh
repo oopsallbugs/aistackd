@@ -596,6 +596,3 @@ mkdir -p "$(dirname "$OPENCODE_CONFIG")"
 echo "$CONFIG_JSON" > "$OPENCODE_CONFIG"
 
 print_success "OpenCode config synced: $OPENCODE_CONFIG"
-echo ""
-print_status "Use '/models' in OpenCode to switch between models"
-echo ""

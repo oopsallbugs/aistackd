@@ -166,16 +166,18 @@ for arg in "$@"; do
             echo "Interactively uninstall Ollama and select which components to remove."
             echo ""
             echo "Options:"
-            echo "  --all              Remove everything (no prompts)"
+            echo "  --all              Remove everything (still confirms model deletion)"
             echo "  --force, -f        Skip final confirmation prompt"
             echo "  --dry-run          Show what would be removed without doing it"
             echo "  --non-interactive  Use default selections (container + image only)"
             echo "  --debug            Enable debug output"
             echo "  --help, -h         Show this help message"
             echo ""
+            echo "Model deletion always requires explicit y/N confirmation for safety."
+            echo ""
             echo "Examples:"
             echo "  ./uninstall.sh              # Interactive selection"
-            echo "  ./uninstall.sh --all        # Remove everything"
+            echo "  ./uninstall.sh --all        # Remove everything (confirms models)"
             echo "  ./uninstall.sh --dry-run    # Preview what would be removed"
             exit 0
             ;;
@@ -490,18 +492,28 @@ fi
 # Final Confirmation
 # -----------------------------------------------------------------------------
 
-# Show warning about models deletion (even with --force/--all)
+# Special confirmation for models deletion (requires explicit y/n even with --all)
 if [ "${COMPONENT_SELECTED[models]}" = true ] && [ "${COMPONENT_EXISTS[models]}" = true ]; then
     echo ""
     if [ "$NON_INTERACTIVE" = true ]; then
-        print_warning "Downloaded models will be permanently deleted!"
+        gum style --foreground 212 --bold "⚠ WARNING: Downloaded models will be permanently deleted!"
     else
         gum style --foreground 212 --bold "⚠ WARNING: Downloaded models will be permanently deleted!"
     fi
     echo ""
+    
+    # Always require confirmation for model deletion (even with --all or --force)
+    if [ "$DRY_RUN" = false ]; then
+        read -p "Delete all downloaded models? This cannot be undone. (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_status "Keeping models, continuing with other removals..."
+            COMPONENT_SELECTED[models]=false
+        fi
+    fi
 fi
 
-# Interactive confirmation (skip if --force or --all)
+# Interactive confirmation for remaining items (skip if --force or --all)
 if [ "$FORCE" = false ] && [ "$DRY_RUN" = false ]; then
     if ! gum confirm "Proceed with removal?"; then
         print_status "Uninstall cancelled"
@@ -705,5 +717,9 @@ else
 fi
 
 echo ""
-echo "To reinstall, run: ./setup.sh"
+if [ "$IS_MACOS" = true ]; then
+    echo "To reinstall, run: ./setup-macos.sh"
+else
+    echo "To reinstall, run: ./setup.sh"
+fi
 echo ""
