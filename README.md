@@ -49,11 +49,20 @@ The setup scripts will:
 |-------------|-------|
 | **Linux** | ROCm (AMD's GPU compute software) only supports Linux |
 | **AMD GPU** | RDNA1, RDNA2, or RDNA3 (RX 5000/6000/7000 series) |
-| **Docker** | Container system that runs Ollama - setup will guide you if missing |
 | **Disk space** | 20-100GB depending on model choices |
 | **GPU Memory (VRAM)** | 8GB minimum, 16-24GB recommended for larger models |
 
-The setup script will check for everything else and guide you through fixing any issues.
+**Dependencies** (install before running setup):
+
+| Dependency | Install Command | Notes |
+|------------|-----------------|-------|
+| **Docker** | `sudo pacman -S docker` (Arch) / `sudo apt install docker.io` (Ubuntu) | Container runtime |
+| **Docker Compose** | Usually included with Docker | Container orchestration |
+| **curl** | `sudo pacman -S curl` (Arch) / `sudo apt install curl` (Ubuntu) | HTTP client |
+| **bc** | `sudo pacman -S bc` (Arch) / `sudo apt install bc` (Ubuntu) | Calculator for size math |
+| **gum** | `sudo pacman -S gum` (Arch) / See [gum install guide](https://github.com/charmbracelet/gum#installation) | Interactive menus |
+
+The setup script checks for these and provides install instructions if any are missing. You can skip `gum` by running `./setup.sh --non-interactive`.
 
 ### macOS Requirements
 
@@ -63,6 +72,16 @@ The setup script will check for everything else and guide you through fixing any
 | **Disk space** | 20-60GB depending on model choices |
 | **Apple Silicon** | Recommended - uses Metal for GPU acceleration |
 | **Intel Mac** | Supported but slower (CPU only) |
+
+**Dependencies**:
+
+| Dependency | Install Command | Notes |
+|------------|-----------------|-------|
+| **Bash 4+** | `brew install bash` | macOS ships with Bash 3.2 |
+| **Homebrew** | Installed automatically if missing | Package manager |
+| **Ollama** | Installed automatically via Homebrew | AI runtime |
+
+Run the setup script with the newer Bash: `/opt/homebrew/bin/bash ./setup-macos.sh`
 
 ### Supported AMD GPUs
 
@@ -318,6 +337,33 @@ To sync after adding new models:
 ./uninstall.sh           # Interactive - choose what to remove
 ./uninstall.sh --all     # Remove everything
 ./uninstall.sh --dry-run # Preview what would be removed
+```
+
+**What gets removed:**
+
+- Docker container and image (Linux) or Ollama via Homebrew (macOS)
+- Downloaded models (`~/.ollama/`)
+- OpenCode configuration (`~/.config/opencode/opencode.json`)
+- Local `.env` file and backups
+
+**What is NOT removed**:
+
+- System dependencies (Docker, Homebrew, gum, bc, curl)
+- User group memberships (video, render, docker)
+
+This is intentional - these tools are often shared with other applications. Remove them manually if no longer needed.
+
+**Verify cleanup:**
+
+```bash
+# Linux
+docker ps -a | grep ollama           # Should be empty
+docker images | grep ollama          # Should be empty
+ls ~/.ollama 2>/dev/null || echo "OK"  # Should say "OK"
+
+# macOS
+brew list 2>/dev/null | grep ollama || echo "OK"  # Should say "OK"
+ls ~/.ollama 2>/dev/null || echo "OK"              # Should say "OK"
 ```
 
 ## Performance Tuning
