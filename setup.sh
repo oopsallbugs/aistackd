@@ -77,8 +77,8 @@ SPINNER_PID=""
 
 cleanup_spinner() {
     if [[ -n "$SPINNER_PID" ]] && kill -0 "$SPINNER_PID" 2>/dev/null; then
-        kill "$SPINNER_PID" 2>/dev/null
-        wait "$SPINNER_PID" 2>/dev/null
+        kill "$SPINNER_PID" 2>/dev/null || true
+        wait "$SPINNER_PID" 2>/dev/null || true
     fi
     SPINNER_PID=""
     printf "\r\033[K"  # Clear the line
@@ -107,8 +107,8 @@ stop_spinner() {
     local message="${2:-}"
     
     if [[ -n "$SPINNER_PID" ]]; then
-        kill "$SPINNER_PID" 2>/dev/null
-        wait "$SPINNER_PID" 2>/dev/null
+        kill "$SPINNER_PID" 2>/dev/null || true
+        wait "$SPINNER_PID" 2>/dev/null || true
         SPINNER_PID=""
     fi
     printf "\r\033[K"  # Clear the line
@@ -601,7 +601,7 @@ interactive_model_selection() {
         echo -e "  ${BOLD}Detected VRAM:${NC} ${GREEN}${vram_gb}GB${NC}"
         echo ""
     fi
-    echo -e "${DIM}Use Space to toggle selection, Enter to confirm, Ctrl+C to cancel${NC}"
+    echo -e "${DIM}Use Space or x to toggle, Enter to confirm, Ctrl+C to cancel${NC}"
     echo -e "${DIM}Edit models.conf to add more models to this list${NC}"
     echo ""
     
@@ -908,8 +908,8 @@ if [ "$RUN_UPDATE" = true ]; then
         print_status "New version available, restarting container..."
         
         # Stop, remove, and recreate
-        docker compose down
-        docker compose up -d
+        docker compose down || true
+        docker compose up -d || true
         
         # Wait for startup
         start_spinner "Waiting for Ollama to start"
@@ -1128,8 +1128,6 @@ if [ "$NON_INTERACTIVE" = false ]; then
     fi
 fi
 
-echo ""
-
 # Recommended dependencies
 if command -v opencode &> /dev/null; then
     echo -e "  $CHECKMARK OpenCode             installed"
@@ -1139,6 +1137,8 @@ else
     MISSING_RECOMMENDED+=("opencode")
     OPENCODE_INSTALLED=false
 fi
+
+echo ""
 
 # -----------------------------------------------------------------------------
 # Dependency Summary
@@ -1154,14 +1154,14 @@ if [ ${#MISSING_REQUIRED[@]} -gt 0 ]; then
     for dep in "${MISSING_REQUIRED[@]}"; do
         case $dep in
             docker)
-                echo "  ${BOLD}Docker:${NC}"
+                echo -e "  ${BOLD}Docker:${NC}"
                 echo "    Arch Linux:  sudo pacman -S docker"
                 echo "    Ubuntu:      sudo apt install docker.io"
                 echo "    Fedora:      sudo dnf install docker"
                 echo ""
                 ;;
             docker-daemon)
-                echo "  ${BOLD}Docker daemon not running:${NC}"
+                echo -e "  ${BOLD}Docker daemon not running:${NC}"
                 echo "    Start:       sudo systemctl start docker"
                 echo "    Enable:      sudo systemctl enable docker"
                 echo ""
@@ -1171,40 +1171,40 @@ if [ ${#MISSING_REQUIRED[@]} -gt 0 ]; then
                 fi
                 ;;
             docker-compose)
-                echo "  ${BOLD}Docker Compose:${NC}"
+                echo -e "  ${BOLD}Docker Compose:${NC}"
                 echo "    Usually included with Docker. If not:"
                 echo "    Arch Linux:  sudo pacman -S docker-compose"
                 echo "    Ubuntu:      sudo apt install docker-compose-plugin"
                 echo ""
                 ;;
             amd-gpu)
-                echo "  ${BOLD}AMD GPU not detected:${NC}"
+                echo -e "  ${BOLD}AMD GPU not detected:${NC}"
                 echo "    Ensure amdgpu driver is loaded"
                 echo "    Check:       lsmod | grep amdgpu"
                 echo "    Install:     Varies by distro (usually automatic)"
                 echo ""
                 ;;
             curl)
-                echo "  ${BOLD}curl:${NC}"
+                echo -e "  ${BOLD}curl:${NC}"
                 echo "    Arch Linux:  sudo pacman -S curl"
                 echo "    Ubuntu:      sudo apt install curl"
                 echo ""
                 ;;
             getent)
-                echo "  ${BOLD}getent:${NC}"
+                echo -e "  ${BOLD}getent:${NC}"
                 echo "    Usually pre-installed. If not:"
                 echo "    Arch Linux:  sudo pacman -S glibc"
                 echo "    Ubuntu:      sudo apt install libc-bin"
                 echo ""
                 ;;
             bc)
-                echo "  ${BOLD}bc (calculator):${NC}"
+                echo -e "  ${BOLD}bc (calculator):${NC}"
                 echo "    Arch Linux:  sudo pacman -S bc"
                 echo "    Ubuntu:      sudo apt install bc"
                 echo ""
                 ;;
             gum)
-                echo "  ${BOLD}gum (interactive menus):${NC}"
+                echo -e "  ${BOLD}gum (interactive menus):${NC}"
                 echo "    Arch Linux:  sudo pacman -S gum"
                 echo "    Fedora:      sudo dnf install gum"
                 echo "    macOS:       brew install gum"
@@ -1261,7 +1261,7 @@ if [ ${#PERMISSION_WARNINGS[@]} -gt 0 ]; then
     for warn in "${PERMISSION_WARNINGS[@]}"; do
         case $warn in
             user-groups)
-                echo "  ${BOLD}User not in video/render groups:${NC}"
+                echo -e "  ${BOLD}User not in video/render groups:${NC}"
                 echo "    This may prevent GPU access inside Docker."
                 echo ""
                 echo "    Quick fix:   ./setup.sh --fix-permissions"
@@ -1270,7 +1270,7 @@ if [ ${#PERMISSION_WARNINGS[@]} -gt 0 ]; then
                 echo ""
                 ;;
             kfd-permissions)
-                echo "  ${BOLD}No read/write access to /dev/kfd:${NC}"
+                echo -e "  ${BOLD}No read/write access to /dev/kfd:${NC}"
                 echo "    GPU compute device not accessible."
                 echo ""
                 echo "    Quick fix:   ./setup.sh --fix-permissions"
@@ -1279,7 +1279,7 @@ if [ ${#PERMISSION_WARNINGS[@]} -gt 0 ]; then
                 echo ""
                 ;;
             dri-permissions)
-                echo "  ${BOLD}Limited access to /dev/dri:${NC}"
+                echo -e "  ${BOLD}Limited access to /dev/dri:${NC}"
                 echo "    GPU render devices may not be accessible."
                 echo ""
                 echo "    Quick fix:   ./setup.sh --fix-permissions"
@@ -1346,6 +1346,10 @@ if [ ! -f "$ENV_FILE" ] || [ "$FORCE_ENV" = true ]; then
         print_status "Backed up existing .env to: $BACKUP_FILE"
     fi
     
+    # Get current user's UID/GID for non-root container operation
+    CURRENT_UID=$(id -u)
+    CURRENT_GID=$(id -g)
+    
     cat > "$ENV_FILE" << EOF
 # Ollama ROCm Configuration
 # Generated by setup.sh on $(date)
@@ -1358,6 +1362,10 @@ if [ ! -f "$ENV_FILE" ] || [ "$FORCE_ENV" = true ]; then
 VIDEO_GROUP_ID=$VIDEO_GID
 RENDER_GROUP_ID=$RENDER_GID
 HSA_OVERRIDE_GFX_VERSION=$HSA_VERSION
+
+# Container user (runs as your user instead of root for easier cleanup)
+OLLAMA_UID=$CURRENT_UID
+OLLAMA_GID=$CURRENT_GID
 
 # =============================================================================
 # OLLAMA SETTINGS
@@ -1399,6 +1407,50 @@ if ! mkdir -p "$OLLAMA_DATA_DIR" 2>/dev/null; then
     exit 1
 fi
 print_success "Directory ready"
+
+# Check if the data directory has root-owned files (from previous root container)
+# This can happen when upgrading from root to non-root container configuration
+if [ -d "$OLLAMA_DATA_DIR" ]; then
+    ROOT_OWNED_FILES=$(find "$OLLAMA_DATA_DIR" -user root 2>/dev/null | head -5)
+    if [ -n "$ROOT_OWNED_FILES" ]; then
+        echo ""
+        print_warning "Found root-owned files in $OLLAMA_DATA_DIR"
+        print_status "This is from a previous installation that ran as root."
+        print_status "The container now runs as your user for easier cleanup."
+        echo ""
+        
+        if [ "$NON_INTERACTIVE" = false ]; then
+            echo -e "  ${BOLD}To fix ownership, sudo is required.${NC}"
+            echo ""
+            if gum confirm "Fix ownership now? (requires sudo)"; then
+                print_status "Fixing ownership of $OLLAMA_DATA_DIR..."
+                if sudo chown -R "$(id -u):$(id -g)" "$OLLAMA_DATA_DIR"; then
+                    print_success "Ownership fixed"
+                else
+                    print_error "Failed to fix ownership"
+                    echo ""
+                    echo "Try manually:"
+                    echo "  sudo chown -R \$(id -u):\$(id -g) $OLLAMA_DATA_DIR"
+                    echo ""
+                    exit 1
+                fi
+            else
+                print_warning "Skipping ownership fix - container may fail to start"
+                print_status "You can fix this later with:"
+                echo "  sudo chown -R \$(id -u):\$(id -g) $OLLAMA_DATA_DIR"
+                echo ""
+            fi
+        else
+            print_status "Non-interactive mode: attempting to fix ownership with sudo..."
+            if sudo chown -R "$(id -u):$(id -g)" "$OLLAMA_DATA_DIR" 2>/dev/null; then
+                print_success "Ownership fixed"
+            else
+                print_warning "Could not fix ownership - container may fail to start"
+                print_status "Fix manually with: sudo chown -R \$(id -u):\$(id -g) $OLLAMA_DATA_DIR"
+            fi
+        fi
+    fi
+fi
 
 print_status "Pulling Ollama ROCm Docker image..."
 print_status "This may take a few minutes on first run..."
@@ -1493,6 +1545,42 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Check for Pre-existing Models
+# -----------------------------------------------------------------------------
+
+# Check if there are already models installed (from a previous installation)
+EXISTING_MODELS=$(docker exec ollama ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' || true)
+if [ -n "$EXISTING_MODELS" ]; then
+    echo ""
+    print_warning "Found pre-existing models from a previous installation:"
+    echo ""
+    docker exec ollama ollama list || true
+    echo ""
+    
+    if [ "$NON_INTERACTIVE" = false ]; then
+        echo -e "${YELLOW}These models may be left over from a failed uninstall.${NC}"
+        echo -e "${DIM}You can keep them or remove them to start fresh.${NC}"
+        echo ""
+        
+        if gum confirm "Remove pre-existing models and start fresh?"; then
+            echo ""
+            print_status "Removing pre-existing models..."
+            while IFS= read -r model; do
+                [ -z "$model" ] && continue
+                print_status "Removing $model..."
+                docker exec ollama ollama rm "$model" 2>/dev/null || true
+            done <<< "$EXISTING_MODELS"
+            print_success "Pre-existing models removed"
+        else
+            print_status "Keeping pre-existing models"
+        fi
+        echo ""
+    else
+        print_status "Use --non-interactive skips cleanup prompt. Models will be kept."
+    fi
+fi
+
+# -----------------------------------------------------------------------------
 # Model Selection & Download
 # -----------------------------------------------------------------------------
 
@@ -1581,7 +1669,7 @@ fi
 # List installed models
 echo ""
 print_status "Installed models:"
-docker exec ollama ollama list
+docker exec ollama ollama list || true
 
 # -----------------------------------------------------------------------------
 # Configure OpenCode
@@ -1645,13 +1733,25 @@ print_status "Run ./sync-opencode-config.sh to refresh config after pulling new 
 
 print_header "Testing GPU Acceleration"
 
-# Find the best model for testing (prefer small category)
+# Find the best model for testing
+# Preference order: qwen models (better instruction following) > other small models > any model
 TEST_MODEL=""
-if [[ ${#MODEL_ORDER[@]} -gt 0 ]] && has_small_model_selected; then
+PREFERRED_TEST_MODELS=("qwen2:0.5b" "qwen3:8b" "qwen3:14b" "qwen2.5-coder:3b")
+
+# First, check if any preferred model is installed
+for preferred in "${PREFERRED_TEST_MODELS[@]}"; do
+    if docker exec ollama ollama list 2>/dev/null | grep -q "^${preferred}"; then
+        TEST_MODEL="$preferred"
+        break
+    fi
+done
+
+# Fallback: use smallest selected model from small category
+if [ -z "$TEST_MODEL" ] && [[ ${#MODEL_ORDER[@]} -gt 0 ]] && has_small_model_selected; then
     TEST_MODEL=$(get_smallest_selected_model)
 fi
 
-# Fallback: use first installed model
+# Final fallback: use first installed model
 if [ -z "$TEST_MODEL" ]; then
     TEST_MODEL=$(docker exec ollama ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' | head -1)
 fi
@@ -1675,7 +1775,7 @@ if [ -n "$TEST_MODEL" ]; then
     TEST_OUTPUT_FILE=$(mktemp)
     start_spinner "Loading model into VRAM and running inference"
     START_TIME=$(date +%s)
-    docker exec ollama ollama run "$TEST_MODEL" "Reply with exactly: GPU TEST OK" > "$TEST_OUTPUT_FILE" 2>&1 || true
+    docker exec ollama ollama run "$TEST_MODEL" "Respond in English with only these three words: GPU TEST OK" > "$TEST_OUTPUT_FILE" 2>&1 || true
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
     stop_spinner true
@@ -1694,9 +1794,16 @@ if [ -n "$TEST_MODEL" ]; then
     else
         print_warning "Running on CPU (GPU device not detected)"
     fi
+    
+    # Tip about removing test model if it's a small one
+    if [ "$IS_SMALL_MODEL" = true ]; then
+        echo ""
+        echo -e "${DIM}Tip: The small test model ($TEST_MODEL) can be removed to save space:${NC}"
+        echo -e "${DIM}  docker exec ollama ollama rm $TEST_MODEL${NC}"
+    fi
 else
     print_warning "No models installed yet - skipping inference test"
-    print_status "Run a test later with: docker exec ollama ollama run tinyllama 'Hello'"
+    print_status "Run a test later with: docker exec ollama ollama run qwen2:0.5b 'Hello'"
 fi
 
 # -----------------------------------------------------------------------------
@@ -1720,8 +1827,10 @@ echo "  Logs:       docker compose -f $SCRIPT_DIR/docker-compose.yml logs -f"
 echo "  Models:     docker exec ollama ollama list"
 echo ""
 echo -e "${BOLD}Adding more models:${NC}"
-echo "  1. Edit models.conf to add models to the selection menu"
+echo "  1. Edit models.conf and re-run ./setup.sh to select new models for download"
+echo "     and to regenerate the OpenCode config file"
 echo "  2. Or pull directly: docker exec ollama ollama pull <model:tag>"
+echo "  3. After pulling directly, run ./sync-opencode-config.sh to update OpenCode"
 echo ""
 echo -e "${BOLD}Using OpenCode:${NC}"
 echo "  1. Run 'opencode' in any project directory"

@@ -8,11 +8,16 @@ services:
     container_name: ollama
     restart: unless-stopped
 
+    # Run as host user to avoid root-owned files
+    # This allows cleanup without sudo
+    user: "${OLLAMA_UID:-1000}:${OLLAMA_GID:-1000}"
+
     ports:
       - "127.0.0.1:11434:11434"
 
     volumes:
-      - ${OLLAMA_DATA_DIR:-${HOME}/.ollama}:/root/.ollama
+      # Mount to /home/ollama/.ollama for non-root operation
+      - ${OLLAMA_DATA_DIR:-${HOME}/.ollama}:/home/ollama/.ollama
 
     devices:
       - /dev/kfd
@@ -24,6 +29,8 @@ services:
       - "${RENDER_GROUP_ID}"
 
     environment:
+      # Set HOME for non-root user (required for Ollama to find .ollama directory)
+      - HOME=/home/ollama
       # GPU architecture override (loaded from .env)
       - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION}
       # Listen on all interfaces inside container

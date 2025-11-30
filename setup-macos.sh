@@ -76,8 +76,8 @@ SPINNER_PID=""
 
 cleanup_spinner() {
     if [[ -n "$SPINNER_PID" ]] && kill -0 "$SPINNER_PID" 2>/dev/null; then
-        kill "$SPINNER_PID" 2>/dev/null
-        wait "$SPINNER_PID" 2>/dev/null
+        kill "$SPINNER_PID" 2>/dev/null || true
+        wait "$SPINNER_PID" 2>/dev/null || true
     fi
     SPINNER_PID=""
     printf "\r\033[K"  # Clear the line
@@ -106,8 +106,8 @@ stop_spinner() {
     local message="${2:-}"
     
     if [[ -n "$SPINNER_PID" ]]; then
-        kill "$SPINNER_PID" 2>/dev/null
-        wait "$SPINNER_PID" 2>/dev/null
+        kill "$SPINNER_PID" 2>/dev/null || true
+        wait "$SPINNER_PID" 2>/dev/null || true
         SPINNER_PID=""
     fi
     printf "\r\033[K"  # Clear the line
@@ -494,6 +494,112 @@ count_selected() {
     echo "$count"
 }
 
+# -----------------------------------------------------------------------------
+# Gum-based Model Selection (used when gum is available)
+# -----------------------------------------------------------------------------
+
+gum_model_selection() {
+    local memory_gb
+    memory_gb=$(get_usable_memory_gb)
+    
+    # Build labels array for gum
+    local labels=()
+    local preselected_labels=()
+    
+    for model in "${MODEL_ORDER[@]}"; do
+        IFS='|' read -r category size description <<< "${MODEL_INFO[$model]}"
+        
+        # Get hardware status tag
+        local model_size_gb hw_status hw_tag=""
+        model_size_gb=$(get_model_size_gb "$size")
+        hw_status=$(get_model_hardware_status "$model_size_gb" "$memory_gb")
+        
+        case "$hw_status" in
+            recommended)  hw_tag=" [✓ recommended]" ;;
+            may_struggle) hw_tag=" [⚠ may struggle]" ;;
+            wont_fit)     hw_tag=" [✗ won't fit]" ;;
+        esac
+        
+        # Format: "model:tag (~size) description [status]"
+        local label="${model} (~${size}) ${description}${hw_tag}"
+        labels+=("$label")
+        
+        if [[ "${MODEL_SELECTED[$model]}" == "1" ]]; then
+            preselected_labels+=("$label")
+        fi
+    done
+    
+    clear
+    echo ""
+    echo -e "${CYAN}${BOLD}============================================${NC}"
+    echo -e "${CYAN}${BOLD}  Select Models to Install${NC}"
+    echo -e "${CYAN}${BOLD}============================================${NC}"
+    echo ""
+    
+    # Show memory info if detected
+    local total_gb
+    total_gb=$(get_total_memory_gb)
+    if [[ "$memory_gb" -gt 0 && "$IGNORE_HARDWARE_RECOMMENDATIONS" != "true" ]]; then
+        echo -e "  ${BOLD}System Memory:${NC} ${GREEN}${total_gb}GB${NC} (${memory_gb}GB usable for models)"
+        echo ""
+    fi
+    
+    echo -e "${DIM}Use Space or x to toggle, Enter to confirm, Ctrl+C to cancel${NC}"
+    echo -e "${DIM}Edit models.conf to add more models to this list${NC}"
+    echo ""
+    
+    # Build comma-separated string of preselected labels
+    local selected_csv=""
+    if [ ${#preselected_labels[@]} -gt 0 ]; then
+        selected_csv=$(IFS=,; echo "${preselected_labels[*]}")
+    fi
+    
+    # Run gum choose with multi-select
+    local selections
+    if [ -n "$selected_csv" ]; then
+        selections=$(gum choose --no-limit \
+            --cursor-prefix="○ " \
+            --selected-prefix="✓ " \
+            --unselected-prefix="○ " \
+            --cursor.foreground="212" \
+            --selected.foreground="212" \
+            --selected="$selected_csv" \
+            "${labels[@]}") || {
+            echo ""
+            print_status "Selection cancelled"
+            exit 0
+        }
+    else
+        selections=$(gum choose --no-limit \
+            --cursor-prefix="○ " \
+            --selected-prefix="✓ " \
+            --unselected-prefix="○ " \
+            --cursor.foreground="212" \
+            --selected.foreground="212" \
+            "${labels[@]}") || {
+            echo ""
+            print_status "Selection cancelled"
+            exit 0
+        }
+    fi
+    
+    # Reset all selections
+    for model in "${MODEL_ORDER[@]}"; do
+        MODEL_SELECTED["$model"]=0
+    done
+    
+    # Parse selections and update MODEL_SELECTED
+    while IFS= read -r line; do
+        # Extract model name (first word before space)
+        local selected_model="${line%% *}"
+        if [[ -n "$selected_model" && -n "${MODEL_INFO[$selected_model]+x}" ]]; then
+            MODEL_SELECTED["$selected_model"]=1
+        fi
+    done <<< "$selections"
+    
+    clear
+}
+
 display_model_menu() {
     clear
     echo ""
@@ -578,6 +684,13 @@ display_model_menu() {
 }
 
 interactive_model_selection() {
+    # Use gum if available, otherwise fall back to number-key menu
+    if [ "$GUM_AVAILABLE" = true ]; then
+        gum_model_selection
+        return
+    fi
+    
+    # Fallback: number-key based menu
     local num_models=${#MODEL_ORDER[@]}
     
     while true; do
@@ -744,6 +857,16 @@ if command -v bc &>/dev/null; then
     echo -e "  $CHECKMARK bc                  installed"
 else
     echo -e "  $WARNMARK bc                  not installed (size calculation may fail)"
+fi
+
+# gum (for interactive menus - optional)
+GUM_AVAILABLE=false
+if command -v gum &>/dev/null; then
+    GUM_VERSION=$(gum --version 2>/dev/null | head -1 || echo "unknown")
+    echo -e "  $CHECKMARK gum                 installed ($GUM_VERSION)"
+    GUM_AVAILABLE=true
+else
+    echo -e "  $WARNMARK gum                 not installed (optional - brew install gum)"
 fi
 
 echo ""

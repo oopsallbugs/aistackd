@@ -80,6 +80,7 @@ The setup script checks for these and provides install instructions if any are m
 | **Bash 4+** | `brew install bash` | macOS ships with Bash 3.2 |
 | **Homebrew** | Installed automatically if missing | Package manager |
 | **Ollama** | Installed automatically via Homebrew | AI runtime |
+| **gum** | `brew install gum` | Optional - improves selection menus |
 
 Run the setup script with the newer Bash: `/opt/homebrew/bin/bash ./setup-macos.sh`
 
@@ -101,7 +102,7 @@ The setup script shows an interactive menu where you can select which AI models 
 - `[⚠ may struggle]` - Might work but could be slow
 - `[✗ won't fit]` - Too large for your GPU memory
 
-The first recommended model in each category is pre-selected. You can toggle selections with Space and confirm with Enter.
+The first recommended model in each category is pre-selected. You can toggle selections with Space or x, and confirm with Enter.
 
 ### Customizing the Model List
 
@@ -279,6 +280,22 @@ docker exec ollama ls /dev/kfd /dev/dri
 docker exec ollama ollama ps
 ```
 
+### Upgrading from Older Installation
+
+If you previously ran setup before the non-root container update, your `~/.ollama` directory may be owned by root. The setup script detects this and offers to fix it:
+
+```bash
+./setup.sh --force-env
+```
+
+If prompted about root-owned files, select "Yes" to fix ownership. This requires sudo once, after which all future operations will work without elevated permissions.
+
+Manual fix:
+
+```bash
+sudo chown -R $(id -u):$(id -g) ~/.ollama
+```
+
 ### More Help
 
 See the [detailed troubleshooting section](#detailed-troubleshooting) below for more specific issues.
@@ -314,6 +331,8 @@ The setup script creates a `.env` file with your system's configuration. Key set
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `OLLAMA_UID` | Your UID | Container user ID (auto-detected) |
+| `OLLAMA_GID` | Your GID | Container group ID (auto-detected) |
 | `OLLAMA_KEEP_ALIVE` | `10m` | How long to keep models loaded in GPU memory |
 | `OLLAMA_NUM_PARALLEL` | `2` | How many requests to handle at once |
 | `OLLAMA_MAX_LOADED_MODELS` | `1` | Maximum models loaded simultaneously |
@@ -345,6 +364,8 @@ To sync after adding new models:
 - Downloaded models (`~/.ollama/`)
 - OpenCode configuration (`~/.config/opencode/opencode.json`)
 - Local `.env` file and backups
+
+> **Note**: The container runs as your user (not root), so model files are owned by you and cleanup typically doesn't require sudo. If you're upgrading from an older installation that ran as root, the setup script will offer to fix file ownership.
 
 **What is NOT removed**:
 

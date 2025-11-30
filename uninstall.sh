@@ -29,6 +29,7 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 print_header() { echo -e "\n${CYAN}${BOLD}$1${NC}"; }
+print_debug() { [ "$DEBUG_MODE" = true ] && echo -e "${DIM}[DEBUG]${NC} $1" || true; }
 
 # Spinner for operations without their own progress indicator
 SPINNER_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
@@ -36,14 +37,14 @@ SPINNER_PID=""
 
 cleanup_spinner() {
     if [[ -n "$SPINNER_PID" ]] && kill -0 "$SPINNER_PID" 2>/dev/null; then
-        kill "$SPINNER_PID" 2>/dev/null
-        wait "$SPINNER_PID" 2>/dev/null
+        kill "$SPINNER_PID" 2>/dev/null || true
+        wait "$SPINNER_PID" 2>/dev/null || true
     fi
     SPINNER_PID=""
     printf "\r\033[K"  # Clear the line
 }
 
-trap cleanup_spinner EXIT
+trap 'cleanup_spinner' EXIT
 
 start_spinner() {
     local message="$1"
@@ -66,8 +67,8 @@ stop_spinner() {
     local message="${2:-}"
     
     if [[ -n "$SPINNER_PID" ]]; then
-        kill "$SPINNER_PID" 2>/dev/null
-        wait "$SPINNER_PID" 2>/dev/null
+        kill "$SPINNER_PID" 2>/dev/null || true
+        wait "$SPINNER_PID" 2>/dev/null || true
         SPINNER_PID=""
     fi
     printf "\r\033[K"  # Clear the line
@@ -96,18 +97,69 @@ elif [[ "$(uname -s)" == "Linux" ]]; then
     IS_LINUX=true
 fi
 
+# -----------------------------------------------------------------------------
+# Detect Installed Dependencies
+# -----------------------------------------------------------------------------
+
+# Track which dependencies were likely installed for this setup
+declare -a INSTALLED_DEPS
+
+detect_dependencies() {
+    INSTALLED_DEPS=()
+    
+    if [ "$IS_LINUX" = true ]; then
+        command -v docker &>/dev/null && INSTALLED_DEPS+=("Docker")
+        command -v gum &>/dev/null && INSTALLED_DEPS+=("gum")
+        command -v bc &>/dev/null && INSTALLED_DEPS+=("bc")
+        command -v curl &>/dev/null && INSTALLED_DEPS+=("curl")
+    fi
+    
+    if [ "$IS_MACOS" = true ]; then
+        command -v brew &>/dev/null && INSTALLED_DEPS+=("Homebrew")
+        command -v gum &>/dev/null && INSTALLED_DEPS+=("gum")
+        # Check for Bash 4+ installed via Homebrew
+        [[ -x "/opt/homebrew/bin/bash" ]] && INSTALLED_DEPS+=("Bash 4+ (Homebrew)")
+    fi
+}
+
+show_dependency_notice() {
+    if [ ${#INSTALLED_DEPS[@]} -eq 0 ]; then
+        return
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}${BOLD}Dependencies not removed:${NC}"
+    for dep in "${INSTALLED_DEPS[@]}"; do
+        echo -e "  ${DIM}○ ${dep}${NC}"
+    done
+    echo ""
+    echo -e "${DIM}These are kept because they may be used by other applications.${NC}"
+    echo -e "${DIM}To remove them manually:${NC}"
+    if [ "$IS_LINUX" = true ]; then
+        echo -e "${DIM}  sudo pacman -R docker gum bc  # Arch${NC}"
+        echo -e "${DIM}  sudo apt remove docker.io gum bc  # Ubuntu${NC}"
+    fi
+    if [ "$IS_MACOS" = true ]; then
+        echo -e "${DIM}  brew uninstall gum${NC}"
+        echo -e "${DIM}  # Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)\"${NC}"
+    fi
+    echo ""
+}
+
 # Parse command line arguments
 FORCE=false
 DRY_RUN=false
 NON_INTERACTIVE=false
 REMOVE_ALL=false
+DEBUG_MODE=false
 
 for arg in "$@"; do
     case $arg in
-        --all) REMOVE_ALL=true; NON_INTERACTIVE=true ;;
+        --all) REMOVE_ALL=true; NON_INTERACTIVE=true; FORCE=true ;;
         --force|-f) FORCE=true ;;
         --dry-run) DRY_RUN=true ;;
         --non-interactive) NON_INTERACTIVE=true ;;
+        --debug) DEBUG_MODE=true ;;
         --help|-h)
             echo "Usage: ./uninstall.sh [OPTIONS]"
             echo ""
@@ -118,6 +170,7 @@ for arg in "$@"; do
             echo "  --force, -f        Skip final confirmation prompt"
             echo "  --dry-run          Show what would be removed without doing it"
             echo "  --non-interactive  Use default selections (container + image only)"
+            echo "  --debug            Enable debug output"
             echo "  --help, -h         Show this help message"
             echo ""
             echo "Examples:"
@@ -191,6 +244,9 @@ for comp in "${ALL_COMPONENTS[@]}"; do
 done
 
 print_status "Detecting installed components..."
+
+# Detect dependencies that will be kept
+detect_dependencies
 
 # Detect Linux Docker components
 if [ "$IS_LINUX" = true ]; then
@@ -300,11 +356,26 @@ if [ "$NON_INTERACTIVE" = false ]; then
         SELECTED_ARG=$(IFS=,; echo "${PRESELECTED[*]}")
     fi
     
+    print_debug "OPTIONS array has ${#OPTIONS[@]} items"
+    print_debug "PRESELECTED array has ${#PRESELECTED[@]} items"
+    print_debug "SELECTED_ARG: '$SELECTED_ARG'"
+    
+    # Check if we have any options to show
+    if [ ${#OPTIONS[@]} -eq 0 ]; then
+        print_warning "No components detected to uninstall"
+        exit 0
+    fi
+    
+    # Show dependency notice before selection
+    show_dependency_notice
+    
     # Run gum choose
     echo -e "${BOLD}Select components to remove:${NC}"
-    echo -e "${DIM}(Space to toggle, Enter to confirm, Ctrl+C to cancel)${NC}"
+    echo -e "${DIM}(Space or x to toggle, Enter to confirm, Ctrl+C to cancel)${NC}"
     echo ""
     
+    # Temporarily disable exit on error for gum (it may return non-zero in some cases)
+    set +e
     SELECTIONS=$(gum choose --no-limit \
         --cursor-prefix="○ " \
         --selected-prefix="✓ " \
@@ -312,11 +383,16 @@ if [ "$NON_INTERACTIVE" = false ]; then
         --cursor.foreground="212" \
         --selected.foreground="212" \
         ${SELECTED_ARG:+--selected="$SELECTED_ARG"} \
-        "${OPTIONS[@]}") || {
+        "${OPTIONS[@]}")
+    GUM_EXIT_CODE=$?
+    set -e
+    
+    # Only treat as cancellation if Ctrl+C (130) or genuine error with no output
+    if [[ $GUM_EXIT_CODE -ne 0 && -z "$SELECTIONS" ]]; then
         echo ""
         print_status "Uninstall cancelled"
         exit 0
-    }
+    fi
     
     # Reset all selections
     for comp in "${ALL_COMPONENTS[@]}"; do
@@ -324,13 +400,33 @@ if [ "$NON_INTERACTIVE" = false ]; then
     done
     
     # Parse selections and update
-    while IFS= read -r line; do
-        # Extract the component key (before the colon)
-        local_key="${line%%:*}"
-        if [ -n "$local_key" ]; then
-            COMPONENT_SELECTED[$local_key]=true
-        fi
-    done <<< "$SELECTIONS"
+    print_debug "Raw gum output: '$SELECTIONS'"
+    if [[ -n "$SELECTIONS" ]]; then
+        while IFS= read -r line; do
+            # Skip empty lines
+            [[ -z "$line" ]] && continue
+            # Extract the component key (before the colon) and trim whitespace
+            local_key="${line%%:*}"
+            local_key="${local_key// /}"  # Remove any spaces
+            print_debug "Parsed key: '$local_key'"
+            # Only set if key is non-empty and exists in our components
+            if [[ -n "$local_key" && -v COMPONENT_EXISTS[$local_key] ]]; then
+                COMPONENT_SELECTED[$local_key]=true
+                print_debug "Set COMPONENT_SELECTED[$local_key]=true"
+            else
+                print_debug "Skipping unknown key: '$local_key'"
+            fi
+        done <<< "$SELECTIONS"
+    else
+        print_debug "No selections from gum (empty output)"
+    fi
+    
+    # Debug: show all final selections
+    if [ "$DEBUG_MODE" = true ]; then
+        for comp in "${ALL_COMPONENTS[@]}"; do
+            print_debug "Final: COMPONENT_SELECTED[$comp]=${COMPONENT_SELECTED[$comp]}"
+        done
+    fi
     
     echo ""
 fi
@@ -394,14 +490,19 @@ fi
 # Final Confirmation
 # -----------------------------------------------------------------------------
 
-if [ "$FORCE" = false ] && [ "$DRY_RUN" = false ]; then
-    # Check if models are selected (big warning)
-    if [ "${COMPONENT_SELECTED[models]}" = true ] && [ "${COMPONENT_EXISTS[models]}" = true ]; then
-        echo ""
+# Show warning about models deletion (even with --force/--all)
+if [ "${COMPONENT_SELECTED[models]}" = true ] && [ "${COMPONENT_EXISTS[models]}" = true ]; then
+    echo ""
+    if [ "$NON_INTERACTIVE" = true ]; then
+        print_warning "Downloaded models will be permanently deleted!"
+    else
         gum style --foreground 212 --bold "⚠ WARNING: Downloaded models will be permanently deleted!"
-        echo ""
     fi
-    
+    echo ""
+fi
+
+# Interactive confirmation (skip if --force or --all)
+if [ "$FORCE" = false ] && [ "$DRY_RUN" = false ]; then
     if ! gum confirm "Proceed with removal?"; then
         print_status "Uninstall cancelled"
         exit 0
@@ -415,23 +516,69 @@ fi
 
 print_header "Removing Components"
 
+# Temporarily disable exit on error for removal operations
+# (we handle errors gracefully within each section)
+set +e
+
 # Helper to check if item should be removed
 should_remove() {
     local name="$1"
     [ "${COMPONENT_SELECTED[$name]}" = true ] && [ "${COMPONENT_EXISTS[$name]}" = true ]
 }
 
+# Helper to check if container is running
+container_is_running() {
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^ollama$'
+}
+
+# -----------------------------------------------------------------------------
+# Remove Models via API (before stopping container)
+# -----------------------------------------------------------------------------
+# This removes model data through the Ollama API, avoiding permission issues
+# Must happen BEFORE container is removed
+
+if should_remove "models" && [ "$DRY_RUN" = false ]; then
+    if container_is_running; then
+        print_status "Removing models via Ollama API..."
+        INSTALLED_MODELS=$(docker exec ollama ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' || true)
+        if [ -n "$INSTALLED_MODELS" ]; then
+            while IFS= read -r model; do
+                [ -z "$model" ] && continue
+                print_status "  Removing $model..."
+                docker exec ollama ollama rm "$model" 2>/dev/null || true
+            done <<< "$INSTALLED_MODELS"
+            print_success "Models removed via API"
+        else
+            print_status "No models found in Ollama"
+        fi
+    else
+        print_debug "Container not running, will remove models directory directly"
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# Remove Container and Image
+# -----------------------------------------------------------------------------
+
 # Linux: Docker-based removal
 if [ "$IS_LINUX" = true ]; then
+    print_debug "IS_LINUX=true, checking container removal..."
     if should_remove "container"; then
-        print_status "Stopping and removing Ollama container..."
+        print_status "Stopping Ollama container..."
         if [ "$DRY_RUN" = false ]; then
-            docker compose down 2>/dev/null || docker stop ollama 2>/dev/null || true
+            # Stop container gracefully first
+            docker stop ollama 2>/dev/null || true
+            # Wait for container to fully stop
+            docker wait ollama 2>/dev/null || true
+            # Now remove it
+            print_status "Removing Ollama container..."
+            docker compose down --volumes 2>/dev/null || true
             docker rm -f ollama 2>/dev/null || true
         fi
         print_success "Container removed"
     fi
     
+    print_debug "Checking image removal..."
     if should_remove "image"; then
         print_status "Removing Ollama Docker image..."
         if [ "$DRY_RUN" = false ]; then
@@ -441,12 +588,17 @@ if [ "$IS_LINUX" = true ]; then
     fi
 fi
 
+print_debug "Finished Docker section"
+
 # macOS: Homebrew-based removal
 if [ "$IS_MACOS" = true ]; then
+    print_debug "IS_MACOS=true, checking brew removal..."
     if should_remove "brew"; then
         print_status "Stopping Ollama service..."
         if [ "$DRY_RUN" = false ]; then
             brew services stop ollama 2>/dev/null || true
+            # Wait a moment for service to stop
+            sleep 1
             pkill -x ollama 2>/dev/null || true
         fi
         
@@ -458,17 +610,33 @@ if [ "$IS_MACOS" = true ]; then
     fi
 fi
 
-# Remove models directory
+# -----------------------------------------------------------------------------
+# Remove Models Directory
+# -----------------------------------------------------------------------------
+# Note: With non-root container configuration, the models directory should be
+# owned by the user, so sudo should rarely be needed. The sudo fallback handles
+# legacy installations that ran as root.
+
+print_debug "Checking models: SELECTED=${COMPONENT_SELECTED[models]:-unset} EXISTS=${COMPONENT_EXISTS[models]:-unset}"
+
+# Remove models directory (should be mostly empty now if API removal worked)
 if should_remove "models"; then
+    print_debug "should_remove models returned true"
     if [ "$DRY_RUN" = false ]; then
         start_spinner "Removing models directory: $OLLAMA_DATA_DIR"
         # Try normal removal first, fall back to sudo if permission denied
         if ! rm -rf "$OLLAMA_DATA_DIR" 2>/dev/null; then
             stop_spinner false
             print_warning "Permission denied, trying with sudo..."
-            sudo rm -rf "$OLLAMA_DATA_DIR"
+            if ! sudo rm -rf "$OLLAMA_DATA_DIR"; then
+                print_error "Failed to remove models directory (sudo required)"
+                print_status "Remove manually with: sudo rm -rf $OLLAMA_DATA_DIR"
+            else
+                print_success "Models removed"
+            fi
+        else
+            stop_spinner true "Models removed"
         fi
-        stop_spinner true "Models removed"
     else
         print_status "Would remove: $OLLAMA_DATA_DIR"
     fi
@@ -501,6 +669,9 @@ if should_remove "backups"; then
     print_success "Backup files removed"
 fi
 
+# Re-enable exit on error
+set -e
+
 # -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
@@ -528,6 +699,9 @@ else
     if [ "${COMPONENT_EXISTS[env]}" = true ] && [ "${COMPONENT_SELECTED[env]}" = false ]; then
         echo -e "${DIM}Note: .env file kept (useful for reinstalling)${NC}"
     fi
+    
+    # Always show dependency notice at the end
+    show_dependency_notice
 fi
 
 echo ""
