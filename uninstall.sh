@@ -410,7 +410,7 @@ if [ "$NON_INTERACTIVE" = false ]; then
             local_key="${local_key// /}"  # Remove any spaces
             print_debug "Parsed key: '$local_key'"
             # Only set if key is non-empty and exists in our components
-            if [[ -n "$local_key" && -v COMPONENT_EXISTS[$local_key] ]]; then
+            if [[ -n "$local_key" ]] && [[ "${COMPONENT_EXISTS[$local_key]+isset}" == "isset" ]]; then
                 COMPONENT_SELECTED[$local_key]=true
                 print_debug "Set COMPONENT_SELECTED[$local_key]=true"
             else
