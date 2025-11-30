@@ -176,6 +176,8 @@ opencode
 # Inside OpenCode, type /models to switch between local models
 ```
 
+**Note on local models**: Local models (even 32B) are still hit-or-miss compared to cloud models like Claude for complex agentic tasks. They work well for simple queries but struggle with multi-step reasoning, long context, and following system instructions reliably. You may notice models echoing OpenCode's internal `<system-reminder>` tags verbatim - this appears to be an issue with how instructions are passed to local models, causing them to treat system prompts as conversation text. I'm working on a fix for this and will update this note when resolved or an upstream fix is implemented.  
+
 ### Command Line Chat
 
 ```bash
