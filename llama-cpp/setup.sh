@@ -37,17 +37,32 @@ PARENT_DIR="$(dirname "$SCRIPT_DIR")"
 # Colors and Output Helpers
 # -----------------------------------------------------------------------------
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
-CHECKMARK="${GREEN}✓${NC}"
-CROSSMARK="${RED}✗${NC}"
-WARNMARK="${YELLOW}!${NC}"
+# Colors - only use if terminal supports them
+if [[ -t 1 ]] && [[ "${TERM:-dumb}" != "dumb" ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+    CHECKMARK="${GREEN}✓${NC}"
+    CROSSMARK="${RED}✗${NC}"
+    WARNMARK="${YELLOW}!${NC}"
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    CYAN=''
+    BOLD=''
+    DIM=''
+    NC=''
+    CHECKMARK="[OK]"
+    CROSSMARK="[X]"
+    WARNMARK="[!]"
+fi
 
 # Check for gum (nice TUI)
 HAS_GUM=false
@@ -93,7 +108,7 @@ handle_exit() {
     cleanup_spinner
 }
 
-trap handle_interrupt INT TERM
+trap handle_interrupt INT TERM PIPE
 trap handle_exit EXIT
 
 start_spinner() {
@@ -944,10 +959,21 @@ if [[ $RUN_UPDATE == true ]]; then
     
     # Fetch and check for updates
     print_status "Checking for updates..."
-    git fetch origin main --quiet
+    if ! git fetch origin main --quiet 2>/dev/null; then
+        print_warning "Could not fetch from remote. Check network connection."
+        print_status "Continuing with existing version..."
+        cd "$SCRIPT_DIR"
+        exit 0
+    fi
     
-    LOCAL_HEAD=$(git rev-parse HEAD)
-    REMOTE_HEAD=$(git rev-parse origin/main)
+    LOCAL_HEAD=$(git rev-parse HEAD 2>/dev/null)
+    REMOTE_HEAD=$(git rev-parse origin/main 2>/dev/null)
+    
+    if [[ -z "$LOCAL_HEAD" || -z "$REMOTE_HEAD" ]]; then
+        print_warning "Could not determine git state. Repository may be corrupted."
+        cd "$SCRIPT_DIR"
+        exit 1
+    fi
     
     if [[ "$LOCAL_HEAD" == "$REMOTE_HEAD" ]]; then
         print_success "Already up to date!"
@@ -956,16 +982,16 @@ if [[ $RUN_UPDATE == true ]]; then
     fi
     
     # Show what's new
-    COMMITS_BEHIND=$(git rev-list HEAD..origin/main --count)
+    COMMITS_BEHIND=$(git rev-list HEAD..origin/main --count 2>/dev/null || echo "?")
     print_status "Updates available: $COMMITS_BEHIND new commit(s)"
     echo
     echo -e "${DIM}Recent changes:${NC}"
-    git log HEAD..origin/main --oneline | head -5
+    git log HEAD..origin/main --oneline 2>/dev/null | head -5
     echo
     
     # Pull updates
     print_status "Pulling updates..."
-    if ! git pull origin main; then
+    if ! git pull origin main 2>/dev/null; then
         print_error "Failed to pull updates. You may have local changes."
         echo "Try: cd llama.cpp && git stash && git pull"
         cd "$SCRIPT_DIR"
@@ -1370,7 +1396,7 @@ if [[ ${#PERMISSION_WARNINGS[@]} -gt 0 ]]; then
         echo -e "  ${DIM}The build may still succeed, but llama-server might not access the GPU.${NC}"
         echo
         
-        local continue_setup=""
+        continue_setup=""
         if [[ "$HAS_GUM" == true ]]; then
             if gum confirm "Continue with setup?"; then
                 continue_setup="y"
@@ -1414,14 +1440,25 @@ if [[ -d "$LLAMA_CPP_DIR" ]]; then
     else
         print_status "llama.cpp directory exists, pulling latest..."
         cd "$LLAMA_CPP_DIR"
-        git pull || print_warning "Failed to pull latest (continuing with existing)"
+        # Check if it's a valid git repository
+        if git rev-parse --git-dir &>/dev/null; then
+            git pull 2>/dev/null || print_warning "Failed to pull latest (continuing with existing)"
+        else
+            print_warning "Not a valid git repository, will re-clone"
+            cd "$SCRIPT_DIR"
+            rm -rf "$LLAMA_CPP_DIR"
+        fi
         cd "$SCRIPT_DIR"
     fi
 fi
 
 if [[ ! -d "$LLAMA_CPP_DIR" ]]; then
     print_status "Cloning llama.cpp..."
-    git clone https://github.com/ggerganov/llama.cpp "$LLAMA_CPP_DIR"
+    if ! git clone --depth 1 https://github.com/ggerganov/llama.cpp "$LLAMA_CPP_DIR"; then
+        print_error "Failed to clone llama.cpp repository"
+        echo "Check your network connection and try again"
+        exit 1
+    fi
 fi
 
 print_success "llama.cpp repository ready"
@@ -1888,22 +1925,28 @@ done
 # Parse size string to MB for comparison (e.g., "20GB" -> 20000, "500MB" -> 500, "0.4GB" -> 400)
 parse_size_mb() {
     local size="$1"
+    local result=0
+    
     # Handle GB with decimals (e.g., "0.4GB", "2.5GB", "20GB")
     if [[ "$size" =~ ^([0-9]+)\.([0-9]+)GB$ ]]; then
         local whole="${BASH_REMATCH[1]}"
         local frac="${BASH_REMATCH[2]}"
         # Pad or truncate fraction to 1 digit and multiply
         frac="${frac:0:1}"
-        echo $(( whole * 1000 + frac * 100 ))
+        result=$(( whole * 1000 + frac * 100 ))
     elif [[ "$size" =~ ^([0-9]+)GB$ ]]; then
-        echo $(( BASH_REMATCH[1] * 1000 ))
+        result=$(( BASH_REMATCH[1] * 1000 ))
     elif [[ "$size" =~ ^([0-9]+)\.([0-9]+)MB$ ]]; then
-        echo "${BASH_REMATCH[1]}"
+        result="${BASH_REMATCH[1]}"
     elif [[ "$size" =~ ^([0-9]+)MB$ ]]; then
-        echo "${BASH_REMATCH[1]}"
-    else
-        echo 0
+        result="${BASH_REMATCH[1]}"
     fi
+    
+    # Ensure we always return a valid number
+    if [[ ! "$result" =~ ^[0-9]+$ ]]; then
+        result=0
+    fi
+    echo "$result"
 }
 
 # Category priority for EXAMPLE_MODEL (best model for daily use)

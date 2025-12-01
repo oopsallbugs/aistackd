@@ -13,14 +13,26 @@ cd "$SCRIPT_DIR"
 # Colors and Output Helpers
 # -----------------------------------------------------------------------------
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# Colors - only use if terminal supports them
+if [[ -t 1 ]] && [[ "${TERM:-dumb}" != "dumb" ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    CYAN=''
+    BOLD=''
+    DIM=''
+    NC=''
+fi
 
 # Check for gum
 HAS_GUM=false
@@ -46,7 +58,7 @@ cleanup_spinner() {
     printf "\r\033[K"
 }
 
-trap cleanup_spinner EXIT INT TERM
+trap cleanup_spinner EXIT INT TERM PIPE
 
 start_spinner() {
     local message="$1"
@@ -91,7 +103,7 @@ stop_spinner() {
 LLAMA_CPP_DIR="$SCRIPT_DIR/llama.cpp"
 MODELS_DIR="$SCRIPT_DIR/models"
 LOCAL_ENV="$SCRIPT_DIR/.env"
-OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
+OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
 
 # Parse command line arguments
 REMOVE_ALL=false

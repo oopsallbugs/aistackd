@@ -12,14 +12,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODELS_CONF="$SCRIPT_DIR/models.conf"
 MODELS_DIR="$SCRIPT_DIR/models"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# Colors - only use if terminal supports them
+if [[ -t 1 ]] && [[ "${TERM:-dumb}" != "dumb" ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    CYAN=''
+    BOLD=''
+    DIM=''
+    NC=''
+fi
 
 # Check for gum
 HAS_GUM=false
@@ -32,9 +42,124 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Validate a models.conf entry
+# Usage: validate_model_entry <category> <model_id> <hf_repo> <gguf_file> <size> [line_num]
+# Returns 0 if valid, 1 if invalid (with warning printed)
+validate_model_entry() {
+    local category="$1"
+    local model_id="$2"
+    local hf_repo="$3"
+    local gguf_file="$4"
+    local size="$5"
+    local line_num="${6:-}"
+    
+    local line_info=""
+    [[ -n "$line_num" ]] && line_info=" (line $line_num)"
+    
+    # Required fields must not be empty
+    if [[ -z "$category" || -z "$model_id" || -z "$hf_repo" || -z "$gguf_file" ]]; then
+        print_warning "Skipping invalid entry${line_info}: missing required fields"
+        return 1
+    fi
+    
+    # model_id should be alphanumeric with hyphens/underscores/dots
+    if [[ ! "$model_id" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        print_warning "Skipping invalid entry${line_info}: model_id contains invalid characters: $model_id"
+        return 1
+    fi
+    
+    # gguf_file must end in .gguf
+    if [[ ! "$gguf_file" =~ \.gguf$ ]]; then
+        print_warning "Skipping invalid entry${line_info}: gguf_file must end in .gguf: $gguf_file"
+        return 1
+    fi
+    
+    # gguf_file should not contain path traversal
+    if [[ "$gguf_file" =~ \.\. || "$gguf_file" =~ ^/ ]]; then
+        print_warning "Skipping invalid entry${line_info}: gguf_file contains invalid path: $gguf_file"
+        return 1
+    fi
+    
+    # hf_repo should look like owner/repo
+    if [[ ! "$hf_repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
+        print_warning "Skipping invalid entry${line_info}: hf_repo format invalid: $hf_repo"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Parse size string to bytes (e.g., "20GB" -> 21474836480, "500MB" -> 524288000)
+parse_size_bytes() {
+    local size="$1"
+    local result=0
+    
+    if [[ "$size" =~ ^([0-9]+)\.([0-9]+)GB$ ]]; then
+        local whole="${BASH_REMATCH[1]}"
+        local frac="${BASH_REMATCH[2]}"
+        frac="${frac:0:2}"  # Keep 2 decimal places
+        [[ ${#frac} -eq 1 ]] && frac="${frac}0"
+        result=$(( (whole * 100 + frac) * 1073741824 / 100 ))
+    elif [[ "$size" =~ ^([0-9]+)GB$ ]]; then
+        result=$(( BASH_REMATCH[1] * 1073741824 ))
+    elif [[ "$size" =~ ^([0-9]+)\.([0-9]+)MB$ ]]; then
+        local whole="${BASH_REMATCH[1]}"
+        result=$(( whole * 1048576 ))
+    elif [[ "$size" =~ ^([0-9]+)MB$ ]]; then
+        result=$(( BASH_REMATCH[1] * 1048576 ))
+    fi
+    
+    echo "$result"
+}
+
+# Check available disk space before download
+# Usage: check_disk_space <target_dir> <required_bytes> [model_size_string]
+# Returns 0 if enough space, 1 if not
+check_disk_space() {
+    local target_dir="$1"
+    local required_bytes="$2"
+    local size_str="${3:-}"
+    
+    # Get available space in bytes
+    local available_bytes
+    available_bytes=$(df -B1 "$target_dir" 2>/dev/null | tail -1 | awk '{print $4}')
+    
+    if [[ -z "$available_bytes" || ! "$available_bytes" =~ ^[0-9]+$ ]]; then
+        # Can't determine disk space, proceed anyway
+        return 0
+    fi
+    
+    # Require at least required_bytes + 10% buffer
+    local required_with_buffer=$(( required_bytes * 110 / 100 ))
+    
+    if [[ $available_bytes -lt $required_with_buffer ]]; then
+        local available_gb=$(( available_bytes / 1073741824 ))
+        local required_gb=$(( required_bytes / 1073741824 ))
+        print_error "Insufficient disk space"
+        echo
+        echo -e "  ${BOLD}Required:${NC}  ~${size_str:-${required_gb}GB}"
+        echo -e "  ${BOLD}Available:${NC} ${available_gb}GB"
+        echo
+        echo "Free up space in: $target_dir"
+        return 1
+    fi
+    
+    return 0
+}
+
 # Spinner for operations
 SPINNER_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 SPINNER_PID=""
+
+# Track temp files for cleanup
+TEMP_FILES=()
+
+cleanup_temp_files() {
+    for f in "${TEMP_FILES[@]}"; do
+        [[ -f "$f" ]] && rm -f "$f"
+    done
+    TEMP_FILES=()
+}
 
 cleanup_spinner() {
     if [[ -n "$SPINNER_PID" ]] && kill -0 "$SPINNER_PID" 2>/dev/null; then
@@ -47,6 +172,7 @@ cleanup_spinner() {
 
 handle_interrupt() {
     cleanup_spinner
+    cleanup_temp_files
     echo
     echo
     print_status "Cancelled by user (Ctrl+C)"
@@ -54,8 +180,13 @@ handle_interrupt() {
     exit 130
 }
 
-trap handle_interrupt INT TERM
-trap cleanup_spinner EXIT
+cleanup_all() {
+    cleanup_spinner
+    cleanup_temp_files
+}
+
+trap handle_interrupt INT TERM PIPE
+trap cleanup_all EXIT
 
 # Download spinner with progress tracking
 start_download_spinner() {
@@ -170,12 +301,17 @@ list_models() {
         category="${category%"${category##*[![:space:]]}"}"
         model_id="${model_id#"${model_id%%[![:space:]]*}"}"
         model_id="${model_id%"${model_id##*[![:space:]]}"}"
+        hf_repo="${hf_repo#"${hf_repo%%[![:space:]]*}"}"
+        hf_repo="${hf_repo%"${hf_repo##*[![:space:]]}"}"
         gguf_file="${gguf_file#"${gguf_file%%[![:space:]]*}"}"
         gguf_file="${gguf_file%"${gguf_file##*[![:space:]]}"}"
         size="${size#"${size%%[![:space:]]*}"}"
         size="${size%"${size##*[![:space:]]}"}"
         description="${description#"${description%%[![:space:]]*}"}"
         description="${description%"${description##*[![:space:]]}"}"
+        
+        # Validate entry
+        validate_model_entry "$category" "$model_id" "$hf_repo" "$gguf_file" "$size" || continue
         
         local is_downloaded=false
         if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
@@ -298,6 +434,8 @@ download_model() {
         if [[ "$model_id" == "$search_model" ]]; then
             found=true
             # Trim all fields
+            category="${category#"${category%%[![:space:]]*}"}"
+            category="${category%"${category##*[![:space:]]}"}"
             hf_repo="${repo#"${repo%%[![:space:]]*}"}"
             hf_repo="${hf_repo%"${hf_repo##*[![:space:]]}"}"
             gguf_file="${file#"${file%%[![:space:]]*}"}"
@@ -306,6 +444,12 @@ download_model() {
             size="${size%"${size##*[![:space:]]}"}"
             description="${desc#"${desc%%[![:space:]]*}"}"
             description="${description%"${description##*[![:space:]]}"}"
+            
+            # Validate the entry before using it
+            if ! validate_model_entry "$category" "$model_id" "$hf_repo" "$gguf_file" "$size"; then
+                print_error "Model entry for '$search_model' is invalid"
+                exit 1
+            fi
             break
         fi
     done < "$MODELS_CONF"
@@ -336,6 +480,15 @@ download_model() {
     
     # Create models directory
     mkdir -p "$MODELS_DIR"
+    
+    # Check disk space before downloading
+    local required_bytes
+    required_bytes=$(parse_size_bytes "$size")
+    if [[ "$required_bytes" -gt 0 ]]; then
+        if ! check_disk_space "$MODELS_DIR" "$required_bytes" "$size"; then
+            exit 1
+        fi
+    fi
     
     echo
     echo -e "${CYAN}${BOLD}Downloading: $search_model${NC}"
@@ -383,7 +536,21 @@ download_model() {
         
         local curl_error
         curl_error=$(mktemp)
-        curl -fL -o "$output_path" "$url" 2>"$curl_error"
+        TEMP_FILES+=("$curl_error")
+        
+        # Use timeout and retry options for large file downloads
+        # --connect-timeout: max time for connection establishment
+        # --max-time: no limit for large files (handled by -C - for resume)
+        # --retry: retry on transient failures
+        # --retry-delay: wait between retries
+        # -C -: resume from where left off if interrupted
+        curl -fL \
+            --connect-timeout 30 \
+            --retry 3 \
+            --retry-delay 5 \
+            --retry-connrefused \
+            -C - \
+            -o "$output_path" "$url" 2>"$curl_error"
         local dl_status=$?
         
         stop_spinner
@@ -450,7 +617,7 @@ search_huggingface() {
     fi
     
     local response
-    response=$(curl -s "$url")
+    response=$(curl -sf --connect-timeout 15 --max-time 60 "$url")
     
     if [[ -z "$response" || "$response" == "[]" ]]; then
         print_warning "No results found"
@@ -502,7 +669,7 @@ show_trending() {
     local url="https://huggingface.co/api/models?filter=gguf&sort=likes7d&direction=-1&limit=$limit"
     
     local response
-    response=$(curl -s "$url")
+    response=$(curl -sf --connect-timeout 15 --max-time 60 "$url")
     
     if [[ -z "$response" || "$response" == "[]" ]]; then
         print_warning "Could not fetch trending models"
@@ -547,7 +714,7 @@ browse_model_files() {
     # Fetch file listing from HuggingFace API
     local url="https://huggingface.co/api/models/$repo/tree/main"
     local response
-    response=$(curl -s "$url")
+    response=$(curl -sf --connect-timeout 15 --max-time 60 "$url")
     
     if [[ -z "$response" ]] || echo "$response" | jq -e '.error' &>/dev/null; then
         print_error "Could not fetch files for '$repo'"
@@ -600,7 +767,7 @@ add_model() {
     # Fetch file listing
     local url="https://huggingface.co/api/models/$repo/tree/main"
     local response
-    response=$(curl -s "$url")
+    response=$(curl -sf --connect-timeout 15 --max-time 60 "$url")
     
     if [[ -z "$response" ]] || echo "$response" | jq -e '.error' &>/dev/null; then
         print_error "Could not fetch files for '$repo'"
@@ -829,7 +996,15 @@ add_model() {
                 
                 local curl_error
                 curl_error=$(mktemp)
-                curl -fL -o "$output_path" "$dl_url" 2>"$curl_error"
+                TEMP_FILES+=("$curl_error")
+                
+                curl -fL \
+                    --connect-timeout 30 \
+                    --retry 3 \
+                    --retry-delay 5 \
+                    --retry-connrefused \
+                    -C - \
+                    -o "$output_path" "$dl_url" 2>"$curl_error"
                 local dl_status=$?
                 stop_spinner
                 

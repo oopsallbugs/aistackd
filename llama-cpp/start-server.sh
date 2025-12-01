@@ -27,14 +27,24 @@ LLAMA_HOST="${LLAMA_HOST:-127.0.0.1}"
 GPU_LAYERS="${GPU_LAYERS:-99}"
 LOG_FILE=""  # Optional log file
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# Colors - only use if terminal supports them
+if [[ -t 1 ]] && [[ "${TERM:-dumb}" != "dumb" ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    CYAN=''
+    BOLD=''
+    DIM=''
+    NC=''
+fi
 
 # Check for gum
 HAS_GUM=false
@@ -46,6 +56,59 @@ print_status() { echo -e "${CYAN}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Escape special regex characters for use in grep/sed patterns
+# Usage: escape_regex "string"
+escape_regex() {
+    printf '%s' "$1" | sed 's/[.[\*^$()+?{|\\]/\\&/g'
+}
+
+# Validate a models.conf entry
+# Usage: validate_model_entry <category> <model_id> <hf_repo> <gguf_file> <size> [line_num]
+# Returns 0 if valid, 1 if invalid (with warning printed)
+validate_model_entry() {
+    local category="$1"
+    local model_id="$2"
+    local hf_repo="$3"
+    local gguf_file="$4"
+    local size="$5"
+    local line_num="${6:-}"
+    
+    local line_info=""
+    [[ -n "$line_num" ]] && line_info=" (line $line_num)"
+    
+    # Required fields must not be empty
+    if [[ -z "$category" || -z "$model_id" || -z "$hf_repo" || -z "$gguf_file" ]]; then
+        print_warning "Skipping invalid entry${line_info}: missing required fields"
+        return 1
+    fi
+    
+    # model_id should be alphanumeric with hyphens/underscores/dots
+    if [[ ! "$model_id" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        print_warning "Skipping invalid entry${line_info}: model_id contains invalid characters: $model_id"
+        return 1
+    fi
+    
+    # gguf_file must end in .gguf
+    if [[ ! "$gguf_file" =~ \.gguf$ ]]; then
+        print_warning "Skipping invalid entry${line_info}: gguf_file must end in .gguf: $gguf_file"
+        return 1
+    fi
+    
+    # gguf_file should not contain path traversal
+    if [[ "$gguf_file" =~ \.\. || "$gguf_file" =~ ^/ ]]; then
+        print_warning "Skipping invalid entry${line_info}: gguf_file contains invalid path: $gguf_file"
+        return 1
+    fi
+    
+    # hf_repo should look like owner/repo
+    if [[ ! "$hf_repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
+        print_warning "Skipping invalid entry${line_info}: hf_repo format invalid: $hf_repo"
+        return 1
+    fi
+    
+    return 0
+}
 
 # =============================================================================
 # Model Metadata Configuration
@@ -63,8 +126,9 @@ get_model_context() {
     fi
     
     # Format: model_id|display_name|context_limit|output_limit
-    local context
-    context=$(grep "^${model_id}|" "$MODELS_METADATA" 2>/dev/null | head -1 | cut -d'|' -f3)
+    local context escaped_id
+    escaped_id=$(escape_regex "$model_id")
+    context=$(grep "^${escaped_id}|" "$MODELS_METADATA" 2>/dev/null | head -1 | cut -d'|' -f3)
     
     if [[ -n "$context" && "$context" =~ ^[0-9]+$ ]]; then
         echo "$context"
@@ -83,12 +147,15 @@ set_model_context() {
         return 1
     fi
     
+    local escaped_id
+    escaped_id=$(escape_regex "$model_id")
+    
     # Check if model exists in metadata
-    if grep -q "^${model_id}|" "$MODELS_METADATA" 2>/dev/null; then
+    if grep -q "^${escaped_id}|" "$MODELS_METADATA" 2>/dev/null; then
         # Update existing entry - replace the context field (3rd field)
         # Format: model_id|display_name|context_limit|output_limit
         # Use # as sed delimiter since | is in the data
-        sed -i "s#^\(${model_id}|[^|]*|\)[^|]*|\(.*\)\$#\1${context}|\2#" "$MODELS_METADATA"
+        sed -i "s#^\(${escaped_id}|[^|]*|\)[^|]*|\(.*\)\$#\1${context}|\2#" "$MODELS_METADATA"
         return 0
     else
         # Model not in metadata - we could add it, but for now just skip
@@ -554,7 +621,6 @@ if [[ -f "$MODEL_PATH" ]]; then
     # Direct path to gguf file
     GGUF_PATH="$MODEL_PATH"
     # Try to find model ID from gguf filename
-    local gguf_basename
     gguf_basename=$(basename "$MODEL_PATH")
     while IFS='|' read -r category mid hf_repo gguf_file size description || [[ -n "$category" ]]; do
         [[ "$category" =~ ^[[:space:]]*# ]] && continue
@@ -580,12 +646,24 @@ else
         [[ "$category" =~ ^ALIAS: ]] && continue
         [[ -z "$category" ]] && continue
         
+        # Trim all fields
+        category="${category#"${category%%[![:space:]]*}"}"
+        category="${category%"${category##*[![:space:]]}"}"
         model_id="${model_id#"${model_id%%[![:space:]]*}"}"
         model_id="${model_id%"${model_id##*[![:space:]]}"}"
+        hf_repo="${hf_repo#"${hf_repo%%[![:space:]]*}"}"
+        hf_repo="${hf_repo%"${hf_repo##*[![:space:]]}"}"
         gguf_file="${gguf_file#"${gguf_file%%[![:space:]]*}"}"
         gguf_file="${gguf_file%"${gguf_file##*[![:space:]]}"}"
+        size="${size#"${size%%[![:space:]]*}"}"
+        size="${size%"${size##*[![:space:]]}"}"
         
         if [[ "$model_id" == "$MODEL_PATH" ]]; then
+            # Validate entry before using it
+            if ! validate_model_entry "$category" "$model_id" "$hf_repo" "$gguf_file" "$size"; then
+                print_error "Model entry for '$MODEL_PATH' is invalid in models.conf"
+                exit 1
+            fi
             GGUF_FILE="$gguf_file"
             MODEL_ID="$model_id"
             break
@@ -1137,7 +1215,7 @@ check_and_recommend_context() {
     
     IFS='|' read -r max_context model_vram_mb total_requested_mb estimated_params kv_per_1k <<< "$estimate"
     
-    if [[ -z "$max_context" ]]; then
+    if [[ -z "$max_context" || -z "$kv_per_1k" || "$kv_per_1k" -le 0 ]]; then
         return 0
     fi
     
