@@ -255,7 +255,7 @@ Both can run side-by-side:
 ./setup.sh --update           # Update llama.cpp
 ./setup.sh --fix-permissions  # Fix GPU permissions
 ./setup.sh --verify           # Verify downloaded models
-./setup.sh --reset-agents     # Reset AGENTS.md to default
+./setup.sh --reset-agents     # Reset ~/.config/opencode agents to defaults
 ./setup.sh --skip-build       # Skip building llama.cpp
 ./setup.sh --force-rebuild    # Force rebuild even if exists
 ./setup.sh --non-interactive  # Automated setup
@@ -265,7 +265,7 @@ Both can run side-by-side:
 ./setup-macos.sh --status     # Check current status
 ./setup-macos.sh --update     # Update llama.cpp
 ./setup-macos.sh --verify     # Verify downloaded models
-./setup-macos.sh --reset-agents  # Reset AGENTS.md to default
+./setup-macos.sh --reset-agents  # Reset ~/.config/opencode agents to defaults
 ```
 
 ## Troubleshooting

@@ -198,7 +198,7 @@ docker exec ollama ollama pull qwen3:14b # Retry
 ./setup.sh --status            # Check Ollama status
 ./setup.sh --update            # Update to latest version
 ./setup.sh --fix-permissions   # Fix GPU access permissions
-./setup.sh --reset-agents      # Reset AGENTS.md to default
+./setup.sh --reset-agents      # Reset ~/.config/opencode agents to defaults
 ./setup.sh --skip-models       # Re-run setup without model selection
 ./setup.sh --force-env         # Regenerate configuration
 ./setup.sh --non-interactive   # Use defaults, no prompts
