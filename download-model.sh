@@ -105,9 +105,8 @@ trap handle_interrupt INT TERM PIPE
 trap cleanup_all EXIT
 
 show_help() {
-    echo
-    echo -e "${CYAN}${BOLD}llama.cpp Model Downloader${NC}"
-    echo
+    print_banner "llama.cpp Model Downloader"
+
     echo "Usage: ./download-model.sh [OPTIONS] <model-id>"
     echo
     echo "Arguments:"
@@ -515,10 +514,8 @@ search_huggingface() {
 show_trending() {
     local limit="${1:-15}"
     
-    echo
-    echo -e "${CYAN}${BOLD}Trending GGUF Models on HuggingFace${NC}"
-    echo
-    
+    print_banner "Trending GGUF Models on HuggingFace"
+
     if ! command -v curl &>/dev/null; then
         print_error "curl is required"
         exit 1
@@ -702,7 +699,7 @@ add_model() {
         echo -e "  ${DIM}Use Space to toggle, Enter to confirm${NC}"
         echo
         
-        local gum_selected
+        local gum_selected gum_exit
         if [[ -n "$recommended_file" ]]; then
             gum_selected=$(gum choose --no-limit \
                 --cursor-prefix="$GUM_CURSOR_PREFIX" \
@@ -712,11 +709,8 @@ add_model() {
                 --selected.foreground="212" \
                 --height=20 \
                 --selected="$recommended_file" \
-                "${display_options[@]}") || {
-                echo
-                print_status "Selection cancelled"
-                exit 0
-            }
+                "${display_options[@]}") && gum_exit=0 || gum_exit=$?
+            check_user_interrupt $gum_exit
         else
             gum_selected=$(gum choose --no-limit \
                 --cursor-prefix="$GUM_CURSOR_PREFIX" \
@@ -725,11 +719,8 @@ add_model() {
                 --cursor.foreground="212" \
                 --selected.foreground="212" \
                 --height=20 \
-                "${display_options[@]}") || {
-                echo
-                print_status "Selection cancelled"
-                exit 0
-            }
+                "${display_options[@]}") && gum_exit=0 || gum_exit=$?
+            check_user_interrupt $gum_exit
         fi
         
         if [[ -z "$gum_selected" ]]; then
@@ -1059,10 +1050,8 @@ validate_models_conf() {
 # =============================================================================
 
 cleanup_orphan_models() {
-    echo
-    echo -e "${CYAN}${BOLD}Orphan Model Cleanup${NC}"
-    echo
-    
+    print_banner "Orphan Model Cleanup"
+
     if [[ ! -d "$MODELS_DIR" ]]; then
         print_warning "Models directory not found: $MODELS_DIR"
         return 0
@@ -1164,15 +1153,15 @@ cleanup_orphan_models() {
     if [[ "$HAS_GUM" == true ]]; then
         echo -e "${BOLD}What would you like to do?${NC}"
         echo
+        local gum_exit
         action=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
             --cursor.foreground="212" \
             "Delete all orphan models" \
             "Select which to delete" \
             "Whitelist all (keep but don't warn)" \
-            "Do nothing") || {
-            print_status "Cleanup cancelled"
-            return 0
-        }
+            "Do nothing") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
+        [[ -z "$action" ]] && action="Do nothing"
     else
         echo "Options:"
         echo "  1) Delete all orphan models"
@@ -1261,6 +1250,7 @@ cleanup_orphan_models() {
             echo
             
             local selected
+            local gum_exit
             selected=$(gum choose --no-limit \
                 --cursor-prefix="$GUM_CURSOR_PREFIX" \
                 --selected-prefix="$GUM_SELECTED_PREFIX" \
@@ -1268,10 +1258,8 @@ cleanup_orphan_models() {
                 --cursor.foreground="212" \
                 --selected.foreground="212" \
                 --height=15 \
-                "${options[@]}") || {
-                print_status "Selection cancelled"
-                return 0
-            }
+                "${options[@]}") && gum_exit=0 || gum_exit=$?
+            check_user_interrupt $gum_exit
             
             if [[ -z "$selected" ]]; then
                 print_status "No files selected"

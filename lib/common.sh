@@ -72,6 +72,26 @@ print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 print_header() { echo -e "\n${CYAN}${BOLD}$1${NC}"; }
 
+# Print main banner with gum style (falls back to plain text if gum unavailable)
+# Usage: print_banner "Script Title"
+print_banner() {
+    local title="$1"
+    echo
+    if [[ "$HAS_GUM" == true ]]; then
+        gum style \
+            --border rounded \
+            --border-foreground 212 \
+            --padding "0 2" \
+            --margin "0" \
+            "$title"
+    else
+        echo -e "${CYAN}${BOLD}============================================${NC}"
+        echo -e "${CYAN}${BOLD}  $title${NC}"
+        echo -e "${CYAN}${BOLD}============================================${NC}"
+    fi
+    echo
+}
+
 # -----------------------------------------------------------------------------
 # Spinner for Long Operations
 # -----------------------------------------------------------------------------
@@ -186,9 +206,9 @@ handle_interrupt() {
     cleanup_spinner
     echo
     echo
-    print_status "Setup cancelled by user (Ctrl+C)"
+    print_status "Cancelled by user (Ctrl+C)"
     echo
-    echo -e "${DIM}You can resume setup anytime by running ./setup.sh again${NC}"
+    echo -e "${DIM}You can resume anytime by running the script again${NC}"
     echo
     exit 130
 }
@@ -201,6 +221,17 @@ handle_exit() {
 setup_signal_handlers() {
     trap handle_interrupt INT TERM PIPE
     trap handle_exit EXIT
+}
+
+# Check if gum command was interrupted by user (Ctrl+C)
+# Usage: check_user_interrupt $?
+# Call this after gum commands to exit on Ctrl+C
+check_user_interrupt() {
+    local exit_code="$1"
+    # Exit code 130 = SIGINT (Ctrl+C), 143 = SIGTERM
+    if [[ $exit_code -eq 130 || $exit_code -eq 143 ]]; then
+        handle_interrupt
+    fi
 }
 
 # -----------------------------------------------------------------------------
@@ -244,7 +275,7 @@ fi
 # If models-metadata.conf doesn't exist, copies from .example
 # If it exists but differs from .example, offers to update (interactive)
 #
-# Returns: 0 if file exists/created, 1 if skipped
+# Returns: Always 0 (success) - skipping is not an error
 ensure_metadata_conf() {
     local script_dir="$1"
     local non_interactive="${2:-false}"
@@ -278,11 +309,13 @@ ensure_metadata_conf() {
         print_status "How would you like to handle the metadata config?"
         echo
         
-        local choice
+        local choice gum_exit
         choice=$(gum choose \
             "Skip - Keep existing file unchanged" \
             "Overwrite - Replace with example (backup created)" \
-            "View diff - Show differences") || choice="Skip"
+            "View diff - Show differences") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
+        [[ -z "$choice" ]] && choice="Skip"
         
         case "$choice" in
             "View diff"*)
@@ -293,10 +326,12 @@ ensure_metadata_conf() {
                 echo
                 
                 # Ask again after showing diff
-                local choice2
+                local choice2 gum_exit2
                 choice2=$(gum choose \
                     "Skip - Keep existing file unchanged" \
-                    "Overwrite - Replace with example (backup created)") || choice2="Skip"
+                    "Overwrite - Replace with example (backup created)") && gum_exit2=0 || gum_exit2=$?
+                check_user_interrupt $gum_exit2
+                [[ -z "$choice2" ]] && choice2="Skip"
                 
                 if [[ "$choice2" == "Overwrite"* ]]; then
                     local backup_file
@@ -305,11 +340,9 @@ ensure_metadata_conf() {
                     print_status "Backed up to: $backup_file"
                     cp "$example_file" "$metadata_file"
                     print_success "Updated models-metadata.conf from example"
-                    return 0
-                else
-                    print_status "Keeping existing models-metadata.conf"
-                    return 1
                 fi
+                # Skip is not an error, return success
+                return 0
                 ;;
             "Overwrite"*)
                 local backup_file
@@ -322,7 +355,7 @@ ensure_metadata_conf() {
                 ;;
             "Skip"*|"")
                 print_status "Keeping existing models-metadata.conf"
-                return 1
+                return 0
                 ;;
         esac
     else
@@ -435,11 +468,8 @@ gum_model_selection() {
         options+=("$label")
     done
     
-    echo
-    echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo -e "${CYAN}${BOLD}  Select GGUF Models to Download${NC}"
-    echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo
+    print_banner "Select GGUF Models to Download"
+
     echo -e "${DIM}★ = already downloaded${NC}"
     echo -e "${DIM}Use Space to toggle, Enter to confirm${NC}"
     echo
@@ -462,7 +492,7 @@ gum_model_selection() {
         selected_csv=$(IFS=,; echo "${preselected_labels[*]}")
     fi
     
-    local selections
+    local selections gum_exit
     if [[ -n "$selected_csv" ]]; then
         selections=$(gum choose --no-limit \
             --cursor-prefix="$GUM_CURSOR_PREFIX" \
@@ -472,11 +502,13 @@ gum_model_selection() {
             --selected.foreground="212" \
             --height=20 \
             --selected="$selected_csv" \
-            "${options[@]}") || {
+            "${options[@]}") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
+        if [[ -z "$selections" ]]; then
             echo
             print_status "Model selection cancelled"
             exit 0
-        }
+        fi
     else
         selections=$(gum choose --no-limit \
             --cursor-prefix="$GUM_CURSOR_PREFIX" \
@@ -485,11 +517,13 @@ gum_model_selection() {
             --cursor.foreground="212" \
             --selected.foreground="212" \
             --height=20 \
-            "${options[@]}") || {
+            "${options[@]}") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
+        if [[ -z "$selections" ]]; then
             echo
             print_status "Model selection cancelled"
             exit 0
-        }
+        fi
     fi
     
     # Reset selections
@@ -1256,12 +1290,14 @@ check_orphan_models() {
         echo -e "${DIM}These files take up disk space but aren't tracked.${NC}"
         echo
         
-        local cleanup_choice=""
+        local cleanup_choice="" gum_exit
         if [[ "$HAS_GUM" == true ]]; then
             cleanup_choice=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
                 --cursor.foreground="212" \
                 "Run cleanup now" \
-                "Skip for now") || cleanup_choice="Skip for now"
+                "Skip for now") && gum_exit=0 || gum_exit=$?
+            check_user_interrupt $gum_exit
+            [[ -z "$cleanup_choice" ]] && cleanup_choice="Skip for now"
         else
             read -r -p "Run cleanup? [y/N] " reply
             [[ "$reply" =~ ^[Yy]$ ]] && cleanup_choice="Run cleanup now"
@@ -1617,15 +1653,13 @@ handle_config_restore() {
         done
         gum_options+=("Cancel")
         
-        local selected
+        local selected gum_exit
         selected=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
             --cursor.foreground="212" \
-            "${gum_options[@]}") || {
-            print_status "Restore cancelled"
-            return 0
-        }
+            "${gum_options[@]}") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
         
-        if [[ "$selected" == "Cancel" ]]; then
+        if [[ -z "$selected" || "$selected" == "Cancel" ]]; then
             print_status "Restore cancelled"
             return 0
         fi
@@ -1790,11 +1824,13 @@ sync_agents() {
             print_status "How would you like to handle existing agent files?"
             echo
             
-            local choice
+            local choice gum_exit
             choice=$(gum choose \
                 "Skip - Keep existing files unchanged" \
                 "Overwrite - Replace with defaults (backups created)" \
-                "View diff - Show differences") || choice="Skip"
+                "View diff - Show differences") && gum_exit=0 || gum_exit=$?
+            check_user_interrupt $gum_exit
+            [[ -z "$choice" ]] && choice="Skip"
             
             case "$choice" in
                 "View diff"*)
@@ -1821,18 +1857,19 @@ sync_agents() {
                     done
                     
                     # Ask again after showing diff
-                    local choice2
+                    local choice2 gum_exit2
                     choice2=$(gum choose \
                         "Skip - Keep existing files unchanged" \
-                        "Overwrite - Replace with defaults (backups created)") || choice2="Skip"
+                        "Overwrite - Replace with defaults (backups created)") && gum_exit2=0 || gum_exit2=$?
+                    check_user_interrupt $gum_exit2
+                    [[ -z "$choice2" ]] && choice2="Skip"
                     
                     if [[ "$choice2" == "Overwrite"* ]]; then
                         sync_agents "$script_dir" "$target_dir" "$non_interactive" "true"
-                        return 0
                     else
                         print_status "Keeping existing agent files"
-                        return 1
                     fi
+                    return 0
                     ;;
                 "Overwrite"*)
                     sync_agents "$script_dir" "$target_dir" "$non_interactive" "true"
@@ -1840,13 +1877,13 @@ sync_agents() {
                     ;;
                 "Skip"*|"")
                     print_status "Keeping existing agent files"
-                    return 1
+                    return 0
                     ;;
             esac
         else
             print_status "Non-interactive mode: keeping existing agent files"
             print_status "Run setup.sh --reset-agents to reset to defaults"
-            return 1
+            return 0
         fi
     else
         # No existing files - create all
@@ -1887,7 +1924,7 @@ sync_agents() {
 # Usage: handle_opencode_config <config_path> <sync_script_path> <non_interactive> <generate_config_callback>
 # 
 # The generate_config_callback should be a function that outputs the config JSON to stdout
-# Returns: 0 if config was created/merged, 1 if skipped
+# Returns: Always 0 (success) - skipping is not an error
 #
 # Example:
 #   generate_my_config() { generate_opencode_config "${DOWNLOADED_MODELS[@]}"; }
@@ -1906,11 +1943,13 @@ handle_opencode_config() {
             print_status "How would you like to handle the existing config?"
             echo
             
-            local choice
+            local choice gum_exit
             choice=$(gum choose \
                 "Merge - Add new models to existing config" \
                 "Overwrite - Replace with new config (backup created)" \
-                "Skip - Keep existing config unchanged")
+                "Skip - Keep existing config unchanged") && gum_exit=0 || gum_exit=$?
+            check_user_interrupt $gum_exit
+            [[ -z "$choice" ]] && choice="Skip"
             
             case "$choice" in
                 Merge*)
@@ -1930,13 +1969,13 @@ handle_opencode_config() {
                     ;;
                 Skip*|"")
                     print_status "Keeping existing OpenCode config"
-                    return 1
+                    return 0
                     ;;
             esac
         else
             print_status "Non-interactive mode: keeping existing config"
             print_status "Run sync-opencode.sh --merge to add new models"
-            return 1
+            return 0
         fi
     else
         # No existing config - create new one

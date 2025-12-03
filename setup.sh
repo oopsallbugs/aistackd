@@ -580,11 +580,7 @@ fi
 # Banner
 # -----------------------------------------------------------------------------
 
-echo
-echo -e "${CYAN}${BOLD}============================================${NC}"
-echo -e "${CYAN}${BOLD}  llama.cpp ROCm/HIP Setup${NC}"
-echo -e "${CYAN}${BOLD}============================================${NC}"
-echo
+print_banner "llama.cpp ROCm/HIP Setup"
 
 # -----------------------------------------------------------------------------
 # Load Configuration
@@ -1073,11 +1069,14 @@ if [[ -n "$TEST_MODEL" ]]; then
         if [[ "$HAS_GUM" == true ]]; then
             echo -e "${BOLD}Run inference test?${NC}"
             echo
+            gum_exit=0
             test_choice=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
                 --cursor.foreground="212" \
                 "Yes - test with $TEST_MODEL (smallest)" \
                 "Choose different model" \
-                "Skip test") || true
+                "Skip test") && gum_exit=0 || gum_exit=$?
+            check_user_interrupt $gum_exit
+            [[ -z "$test_choice" ]] && test_choice="Skip test"
         else
             read -p "Run inference test with $TEST_MODEL (smallest)? [Y/n/other] " -r
             if [[ "$REPLY" =~ ^[Nn]$ ]]; then
@@ -1099,10 +1098,12 @@ if [[ -n "$TEST_MODEL" ]]; then
                 if [[ "$HAS_GUM" == true ]]; then
                     echo -e "${BOLD}Select model for inference test:${NC}"
                     echo
+                    gum_exit2=0
                     selected_label=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
                         --cursor.foreground="212" \
                         "${test_model_labels[@]}" \
-                        "Skip test") || true
+                        "Skip test") && gum_exit2=0 || gum_exit2=$?
+                    check_user_interrupt $gum_exit2
                     
                     if [[ "$selected_label" == "Skip test" ]] || [[ -z "$selected_label" ]]; then
                         print_status "Skipping inference test"

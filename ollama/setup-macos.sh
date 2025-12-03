@@ -553,12 +553,8 @@ gum_model_selection() {
         fi
     done
     
-    echo ""
-    echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo -e "${CYAN}${BOLD}  Select Models to Install${NC}"
-    echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo ""
-    
+    print_banner "Select Models to Install"
+
     # Show memory info if detected
     local total_gb
     total_gb=$(get_total_memory_gb)
@@ -578,7 +574,7 @@ gum_model_selection() {
     fi
     
     # Run gum choose with multi-select
-    local selections
+    local selections gum_exit
     if [ -n "$selected_csv" ]; then
         selections=$(gum choose --no-limit \
             --cursor-prefix="○ " \
@@ -588,12 +584,8 @@ gum_model_selection() {
             --selected.foreground="212" \
             --height=20 \
             --selected="$selected_csv" \
-            "${options[@]}") || {
-            # User cancelled with Ctrl+C
-            echo ""
-            print_status "Model selection cancelled"
-            exit 0
-        }
+            "${options[@]}") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
     else
         selections=$(gum choose --no-limit \
             --cursor-prefix="○ " \
@@ -602,12 +594,8 @@ gum_model_selection() {
             --cursor.foreground="212" \
             --selected.foreground="212" \
             --height=20 \
-            "${options[@]}") || {
-            # User cancelled with Ctrl+C
-            echo ""
-            print_status "Model selection cancelled"
-            exit 0
-        }
+            "${options[@]}") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
     fi
     
     # Reset all selections
@@ -695,12 +683,7 @@ get_smallest_selected_model() {
 # Banner
 # -----------------------------------------------------------------------------
 
-echo ""
-echo -e "${CYAN}${BOLD}============================================${NC}"
-echo -e "${CYAN}${BOLD}  Ollama Setup for macOS${NC}"
-echo -e "${CYAN}${BOLD}  Native Installation with Homebrew${NC}"
-echo -e "${CYAN}${BOLD}============================================${NC}"
-echo ""
+print_banner "Ollama Setup for macOS"
 
 # Detect Mac hardware
 MAC_CHIP=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "Unknown")

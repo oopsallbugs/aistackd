@@ -49,9 +49,8 @@ for arg in "$@"; do
         --dry-run) DRY_RUN=true ;;
         --non-interactive) NON_INTERACTIVE=true ;;
         --help|-h)
-            echo
-            echo -e "${CYAN}${BOLD}llama.cpp Uninstall${NC}"
-            echo
+            print_banner "llama.cpp Uninstall"
+
             echo "Usage: ./uninstall.sh [OPTIONS]"
             echo
             echo "Remove llama.cpp installation and related files."
@@ -131,14 +130,7 @@ check_inventory() {
 # -----------------------------------------------------------------------------
 
 gum_selection() {
-    echo
-    gum style \
-        --border rounded \
-        --border-foreground 212 \
-        --padding "0 2" \
-        --margin "0" \
-        "llama.cpp Uninstall"
-    echo
+    print_banner "llama.cpp Uninstall"
     
     # Build options array
     local options=()
@@ -174,7 +166,7 @@ gum_selection() {
     echo
     
     # Show selection dialog
-    local selections
+    local selections gum_exit
     selections=$(gum choose --no-limit \
         --cursor-prefix="$GUM_CURSOR_PREFIX" \
         --selected-prefix="$GUM_SELECTED_PREFIX" \
@@ -182,11 +174,8 @@ gum_selection() {
         --cursor.foreground="212" \
         --selected.foreground="196" \
         --height=10 \
-        "${options[@]}") || {
-        echo
-        print_status "Cancelled"
-        exit 0
-    }
+        "${options[@]}") && gum_exit=0 || gum_exit=$?
+    check_user_interrupt $gum_exit
     
     if [[ -z "$selections" ]]; then
         print_status "Nothing selected"
@@ -208,11 +197,7 @@ gum_selection() {
 }
 
 fallback_selection() {
-    echo
-    echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo -e "${CYAN}${BOLD}  llama.cpp Uninstall${NC}"
-    echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo
+    print_banner "llama.cpp Uninstall"
     
     local idx=1
     local option_map=()

@@ -108,9 +108,8 @@ get_hsa_version() {
 }
 
 show_help() {
-    echo
-    echo -e "${CYAN}${BOLD}llama.cpp Server Launcher${NC}"
-    echo
+    print_banner "llama.cpp Server Launcher"
+
     echo "Usage: ./start-server.sh [OPTIONS] <model-id>"
     echo
     echo "Arguments:"
@@ -167,10 +166,8 @@ show_help() {
 }
 
 list_models() {
-    echo
-    echo -e "${CYAN}${BOLD}Available Models${NC}"
-    echo
-    
+    print_banner "Available Models"
+
     if [[ ! -f "$SCRIPT_DIR/models.conf" ]]; then
         echo "models.conf not found"
         exit 1
@@ -213,9 +210,8 @@ check_health() {
     local port="${2:-$LLAMA_PORT}"
     local endpoint="http://$host:$port"
     
-    echo
-    echo -e "${CYAN}${BOLD}Server Health Check${NC}"
-    echo
+    print_banner "Server Health Check"
+
     echo -e "  ${BOLD}Endpoint:${NC} $endpoint"
     echo
     
@@ -478,9 +474,8 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         --status)
-            echo
-            echo -e "${CYAN}${BOLD}GPU/Memory Status${NC}"
-            echo
+            print_banner "GPU/Memory Status"
+
             # Show rocm-smi output (Linux) or system info (macOS)
             if [[ "$IS_LINUX" == true ]]; then
                 if command -v rocm-smi &>/dev/null; then
@@ -498,8 +493,8 @@ while [[ $# -gt 0 ]]; do
             fi
             echo
             # Show llama-server processes
-            echo -e "${CYAN}${BOLD}Llama Server Processes${NC}"
-            echo
+            print_banner "Llama Server Processes"
+
             llama_procs=$(pgrep -af "llama-server" 2>/dev/null || true)
             if [[ -n "$llama_procs" ]]; then
                 echo "$llama_procs"
@@ -1089,8 +1084,9 @@ select_context_size() {
     
     local selected_idx
     if [[ "$HAS_GUM" == true ]]; then
-        local selected
-        selected=$(printf '%s\n' "${options[@]}" | gum choose --header "Select context size:")
+        local selected gum_exit
+        selected=$(printf '%s\n' "${options[@]}" | gum choose --header "Select context size:") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
         # Find index
         for i in "${!options[@]}"; do
             if [[ "${options[$i]}" == "$selected" ]]; then
@@ -1224,8 +1220,8 @@ check_and_recommend_context() {
     esac
     
     # Display VRAM analysis
-    echo -e "${CYAN}${BOLD}VRAM Analysis${NC}"
-    echo
+    print_banner "VRAM Analysis"
+
     echo -e "  ${BOLD}GPU VRAM:${NC}      $((total_mb / 1024))GB total, $((avail_mb / 1024))GB available"
     echo -e "  ${BOLD}Model size:${NC}    ~$((model_vram_mb / 1024))GB (est. ${estimated_params}B params)"
     echo -e "  ${BOLD}KV cache:${NC}      ~$((requested_kv_mb / 1024))GB for ${requested_context} context"
@@ -1256,12 +1252,14 @@ check_and_recommend_context() {
         echo -e "${YELLOW}Note: This is close to your VRAM limit. May fail under heavy load.${NC}"
         echo
         
-        local choice=""
+        local choice="" gum_exit
         if [[ "$HAS_GUM" == true ]]; then
             choice=$(gum choose \
                 "Continue with ${requested_context}" \
                 "Select different context size" \
-                "Cancel")
+                "Cancel") && gum_exit=0 || gum_exit=$?
+            check_user_interrupt $gum_exit
+            [[ -z "$choice" ]] && choice="Cancel"
         else
             echo "Options:"
             echo "  1) Continue with ${requested_context} context"
@@ -1305,12 +1303,14 @@ check_and_recommend_context() {
     echo "  Safe max:  ${max_context} tokens"
     echo
     
-    local choice=""
+    local choice="" gum_exit
     if [[ "$HAS_GUM" == true ]]; then
         choice=$(gum choose \
             "Select context size (recommended)" \
             "Try ${requested_context} anyway (will likely fail)" \
-            "Cancel")
+            "Cancel") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
+        [[ -z "$choice" ]] && choice="Cancel"
     else
         echo "Options:"
         echo "  1) Select context size (recommended)"
@@ -1482,11 +1482,7 @@ run_benchmark() {
 }
 
 # Print startup info
-echo
-echo -e "${CYAN}${BOLD}════════════════════════════════════════════${NC}"
-echo -e "${CYAN}${BOLD}  llama-server${NC}"
-echo -e "${CYAN}${BOLD}════════════════════════════════════════════${NC}"
-echo
+print_banner "llama-server"
 
 # Get and display model info
 MODEL_INFO=$(get_model_info "$GGUF_PATH")

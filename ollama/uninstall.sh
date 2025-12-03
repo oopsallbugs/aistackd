@@ -72,11 +72,7 @@ done
 # Banner
 # -----------------------------------------------------------------------------
 
-echo ""
-echo -e "${CYAN}${BOLD}============================================${NC}"
-echo -e "${CYAN}${BOLD}  Ollama Uninstall${NC}"
-echo -e "${CYAN}${BOLD}============================================${NC}"
-echo ""
+print_banner "Ollama Uninstall"
 
 if [ "$DRY_RUN" = true ]; then
     print_warning "DRY RUN MODE - No changes will be made"
@@ -262,15 +258,11 @@ if [ "$NON_INTERACTIVE" = false ]; then
         --selected.foreground="212" \
         ${SELECTED_ARG:+--selected="$SELECTED_ARG"} \
         "${OPTIONS[@]}")
-    GUM_EXIT_CODE=$?
+    gum_exit=$?
     set -e
     
-    # Only treat as cancellation if Ctrl+C (130) or genuine error with no output
-    if [[ $GUM_EXIT_CODE -ne 0 && -z "$SELECTIONS" ]]; then
-        echo ""
-        print_status "Uninstall cancelled"
-        exit 0
-    fi
+    # Check for Ctrl+C
+    check_user_interrupt $gum_exit
     
     # Reset all selections
     for comp in "${ALL_COMPONENTS[@]}"; do

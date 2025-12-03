@@ -543,11 +543,8 @@ gum_model_selection() {
         fi
     done
     
-    echo ""
-    echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo -e "${CYAN}${BOLD}  Select Models to Install${NC}"
-    echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo ""
+    print_banner "Select Models to Install"
+
     # Show VRAM info if detected
     if [[ "$vram_gb" -gt 0 && "$IGNORE_HARDWARE_RECOMMENDATIONS" != "true" ]]; then
         echo -e "  ${BOLD}Detected VRAM:${NC} ${GREEN}${vram_gb}GB${NC}"
@@ -564,7 +561,7 @@ gum_model_selection() {
     fi
     
     # Run gum choose with multi-select
-    local selections
+    local selections gum_exit
     if [ -n "$selected_csv" ]; then
         selections=$(gum choose --no-limit \
             --cursor-prefix="○ " \
@@ -574,12 +571,8 @@ gum_model_selection() {
             --selected.foreground="212" \
             --height=20 \
             --selected="$selected_csv" \
-            "${options[@]}") || {
-            # User cancelled with Ctrl+C
-            echo ""
-            print_status "Model selection cancelled"
-            exit 0
-        }
+            "${options[@]}") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
     else
         selections=$(gum choose --no-limit \
             --cursor-prefix="○ " \
@@ -588,12 +581,8 @@ gum_model_selection() {
             --cursor.foreground="212" \
             --selected.foreground="212" \
             --height=20 \
-            "${options[@]}") || {
-            # User cancelled with Ctrl+C
-            echo ""
-            print_status "Model selection cancelled"
-            exit 0
-        }
+            "${options[@]}") && gum_exit=0 || gum_exit=$?
+        check_user_interrupt $gum_exit
     fi
     
     # Reset all selections
@@ -731,11 +720,7 @@ fi
 # Banner
 # -----------------------------------------------------------------------------
 
-echo ""
-echo -e "${CYAN}${BOLD}============================================${NC}"
-echo -e "${CYAN}${BOLD}  Ollama ROCm Setup for AMD GPUs${NC}"
-echo -e "${CYAN}${BOLD}============================================${NC}"
-echo ""
+print_banner "Ollama ROCm Setup for AMD GPUs"
 
 # -----------------------------------------------------------------------------
 # Status Mode
