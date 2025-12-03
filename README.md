@@ -186,7 +186,7 @@ Both can run side-by-side:
 |--------|----------|-------------|
 | `setup.sh` | Linux | Setup with Docker |
 | `setup-macos.sh` | macOS | Setup with Homebrew |
-| `sync-opencode.sh` | Both | Sync Ollama models to OpenCode |
+| `sync-opencode.sh` | Both | Sync Ollama models and agents to OpenCode |
 | `uninstall.sh` | Both | Remove Ollama and models |
 
 ## Model Recommendations

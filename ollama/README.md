@@ -219,8 +219,11 @@ The setup script creates a `.env` file with your system's configuration:
 To sync after adding new models:
 
 ```bash
-./sync-opencode.sh              # Replace config
-./sync-opencode.sh --merge      # Add new models only
+./sync-opencode.sh              # Sync models and agents
+./sync-opencode.sh --models     # Sync only models
+./sync-opencode.sh --agents     # Sync only agent files
+./sync-opencode.sh --merge      # Add new models, keep existing
+./sync-opencode.sh --reset-agents  # Reset agents to defaults
 ./sync-opencode.sh --dry-run    # Preview changes
 ```
 

@@ -30,6 +30,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 # -----------------------------------------------------------------------------
 
 MODELS_CONF="$SCRIPT_DIR/models.conf"
+# shellcheck disable=SC2034  # Used by load_metadata_conf() from common.sh
 METADATA_CONF="$SCRIPT_DIR/models-metadata.conf"
 MODELS_DIR="$SCRIPT_DIR/models"
 OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"

@@ -9,14 +9,17 @@ set -euo pipefail
 # configuration file with proper model metadata.
 #
 # Usage:
-#   ./sync-opencode.sh              # Full sync (replaces config with installed models)
-#   ./sync-opencode.sh --merge      # Only add new models, keep existing entries
-#   ./sync-opencode.sh --restore    # List and restore from a backup
-#   ./sync-opencode.sh --restore-latest  # Restore most recent backup
-#   ./sync-opencode.sh --docker     # Force Docker mode (Linux)
-#   ./sync-opencode.sh --native     # Force native mode (macOS)
-#   ./sync-opencode.sh --dry-run    # Show config without writing
-#   ./sync-opencode.sh --help       # Show help
+#   ./sync-opencode.sh                  # Sync both models and agents
+#   ./sync-opencode.sh --models         # Sync only model config
+#   ./sync-opencode.sh --agents         # Sync only agent files
+#   ./sync-opencode.sh --reset-agents   # Force reset agent files to defaults
+#   ./sync-opencode.sh --merge          # Only add new models, keep existing entries
+#   ./sync-opencode.sh --restore        # List and restore from a backup
+#   ./sync-opencode.sh --restore-latest # Restore most recent backup
+#   ./sync-opencode.sh --docker         # Force Docker mode (Linux)
+#   ./sync-opencode.sh --native         # Force native mode (macOS)
+#   ./sync-opencode.sh --dry-run        # Show config without writing
+#   ./sync-opencode.sh --help           # Show help
 #
 # =============================================================================
 
@@ -57,12 +60,17 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # -----------------------------------------------------------------------------
 
 METADATA_CONF="$SCRIPT_DIR/models-metadata.conf"
-OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
+OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
+OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
+AGENT_SOURCE_DIR="$SCRIPT_DIR/../agent"
 OLLAMA_MODE=""
 DRY_RUN=false
 MERGE_MODE=false
 RESTORE_MODE=false
 RESTORE_LATEST=false
+SYNC_MODELS=false
+SYNC_AGENTS=false
+RESET_AGENTS=false
 
 # Default metadata for unknown models
 DEFAULT_CONTEXT=32768
@@ -74,6 +82,16 @@ DEFAULT_OUTPUT=8192
 
 for arg in "$@"; do
     case $arg in
+        --models)
+            SYNC_MODELS=true
+            ;;
+        --agents)
+            SYNC_AGENTS=true
+            ;;
+        --reset-agents)
+            SYNC_AGENTS=true
+            RESET_AGENTS=true
+            ;;
         --docker)
             OLLAMA_MODE="docker"
             ;;
@@ -95,30 +113,35 @@ for arg in "$@"; do
             ;;
         --help|-h)
             echo "Usage: ./sync-opencode.sh [OPTIONS]"
-            echo ""
-            echo "Syncs OpenCode configuration with currently installed Ollama models."
-            echo ""
-            echo "Options:"
+            echo
+            echo "Syncs OpenCode configuration with installed Ollama models and agent files."
+            echo
+            echo "What to sync:"
+            echo "  (default)         Sync both models and agents"
+            echo "  --models          Sync only model config (opencode.json)"
+            echo "  --agents          Sync only agent files (AGENTS.md, agents/*.md)"
+            echo "  --reset-agents    Force reset agent files to defaults"
+            echo
+            echo "Model options:"
             echo "  --merge           Only add new models, keep existing config entries"
-            echo "                    (use this if you have manually added models)"
-            echo "  --restore         List available backups and select one to restore"
-            echo "  --restore-latest  Restore the most recent backup automatically"
+            echo "  --restore         List available config backups and restore one"
+            echo "  --restore-latest  Restore the most recent config backup"
+            echo
+            echo "Ollama mode:"
             echo "  --docker          Force Docker mode (Linux with Docker)"
             echo "  --native          Force native mode (macOS or native Linux install)"
-            echo "  --dry-run         Print generated config without writing to file"
+            echo
+            echo "General options:"
+            echo "  --dry-run         Show what would be synced without writing"
             echo "  --help, -h        Show this help message"
-            echo ""
-            echo "By default, the script performs a full sync - replacing the config"
-            echo "with only the currently installed models. Use --merge to preserve"
-            echo "manually added entries."
-            echo ""
-            echo "Backups are created automatically before each sync. Use --restore"
-            echo "to revert to a previous configuration if needed."
-            echo ""
+            echo
             echo "The script auto-detects whether Ollama is running in Docker or natively."
-            echo ""
-            echo "Config file: $OPENCODE_CONFIG"
-            echo "Metadata file: $METADATA_CONF"
+            echo
+            echo "Files:"
+            echo "  Config:  $OPENCODE_CONFIG"
+            echo "  Agents:  $OPENCODE_CONFIG_DIR/AGENTS.md"
+            echo "           $OPENCODE_CONFIG_DIR/agents/*.md"
+            echo "  Metadata: $METADATA_CONF"
             exit 0
             ;;
         *)
@@ -128,6 +151,12 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# Default: sync both if neither specified
+if [[ "$SYNC_MODELS" == false && "$SYNC_AGENTS" == false && "$RESTORE_MODE" == false ]]; then
+    SYNC_MODELS=true
+    SYNC_AGENTS=true
+fi
 
 # -----------------------------------------------------------------------------
 # Load Model Metadata
@@ -321,12 +350,157 @@ generate_config() {
 }
 
 # -----------------------------------------------------------------------------
+# Sync Models to Config
+# -----------------------------------------------------------------------------
+
+sync_models_config() {
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${CYAN}${BOLD}[dry-run] Would sync models to opencode.json${NC}"
+        echo
+    else
+        if [[ "$MERGE_MODE" == true ]]; then
+            echo -e "${CYAN}${BOLD}Syncing models (merge mode)${NC}"
+        else
+            echo -e "${CYAN}${BOLD}Syncing models${NC}"
+        fi
+        echo
+    fi
+    
+    # Load metadata
+    load_metadata_conf
+    
+    # Load existing config if in merge mode
+    if [[ "$MERGE_MODE" == true ]]; then
+        load_existing_config
+        if [[ ${#EXISTING_MODELS[@]} -gt 0 ]]; then
+            print_status "Found ${#EXISTING_MODELS[@]} existing model(s) in config (will preserve)"
+        fi
+    fi
+    
+    # Detect Ollama mode
+    detect_ollama_mode
+    print_status "Detected Ollama mode: $OLLAMA_MODE"
+    
+    # Get installed models
+    print_status "Querying installed models..."
+    INSTALLED_MODELS=$(get_installed_models)
+    
+    if [[ -z "$INSTALLED_MODELS" ]]; then
+        print_warning "No models installed in Ollama"
+        if [[ "$MERGE_MODE" == true && ${#EXISTING_MODELS[@]} -gt 0 ]]; then
+            print_status "Keeping existing config (merge mode)"
+            return 0
+        fi
+        echo
+        echo "Install models first with:"
+        if [[ "$OLLAMA_MODE" == "docker" ]]; then
+            echo "  docker exec ollama ollama pull <model:tag>"
+        else
+            echo "  ollama pull <model:tag>"
+        fi
+        return 1
+    fi
+    
+    # Convert to array
+    readarray -t MODEL_ARRAY <<< "$INSTALLED_MODELS"
+    
+    echo
+    print_status "Found ${#MODEL_ARRAY[@]} installed model(s):"
+    for model in "${MODEL_ARRAY[@]}"; do
+        if [[ -n "${MODEL_DISPLAY_NAME[$model]:-}" ]]; then
+            echo "    - $model (${MODEL_DISPLAY_NAME[$model]})"
+        else
+            echo "    - $model (using defaults)"
+        fi
+    done
+    
+    # Show preserved models in merge mode
+    if [[ "$MERGE_MODE" == true && ${#EXISTING_MODELS[@]} -gt 0 ]]; then
+        preserved_count=0
+        for model in "${!EXISTING_MODELS[@]}"; do
+            # Check if this model is NOT in installed list
+            found=false
+            for installed in "${MODEL_ARRAY[@]}"; do
+                [[ "$installed" == "$model" ]] && found=true && break
+            done
+            [[ "$found" == false ]] && ((preserved_count++))
+        done
+        if [[ $preserved_count -gt 0 ]]; then
+            echo
+            print_status "Preserving $preserved_count model(s) not in Ollama:"
+            for model in "${!EXISTING_MODELS[@]}"; do
+                found=false
+                for installed in "${MODEL_ARRAY[@]}"; do
+                    [[ "$installed" == "$model" ]] && found=true && break
+                done
+                [[ "$found" == false ]] && echo "    - $model (from existing config)"
+            done
+        fi
+    fi
+    
+    echo
+    
+    # Generate config
+    CONFIG_JSON=$(generate_config "${MODEL_ARRAY[@]}")
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        print_status "Generated configuration:"
+        echo
+        echo "$CONFIG_JSON"
+        echo
+        return 0
+    fi
+    
+    # Backup existing config if present
+    backup_config "$OPENCODE_CONFIG"
+    
+    # Write config
+    mkdir -p "$(dirname "$OPENCODE_CONFIG")"
+    echo "$CONFIG_JSON" > "$OPENCODE_CONFIG"
+    
+    print_success "Models synced to: $OPENCODE_CONFIG"
+    echo
+}
+
+# -----------------------------------------------------------------------------
+# Sync Agents
+# -----------------------------------------------------------------------------
+
+sync_agents_config() {
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${CYAN}${BOLD}[dry-run] Would sync agent files${NC}"
+        echo
+        print_status "Source: $AGENT_SOURCE_DIR/"
+        print_status "Target: $OPENCODE_CONFIG_DIR/"
+        echo
+        print_status "Files:"
+        echo "    AGENTS.md -> $OPENCODE_CONFIG_DIR/AGENTS.md"
+        echo "    plan.md   -> $OPENCODE_CONFIG_DIR/agents/plan.md"
+        echo "    review.md -> $OPENCODE_CONFIG_DIR/agents/review.md"
+        echo "    debug.md  -> $OPENCODE_CONFIG_DIR/agents/debug.md"
+        echo
+        return 0
+    fi
+    
+    if [[ "$RESET_AGENTS" == true ]]; then
+        echo -e "${CYAN}${BOLD}Resetting agent files${NC}"
+        echo
+        sync_agents "$AGENT_SOURCE_DIR" "$OPENCODE_CONFIG_DIR" "true" "true"
+    else
+        echo -e "${CYAN}${BOLD}Syncing agent files${NC}"
+        echo
+        sync_agents "$AGENT_SOURCE_DIR" "$OPENCODE_CONFIG_DIR" "false" "false"
+    fi
+    echo
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
 # Handle restore mode first (doesn't need Ollama running)
-if [[ "$RESTORE_MODE" == "true" ]]; then
-    if [[ "$RESTORE_LATEST" == "true" ]]; then
+if [[ "$RESTORE_MODE" == true ]]; then
+    if [[ "$RESTORE_LATEST" == true ]]; then
         handle_config_restore "$OPENCODE_CONFIG" "--latest"
     else
         handle_config_restore "$OPENCODE_CONFIG"
@@ -334,104 +508,18 @@ if [[ "$RESTORE_MODE" == "true" ]]; then
     exit 0
 fi
 
-echo ""
-if [[ "$MERGE_MODE" == "true" ]]; then
-    echo -e "${CYAN}${BOLD}Sync OpenCode Configuration (merge mode)${NC}"
-else
-    echo -e "${CYAN}${BOLD}Sync OpenCode Configuration${NC}"
-fi
-echo ""
+echo
 
-# Load metadata
-load_metadata_conf
-
-# Load existing config if in merge mode
-if [[ "$MERGE_MODE" == "true" ]]; then
-    load_existing_config
-    if [[ ${#EXISTING_MODELS[@]} -gt 0 ]]; then
-        print_status "Found ${#EXISTING_MODELS[@]} existing model(s) in config (will preserve)"
-    fi
+# Sync models if requested
+if [[ "$SYNC_MODELS" == true ]]; then
+    sync_models_config
 fi
 
-# Detect Ollama mode
-detect_ollama_mode
-print_status "Detected Ollama mode: $OLLAMA_MODE"
-
-# Get installed models
-print_status "Querying installed models..."
-INSTALLED_MODELS=$(get_installed_models)
-
-if [[ -z "$INSTALLED_MODELS" ]]; then
-    print_warning "No models installed in Ollama"
-    if [[ "$MERGE_MODE" == "true" && ${#EXISTING_MODELS[@]} -gt 0 ]]; then
-        print_status "Keeping existing config (merge mode)"
-        exit 0
-    fi
-    echo ""
-    echo "Install models first with:"
-    if [[ "$OLLAMA_MODE" == "docker" ]]; then
-        echo "  docker exec ollama ollama pull <model:tag>"
-    else
-        echo "  ollama pull <model:tag>"
-    fi
-    exit 0
+# Sync agents if requested
+if [[ "$SYNC_AGENTS" == true ]]; then
+    sync_agents_config
 fi
 
-# Convert to array
-readarray -t MODEL_ARRAY <<< "$INSTALLED_MODELS"
-
-echo ""
-print_status "Found ${#MODEL_ARRAY[@]} installed model(s):"
-for model in "${MODEL_ARRAY[@]}"; do
-    if [[ -n "${MODEL_DISPLAY_NAME[$model]:-}" ]]; then
-        echo "    - $model (${MODEL_DISPLAY_NAME[$model]})"
-    else
-        echo "    - $model (using defaults)"
-    fi
-done
-
-# Show preserved models in merge mode
-if [[ "$MERGE_MODE" == "true" && ${#EXISTING_MODELS[@]} -gt 0 ]]; then
-    preserved_count=0
-    for model in "${!EXISTING_MODELS[@]}"; do
-        # Check if this model is NOT in installed list
-        found=false
-        for installed in "${MODEL_ARRAY[@]}"; do
-            [[ "$installed" == "$model" ]] && found=true && break
-        done
-        [[ "$found" == "false" ]] && ((preserved_count++))
-    done
-    if [[ $preserved_count -gt 0 ]]; then
-        echo ""
-        print_status "Preserving $preserved_count model(s) not in Ollama:"
-        for model in "${!EXISTING_MODELS[@]}"; do
-            found=false
-            for installed in "${MODEL_ARRAY[@]}"; do
-                [[ "$installed" == "$model" ]] && found=true && break
-            done
-            [[ "$found" == "false" ]] && echo "    - $model (from existing config)"
-        done
-    fi
+if [[ "$DRY_RUN" == false ]]; then
+    print_success "Sync complete"
 fi
-
-echo ""
-
-# Generate config
-CONFIG_JSON=$(generate_config "${MODEL_ARRAY[@]}")
-
-if [[ "$DRY_RUN" == "true" ]]; then
-    print_status "Generated configuration (dry-run):"
-    echo ""
-    echo "$CONFIG_JSON"
-    echo ""
-    exit 0
-fi
-
-# Backup existing config if present
-backup_config "$OPENCODE_CONFIG"
-
-# Write config
-mkdir -p "$(dirname "$OPENCODE_CONFIG")"
-echo "$CONFIG_JSON" > "$OPENCODE_CONFIG"
-
-print_success "OpenCode config synced: $OPENCODE_CONFIG"
