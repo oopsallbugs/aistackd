@@ -4,6 +4,8 @@
 # Shared functions for Linux (ROCm) and macOS (Metal) setup
 # =============================================================================
 
+# shellcheck disable=SC2034  # Variables are used by scripts that source this file
+
 # Prevent multiple sourcing
 [[ -n "${_COMMON_SH_LOADED:-}" ]] && return 0
 _COMMON_SH_LOADED=1

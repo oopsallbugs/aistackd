@@ -767,7 +767,7 @@ if [[ -n "$TEST_MODEL" ]]; then
         declare -a test_models=()
         declare -a test_model_labels=()
         for model in "${MODEL_ORDER[@]}"; do
-            IFS='|' read -r category hf_repo gguf_file size description <<< "${MODEL_INFO[$model]}"
+            IFS='|' read -r _category _hf_repo gguf_file size _description <<< "${MODEL_INFO[$model]}"
             if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
                 test_models+=("$model")
                 test_model_labels+=("$model ($size)")

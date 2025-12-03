@@ -330,7 +330,7 @@ if [[ $RUN_STATUS == true ]]; then
     # GPU
     echo
     echo -e "  ${BOLD}GPU:${NC}"
-    IFS='|' read -r GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
+    IFS='|' read -r _GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
     echo -e "    $CHECKMARK Detected: ${GREEN}$GPU_NAME${NC}"
     echo -e "    $CHECKMARK Target: $GPU_TARGET"
     
@@ -499,12 +499,14 @@ if [[ $RUN_UPDATE == true ]]; then
     print_header "Rebuilding llama.cpp"
     
     # Detect GPU for build
-    IFS='|' read -r GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
+    IFS='|' read -r _GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
     print_status "Building for: $GPU_NAME ($GPU_TARGET)"
     
     # Set up HIP environment
-    export HIPCXX="$(hipconfig -l)/clang"
-    export HIP_PATH="$(hipconfig -R)"
+    HIPCXX="$(hipconfig -l)/clang"
+    export HIPCXX
+    HIP_PATH="$(hipconfig -R)"
+    export HIP_PATH
     
     # Clean and rebuild
     print_status "Cleaning previous build..."
@@ -652,7 +654,7 @@ echo
 # -----------------------------------------------------------------------------
 
 # Detect GPU
-IFS='|' read -r GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
+IFS='|' read -r _GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
 print_status "Detected GPU: $GPU_NAME ($GPU_TARGET)"
 
 # -----------------------------------------------------------------------------
@@ -684,10 +686,8 @@ fi
 # Make or Ninja
 if command -v ninja &>/dev/null; then
     echo -e "  $CHECKMARK ninja                installed"
-    BUILD_TOOL="ninja"
 elif command -v make &>/dev/null; then
     echo -e "  $CHECKMARK make                 installed"
-    BUILD_TOOL="make"
 else
     echo -e "  $CROSSMARK make/ninja           not installed"
     MISSING_REQUIRED+=("make")
@@ -960,8 +960,10 @@ if [[ "$SKIP_BUILD" == false ]]; then
         print_status "Configuring CMake with HIP for $GPU_TARGET..."
         
         # Set up HIP environment
-        export HIPCXX="$(hipconfig -l)/clang"
-        export HIP_PATH="$(hipconfig -R)"
+        HIPCXX="$(hipconfig -l)/clang"
+        export HIPCXX
+        HIP_PATH="$(hipconfig -R)"
+        export HIP_PATH
         
         # Configure with CMake
         cmake -S . -B build \
@@ -1140,7 +1142,7 @@ if [[ -n "$TEST_MODEL" ]]; then
         declare -a test_models=()
         declare -a test_model_labels=()
         for model in "${MODEL_ORDER[@]}"; do
-            IFS='|' read -r category hf_repo gguf_file size description <<< "${MODEL_INFO[$model]}"
+            IFS='|' read -r _category _hf_repo gguf_file size _description <<< "${MODEL_INFO[$model]}"
             if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
                 test_models+=("$model")
                 test_model_labels+=("$model ($size)")

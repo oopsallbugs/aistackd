@@ -523,7 +523,7 @@ download_model() {
             : # File is where we expect
         elif [[ -f "$MODELS_DIR/$hf_repo/$gguf_file" ]]; then
             mv "$MODELS_DIR/$hf_repo/$gguf_file" "$output_path"
-            rm -rf "$MODELS_DIR/${hf_repo%%/*}" 2>/dev/null || true
+            rm -rf "${MODELS_DIR:?}/${hf_repo%%/*}" 2>/dev/null || true
         fi
         
         if [[ $dl_status -ne 0 ]]; then

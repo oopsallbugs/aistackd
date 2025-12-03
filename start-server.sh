@@ -332,7 +332,7 @@ check_health() {
         local props_response
         if props_response=$(curl -sf --max-time 5 "$endpoint/props" 2>/dev/null); then
             if command -v jq &>/dev/null && echo "$props_response" | jq . &>/dev/null; then
-                local model_name default_gen_settings
+                local model_name
                 # Try different field names for model
                 model_name=$(echo "$props_response" | jq -r '.default_generation_settings.model // .model // empty' 2>/dev/null)
                 if [[ -n "$model_name" && "$model_name" != "null" ]]; then
@@ -380,7 +380,6 @@ get_model_info() {
     # Try to get model metadata from models.conf
     local model_desc=""
     local model_category=""
-    local model_context=""
     
     if [[ -f "$MODELS_CONF" ]]; then
         while IFS='|' read -r category model_id hf_repo gguf_file size description || [[ -n "$category" ]]; do
@@ -582,7 +581,7 @@ while [[ $# -gt 0 ]]; do
                 fi
             elif [[ "$IS_MACOS" == true ]]; then
                 echo "Chip: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo 'Unknown')"
-                local mem_gb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 / 1024 ))
+                mem_gb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 / 1024 ))
                 echo "Memory: ${mem_gb}GB unified"
                 echo
             fi
@@ -1168,8 +1167,8 @@ select_context_size() {
         local formatted
         # Use total_mb (not avail_mb) for fit status - matches user expectation based on card specs
         formatted=$(format_context_option "$ctx" "$model_vram_mb" "$kv_per_1k_mb" "$total_mb" "$headroom_mb")
-        local display status total
-        IFS='|' read -r display status total <<< "$formatted"
+        local display status _total
+        IFS='|' read -r display status _total <<< "$formatted"
         options+=("$display")
         statuses+=("$status")
     done

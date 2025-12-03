@@ -156,7 +156,7 @@ load_models_conf() {
         return 1
     fi
     
-    while IFS='|' read -r category model_id hf_repo gguf_file size description || [[ -n "$category" ]]; do
+    while IFS='|' read -r category model_id _hf_repo gguf_file size description || [[ -n "$category" ]]; do
         # Skip comments, empty lines, and aliases
         [[ "$category" =~ ^[[:space:]]*# ]] && continue
         [[ "$category" =~ ^ALIAS: ]] && continue
