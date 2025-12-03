@@ -92,7 +92,7 @@ deepseek-r1-32b-q3km|DeepSeek-R1 32B Q3KM (Reasoning)|32768|8192
 # Coding Models (optimized for code generation)
 # These get higher context/output limits for agentic tasks
 # -----------------------------------------------------------------------------
-qwen3-30b-q4km|Qwen3 30B MoE Q4KM (Agentic)|8192|16384
+qwen3-30b-q4km|Qwen3 30B MoE Q4KM (Agentic)|65536|16384
 qwen3-30b-q3km|Qwen3 30B MoE Q3KM (Agentic)|65536|16384
 qwen2.5-coder-14b-q4km|Qwen2.5-Coder 14B Q4KM|65536|16384
 qwen2.5-coder-32b-q4km|Qwen2.5-Coder 32B Q4KM|65536|16384

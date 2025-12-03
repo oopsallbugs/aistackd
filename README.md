@@ -256,6 +256,8 @@ Both can run side-by-side:
 ./setup.sh --fix-permissions  # Fix GPU permissions
 ./setup.sh --verify           # Verify downloaded models
 ./setup.sh --reset-agents     # Reset AGENTS.md to default
+./setup.sh --skip-build       # Skip building llama.cpp
+./setup.sh --force-rebuild    # Force rebuild even if exists
 ./setup.sh --non-interactive  # Automated setup
 
 # macOS
