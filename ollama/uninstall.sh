@@ -24,63 +24,6 @@ trap 'cleanup_spinner' EXIT
 
 OLLAMA_DATA_DIR="${OLLAMA_DATA_DIR:-$HOME/.ollama}"
 OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
-IS_MACOS=false
-IS_LINUX=false
-
-if [[ "$(uname -s)" == "Darwin" ]]; then
-    IS_MACOS=true
-elif [[ "$(uname -s)" == "Linux" ]]; then
-    IS_LINUX=true
-fi
-
-# -----------------------------------------------------------------------------
-# Detect Installed Dependencies
-# -----------------------------------------------------------------------------
-
-# Track which dependencies were likely installed for this setup
-declare -a INSTALLED_DEPS
-
-detect_dependencies() {
-    INSTALLED_DEPS=()
-    
-    if [ "$IS_LINUX" = true ]; then
-        command -v docker &>/dev/null && INSTALLED_DEPS+=("Docker")
-        command -v gum &>/dev/null && INSTALLED_DEPS+=("gum")
-        command -v bc &>/dev/null && INSTALLED_DEPS+=("bc")
-        command -v curl &>/dev/null && INSTALLED_DEPS+=("curl")
-    fi
-    
-    if [ "$IS_MACOS" = true ]; then
-        command -v brew &>/dev/null && INSTALLED_DEPS+=("Homebrew")
-        command -v gum &>/dev/null && INSTALLED_DEPS+=("gum")
-        # Check for Bash 4+ installed via Homebrew
-        [[ -x "/opt/homebrew/bin/bash" ]] && INSTALLED_DEPS+=("Bash 4+ (Homebrew)")
-    fi
-}
-
-show_dependency_notice() {
-    if [ ${#INSTALLED_DEPS[@]} -eq 0 ]; then
-        return
-    fi
-    
-    echo ""
-    echo -e "${YELLOW}${BOLD}Dependencies not removed:${NC}"
-    for dep in "${INSTALLED_DEPS[@]}"; do
-        echo -e "  ${DIM}○ ${dep}${NC}"
-    done
-    echo ""
-    echo -e "${DIM}These are kept because they may be used by other applications.${NC}"
-    echo -e "${DIM}To remove them manually:${NC}"
-    if [ "$IS_LINUX" = true ]; then
-        echo -e "${DIM}  sudo pacman -R docker gum bc  # Arch${NC}"
-        echo -e "${DIM}  sudo apt remove docker.io gum bc  # Ubuntu${NC}"
-    fi
-    if [ "$IS_MACOS" = true ]; then
-        echo -e "${DIM}  brew uninstall gum${NC}"
-        echo -e "${DIM}  # Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)\"${NC}"
-    fi
-    echo ""
-}
 
 # Parse command line arguments
 FORCE=false
@@ -182,9 +125,6 @@ for comp in "${ALL_COMPONENTS[@]}"; do
 done
 
 print_status "Detecting installed components..."
-
-# Detect dependencies that will be kept
-detect_dependencies
 
 # Detect Linux Docker components
 if [ "$IS_LINUX" = true ]; then
@@ -305,7 +245,7 @@ if [ "$NON_INTERACTIVE" = false ]; then
     fi
     
     # Show dependency notice before selection
-    show_dependency_notice
+    show_dependency_notice "ollama"
     
     # Run gum choose
     echo -e "${BOLD}Select components to remove:${NC}"
@@ -649,7 +589,7 @@ else
     fi
     
     # Always show dependency notice at the end
-    show_dependency_notice
+    show_dependency_notice "ollama"
 fi
 
 echo ""

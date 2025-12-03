@@ -457,7 +457,10 @@ show_summary() {
         else
             print_success "Uninstall complete!"
         fi
-        echo
+        
+        # Show dependency notice
+        show_dependency_notice "llama"
+        
         echo "To reinstall, run:"
         echo -e "  ${CYAN}./setup.sh${NC}"
     fi
