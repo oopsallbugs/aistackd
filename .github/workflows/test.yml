@@ -7,33 +7,43 @@ on:
     paths:
       - '**.sh'
       - '**.conf'
+      - '**.conf.example'
+      - '.github/workflows/test.yml'
   pull_request:
     branches: [main]
     paths:
       - '**.sh'
       - '**.conf'
+      - '**.conf.example'
+      - '.github/workflows/test.yml'
 
 jobs:
   test-llama-cpp:
     name: Test llama.cpp Scripts
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Verify bash syntax
+      - name: Verify bash syntax (all scripts)
         run: |
-          for script in *.sh; do
+          for script in *.sh lib/*.sh; do
             echo "Checking syntax: $script"
             bash -n "$script"
           done
 
       - name: Test help commands
         run: |
-          ./sync-opencode.sh --help
-          ./download-model.sh --help || true
+          ./setup.sh --help || true
+          ./setup-macos.sh --help || true
           ./start-server.sh --help || true
+          ./download-model.sh --help || true
+          ./sync-opencode.sh --help
+          ./uninstall.sh --help || true
 
       - name: Validate llama.cpp models.conf format
         run: |
@@ -51,6 +61,34 @@ jobs:
             fi
           done < models.conf
           echo "models.conf: OK"
+
+      - name: Validate llama.cpp models-metadata.conf.example format
+        run: |
+          echo "Validating models-metadata.conf.example..."
+          while IFS= read -r line; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+            # Format: model_id|name|context|output
+            if ! [[ "$line" =~ ^[a-z0-9._-]+\|.+\|[0-9]+\|[0-9]+$ ]]; then
+              echo "Invalid line: $line"
+              exit 1
+            fi
+          done < models-metadata.conf.example
+          echo "models-metadata.conf.example: OK"
+
+      - name: Validate .env.example format
+        run: |
+          echo "Validating .env.example..."
+          while IFS= read -r line; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+            # Format: KEY=value or KEY= (empty value allowed)
+            if ! [[ "$line" =~ ^[A-Z_][A-Z0-9_]*= ]]; then
+              echo "Invalid line: $line"
+              exit 1
+            fi
+          done < .env.example
+          echo ".env.example: OK"
 
   test-ollama:
     name: Test Ollama Scripts
@@ -78,7 +116,10 @@ jobs:
 
       - name: Test help commands
         run: |
+          ./ollama/setup.sh --help || true
+          ./ollama/setup-macos.sh --help || true
           ./ollama/sync-opencode.sh --help
+          ./ollama/uninstall.sh --help || true
 
       - name: Validate Ollama models.conf format
         run: |
@@ -95,7 +136,9 @@ jobs:
           done < ollama/models.conf
           echo "ollama/models.conf: OK"
 
-          echo "Validating ollama/models-metadata.conf..."
+      - name: Validate Ollama models-metadata.conf.example format
+        run: |
+          echo "Validating ollama/models-metadata.conf.example..."
           while IFS= read -r line; do
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
             [[ -z "$line" ]] && continue
@@ -104,5 +147,19 @@ jobs:
               echo "Invalid line: $line"
               exit 1
             fi
-          done < ollama/models-metadata.conf
-          echo "ollama/models-metadata.conf: OK"
+          done < ollama/models-metadata.conf.example
+          echo "ollama/models-metadata.conf.example: OK"
+
+      - name: Validate Ollama .env.example format
+        run: |
+          echo "Validating ollama/.env.example..."
+          while IFS= read -r line; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+            # Format: KEY=value or KEY= (empty value allowed)
+            if ! [[ "$line" =~ ^[A-Z_][A-Z0-9_]*= ]]; then
+              echo "Invalid line: $line"
+              exit 1
+            fi
+          done < ollama/.env.example
+          echo "ollama/.env.example: OK"
