@@ -85,6 +85,7 @@ OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
 # Parse command line arguments
 SKIP_MODELS=false
 NON_INTERACTIVE=false
+# shellcheck disable=SC2034  # Kept for CLI consistency with Linux version
 IGNORE_WARNINGS=false
 RUN_STATUS=false
 RUN_UPDATE=false

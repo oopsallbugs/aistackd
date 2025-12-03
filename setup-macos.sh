@@ -120,6 +120,7 @@ SKIP_MODELS=false
 FORCE_REBUILD=false
 FORCE_ENV=false
 NON_INTERACTIVE=false
+# shellcheck disable=SC2034  # Kept for CLI consistency with Linux version
 IGNORE_WARNINGS=false
 RUN_STATUS=false
 RUN_UPDATE=false
