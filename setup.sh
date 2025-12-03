@@ -164,57 +164,10 @@ get_vram_gb() {
     fi
 }
 
-get_model_size_gb() {
-    local size_str="$1"
-    local size_num
-    size_num=$(echo "$size_str" | grep -oE '[0-9]+\.?[0-9]*' | head -1)
-    echo "${size_num%.*}"
-}
-
-get_model_hardware_status() {
-    local model_size_str="$1"
-    local vram="$2"
-    
-    if [[ "$vram" == "0" || -z "$vram" ]]; then
-        echo
-        return
-    fi
-    
-    local model_size
-    model_size=$(get_model_size_gb "$model_size_str")
-    [[ -z "$model_size" || "$model_size" == "0" ]] && model_size=1
-    
-    local threshold_recommended=$((vram * 80 / 100))
-    local threshold_struggle=$vram
-    
-    if (( model_size <= threshold_recommended )); then
-        echo "recommended"
-    elif (( model_size <= threshold_struggle )); then
-        echo "may_struggle"
-    else
-        echo "wont_fit"
-    fi
-}
-
-format_hardware_tag() {
-    local status="$1"
-    local vram="$2"
-    
-    case "$status" in
-        recommended)
-            echo -e "${GREEN}[fits ${vram}GB]${NC}"
-            ;;
-        may_struggle)
-            echo -e "${YELLOW}[tight fit]${NC}"
-            ;;
-        wont_fit)
-            echo -e "${RED}[too large]${NC}"
-            ;;
-        *)
-            echo
-            ;;
-    esac
-}
+# Hardware status functions are now in lib/common.sh:
+# - get_model_size_gb()
+# - get_model_hardware_status()
+# - format_hardware_tag()
 
 # -----------------------------------------------------------------------------
 # Command Line Arguments
@@ -573,47 +526,15 @@ if [[ $RUN_VERIFY == true ]]; then
     VERIFY_PASS=0
     VERIFY_FAIL=0
     
+    # Wrapper to use common verify function and track counts
     verify_model() {
         local model_path="$1"
-        local model_name
-        model_name=$(basename "$model_path")
-        
         ((VERIFY_COUNT++))
-        
-        if [[ ! -f "$model_path" ]]; then
-            echo -e "  $CROSSMARK $model_name - file not found"
+        if verify_gguf_model "$model_path"; then
+            ((VERIFY_PASS++))
+        else
             ((VERIFY_FAIL++))
-            return 1
         fi
-        
-        if [[ ! -r "$model_path" ]]; then
-            echo -e "  $CROSSMARK $model_name - file not readable"
-            ((VERIFY_FAIL++))
-            return 1
-        fi
-        
-        local file_size
-        file_size=$(stat -c%s "$model_path" 2>/dev/null || stat -f%z "$model_path" 2>/dev/null)
-        if [[ "$file_size" -lt 1048576 ]]; then
-            echo -e "  $CROSSMARK $model_name - file too small ($(numfmt --to=iec "$file_size" 2>/dev/null || echo "${file_size}B"))"
-            ((VERIFY_FAIL++))
-            return 1
-        fi
-        
-        local magic
-        magic=$(head -c 4 "$model_path" 2>/dev/null | tr -d '\0')
-        if [[ "$magic" != "GGUF" ]]; then
-            echo -e "  $CROSSMARK $model_name - invalid GGUF format (magic: $magic)"
-            ((VERIFY_FAIL++))
-            return 1
-        fi
-        
-        local size_human
-        size_human=$(du -h "$model_path" | cut -f1)
-        
-        echo -e "  $CHECKMARK $model_name ($size_human) - valid GGUF"
-        ((VERIFY_PASS++))
-        return 0
     }
     
     if [[ -n "$VERIFY_MODEL" ]]; then
@@ -931,34 +852,7 @@ print_success "All dependencies satisfied!"
 
 print_header "Setting Up llama.cpp Repository"
 
-if [[ -d "$LLAMA_CPP_DIR" ]]; then
-    if [[ "$FORCE_REBUILD" == true ]]; then
-        print_status "Force rebuild requested, removing existing directory..."
-        rm -rf "$LLAMA_CPP_DIR"
-    else
-        print_status "llama.cpp directory exists, pulling latest..."
-        cd "$LLAMA_CPP_DIR"
-        if git rev-parse --git-dir &>/dev/null; then
-            git pull 2>/dev/null || print_warning "Failed to pull latest (continuing with existing)"
-        else
-            print_warning "Not a valid git repository, will re-clone"
-            cd "$SCRIPT_DIR"
-            rm -rf "$LLAMA_CPP_DIR"
-        fi
-        cd "$SCRIPT_DIR"
-    fi
-fi
-
-if [[ ! -d "$LLAMA_CPP_DIR" ]]; then
-    print_status "Cloning llama.cpp..."
-    if ! git clone --depth 1 https://github.com/ggerganov/llama.cpp "$LLAMA_CPP_DIR"; then
-        print_error "Failed to clone llama.cpp repository"
-        echo "Check your network connection and try again"
-        exit 1
-    fi
-fi
-
-print_success "llama.cpp repository ready"
+clone_or_update_repo "https://github.com/ggerganov/llama.cpp" "$LLAMA_CPP_DIR" "$FORCE_REBUILD" || exit 1
 
 # -----------------------------------------------------------------------------
 # Build llama.cpp with HIP
@@ -1173,7 +1067,7 @@ if [[ -n "$TEST_MODEL" ]]; then
         if [[ "$HAS_GUM" == true ]]; then
             echo -e "${BOLD}Run inference test?${NC}"
             echo
-            test_choice=$(gum choose --cursor-prefix="[ ] " --selected-prefix="[x] " \
+            test_choice=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
                 --cursor.foreground="212" \
                 "Yes - test with $TEST_MODEL (smallest)" \
                 "Choose different model" \
@@ -1199,7 +1093,7 @@ if [[ -n "$TEST_MODEL" ]]; then
                 if [[ "$HAS_GUM" == true ]]; then
                     echo -e "${BOLD}Select model for inference test:${NC}"
                     echo
-                    selected_label=$(gum choose --cursor-prefix="[ ] " --selected-prefix="[x] " \
+                    selected_label=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
                         --cursor.foreground="212" \
                         "${test_model_labels[@]}" \
                         "Skip test") || true

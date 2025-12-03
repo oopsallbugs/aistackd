@@ -314,18 +314,7 @@ load_metadata_conf() {
     done < "$METADATA_CONF"
 }
 
-generate_display_name() {
-    # Generate a display name for models not in metadata
-    local model="$1"
-    local base_name size_tag
-    
-    base_name="${model%%:*}"
-    size_tag="${model##*:}"
-    base_name="${base_name^}"  # Capitalize first letter
-    size_tag="${size_tag^^}"   # Uppercase size tag
-    
-    echo "$base_name $size_tag"
-}
+# generate_display_name is now in lib/common.sh
 
 generate_opencode_config() {
     # Generate OpenCode config JSON for the given models

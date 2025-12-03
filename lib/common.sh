@@ -58,6 +58,14 @@ if command -v gum &>/dev/null; then
     HAS_GUM=true
 fi
 
+# Gum prefix styles (consistent across all scripts)
+GUM_CURSOR_PREFIX="○ "
+GUM_SELECTED_PREFIX="✓ "
+GUM_UNSELECTED_PREFIX="○ "
+# For single-select (radio button style)
+GUM_RADIO_CURSOR="○ "
+GUM_RADIO_SELECTED="◉ "
+
 print_status() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
@@ -361,9 +369,9 @@ gum_model_selection() {
     local selections
     if [[ -n "$selected_csv" ]]; then
         selections=$(gum choose --no-limit \
-            --cursor-prefix="[ ] " \
-            --selected-prefix="[x] " \
-            --unselected-prefix="[ ] " \
+            --cursor-prefix="$GUM_CURSOR_PREFIX" \
+            --selected-prefix="$GUM_SELECTED_PREFIX" \
+            --unselected-prefix="$GUM_UNSELECTED_PREFIX" \
             --cursor.foreground="212" \
             --selected.foreground="212" \
             --height=20 \
@@ -375,9 +383,9 @@ gum_model_selection() {
         }
     else
         selections=$(gum choose --no-limit \
-            --cursor-prefix="[ ] " \
-            --selected-prefix="[x] " \
-            --unselected-prefix="[ ] " \
+            --cursor-prefix="$GUM_CURSOR_PREFIX" \
+            --selected-prefix="$GUM_SELECTED_PREFIX" \
+            --unselected-prefix="$GUM_UNSELECTED_PREFIX" \
             --cursor.foreground="212" \
             --selected.foreground="212" \
             --height=20 \
@@ -413,51 +421,235 @@ download_model() {
         print_status "$model_id already downloaded"
         return 0
     fi
+}
+
+# -----------------------------------------------------------------------------
+# Display Name Generation
+# -----------------------------------------------------------------------------
+
+# Generate a display name for models not in metadata
+# Usage: generate_display_name "qwen2.5-coder:7b" -> "Qwen2.5-coder 7B"
+generate_display_name() {
+    local model="$1"
+    local base_name size_tag
     
-    mkdir -p "$MODELS_DIR"
+    base_name="${model%%:*}"
+    size_tag="${model##*:}"
+    base_name="${base_name^}"  # Capitalize first letter
+    size_tag="${size_tag^^}"   # Uppercase size tag
     
-    # Get expected file size from HuggingFace API (optional, for progress %)
-    local expected_bytes=""
-    if command -v curl &>/dev/null && command -v jq &>/dev/null; then
-        expected_bytes=$(curl -sf "https://huggingface.co/api/models/$hf_repo/tree/main" 2>/dev/null | \
-            jq -r ".[] | select(.path == \"$gguf_file\") | .size" 2>/dev/null || echo)
+    echo "$base_name $size_tag"
+}
+
+# -----------------------------------------------------------------------------
+# Hardware Status Functions
+# -----------------------------------------------------------------------------
+
+# Extract numeric GB value from size string (e.g., "4.5GB" -> "4")
+get_model_size_gb() {
+    local size_str="$1"
+    local size_num
+    size_num=$(echo "$size_str" | grep -oE '[0-9]+\.?[0-9]*' | head -1)
+    echo "${size_num%.*}"
+}
+
+# Determine if model fits in available memory/VRAM
+# Returns: "recommended", "may_struggle", "wont_fit", or empty
+get_model_hardware_status() {
+    local model_size_str="$1"
+    local vram="$2"
+    
+    if [[ "$vram" == "0" || -z "$vram" ]]; then
+        echo
+        return
     fi
     
-    if command -v huggingface-cli &>/dev/null; then
-        # huggingface-cli has its own progress, use spinner alongside
-        start_download_spinner "Downloading $model_id ($size)" "$output_path" "$expected_bytes"
-        huggingface-cli download "$hf_repo" "$gguf_file" --local-dir "$MODELS_DIR" --local-dir-use-symlinks False --quiet 2>/dev/null
-        local dl_status=$?
-        stop_spinner
-        
-        if [[ $dl_status -ne 0 ]]; then
-            print_error "Failed to download $model_id"
-            return 1
-        fi
-    else
-        # Fallback to curl with spinner
-        local url="https://huggingface.co/$hf_repo/resolve/main/$gguf_file"
-        start_download_spinner "Downloading $model_id ($size)" "$output_path" "$expected_bytes"
-        curl -sfL -o "$output_path" "$url" 2>/dev/null
-        local dl_status=$?
-        stop_spinner
-        
-        if [[ $dl_status -ne 0 ]]; then
-            print_error "Failed to download $model_id"
-            rm -f "$output_path"
-            return 1
-        fi
-    fi
+    local model_size
+    model_size=$(get_model_size_gb "$model_size_str")
+    [[ -z "$model_size" || "$model_size" == "0" ]] && model_size=1
     
-    if [[ -f "$output_path" ]]; then
-        local actual_size
-        actual_size=$(du -h "$output_path" | cut -f1)
-        print_success "$model_id downloaded ($actual_size)"
+    local threshold_recommended=$((vram * 80 / 100))
+    local threshold_struggle=$vram
+    
+    if (( model_size <= threshold_recommended )); then
+        echo "recommended"
+    elif (( model_size <= threshold_struggle )); then
+        echo "may_struggle"
     else
-        print_error "Failed to download $model_id"
-        return 1
+        echo "wont_fit"
     fi
 }
+
+# Format hardware status as colored tag for display
+format_hardware_tag() {
+    local status="$1"
+    local vram="$2"
+    
+    case "$status" in
+        recommended)
+            echo -e "${GREEN}[fits ${vram}GB]${NC}"
+            ;;
+        may_struggle)
+            echo -e "${YELLOW}[tight fit]${NC}"
+            ;;
+        wont_fit)
+            echo -e "${RED}[too large]${NC}"
+            ;;
+        *)
+            echo
+            ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
+# GGUF Model Verification
+# -----------------------------------------------------------------------------
+
+# Verify a GGUF model file is valid
+# Usage: verify_gguf_model "/path/to/model.gguf"
+# Returns: 0 if valid, 1 if invalid
+# Outputs: Status message with checkmark/crossmark
+verify_gguf_model() {
+    local model_path="$1"
+    local model_name
+    model_name=$(basename "$model_path")
+    
+    if [[ ! -f "$model_path" ]]; then
+        echo -e "  $CROSSMARK $model_name - file not found"
+        return 1
+    fi
+    
+    if [[ ! -r "$model_path" ]]; then
+        echo -e "  $CROSSMARK $model_name - file not readable"
+        return 1
+    fi
+    
+    local file_size
+    file_size=$(stat -c%s "$model_path" 2>/dev/null || stat -f%z "$model_path" 2>/dev/null)
+    if [[ "$file_size" -lt 1048576 ]]; then
+        local size_display
+        size_display=$(numfmt --to=iec "$file_size" 2>/dev/null || echo "${file_size}B")
+        echo -e "  $CROSSMARK $model_name - file too small ($size_display)"
+        return 1
+    fi
+    
+    local magic
+    magic=$(head -c 4 "$model_path" 2>/dev/null | tr -d '\0')
+    if [[ "$magic" != "GGUF" ]]; then
+        echo -e "  $CROSSMARK $model_name - invalid GGUF format (magic: $magic)"
+        return 1
+    fi
+    
+    local size_human
+    size_human=$(du -h "$model_path" | cut -f1)
+    
+    echo -e "  $CHECKMARK $model_name ($size_human) - valid GGUF"
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# Dependency Checking
+# -----------------------------------------------------------------------------
+
+# Check if a command exists and print status
+# Usage: check_dependency "name" "command" [required]
+# Example: check_dependency "git" "git" true
+check_dependency() {
+    local name="$1"
+    local cmd="$2"
+    local required="${3:-false}"
+    local version_info=""
+    
+    # Pad name for alignment (20 chars)
+    local padded_name
+    padded_name=$(printf "%-18s" "$name")
+    
+    if command -v "$cmd" &>/dev/null; then
+        echo -e "  $CHECKMARK $padded_name installed"
+        return 0
+    else
+        echo -e "  $CROSSMARK $padded_name not installed"
+        if [[ "$required" == "true" ]]; then
+            return 1
+        fi
+        return 0
+    fi
+}
+
+# Check dependency with version display
+# Usage: check_dependency_version "name" "command" "version_cmd" [required]
+check_dependency_version() {
+    local name="$1"
+    local cmd="$2"
+    local version_cmd="$3"
+    local required="${4:-false}"
+    
+    local padded_name
+    padded_name=$(printf "%-18s" "$name")
+    
+    if command -v "$cmd" &>/dev/null; then
+        local version
+        version=$(eval "$version_cmd" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+        if [[ -n "$version" ]]; then
+            echo -e "  $CHECKMARK $padded_name installed ($version)"
+        else
+            echo -e "  $CHECKMARK $padded_name installed"
+        fi
+        return 0
+    else
+        echo -e "  $CROSSMARK $padded_name not installed"
+        if [[ "$required" == "true" ]]; then
+            return 1
+        fi
+        return 0
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Git Repository Management
+# -----------------------------------------------------------------------------
+
+# Clone or update a git repository
+# Usage: clone_or_update_repo "url" "target_dir" [force_reclone]
+# Returns: 0 on success, 1 on failure
+clone_or_update_repo() {
+    local repo_url="$1"
+    local target_dir="$2"
+    local force_reclone="${3:-false}"
+    
+    if [[ -d "$target_dir" ]]; then
+        if [[ "$force_reclone" == "true" ]]; then
+            print_status "Force rebuild requested, removing existing directory..."
+            rm -rf "$target_dir"
+        else
+            print_status "Repository exists, pulling latest..."
+            local original_dir
+            original_dir=$(pwd)
+            cd "$target_dir" || return 1
+            if git rev-parse --git-dir &>/dev/null; then
+                git pull 2>/dev/null || print_warning "Failed to pull latest (continuing with existing)"
+            else
+                print_warning "Not a valid git repository, will re-clone"
+                cd "$original_dir" || return 1
+                rm -rf "$target_dir"
+            fi
+            cd "$original_dir" || return 1
+        fi
+    fi
+    
+    if [[ ! -d "$target_dir" ]]; then
+        print_status "Cloning repository..."
+        if ! git clone --depth 1 "$repo_url" "$target_dir"; then
+            print_error "Failed to clone repository"
+            echo "Check your network connection and try again"
+            return 1
+        fi
+    fi
+    
+    print_success "Repository ready"
+    return 0
+}
+
 
 # -----------------------------------------------------------------------------
 # OpenCode Config Generation
@@ -677,6 +869,7 @@ run_inference_test() {
     start_spinner "Starting llama-server"
     
     if [[ -n "$extra_env" ]]; then
+        # shellcheck disable=SC2086  # Word splitting is intentional for env vars
         env $extra_env "$server_binary" \
             -m "$model_path" \
             --host 127.0.0.1 \
@@ -895,7 +1088,7 @@ check_orphan_models() {
         
         local cleanup_choice=""
         if [[ "$HAS_GUM" == true ]]; then
-            cleanup_choice=$(gum choose --cursor-prefix="[ ] " --selected-prefix="[x] " \
+            cleanup_choice=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
                 --cursor.foreground="212" \
                 "Run cleanup now" \
                 "Skip for now") || cleanup_choice="Skip for now"
@@ -1255,7 +1448,7 @@ handle_config_restore() {
         gum_options+=("Cancel")
         
         local selected
-        selected=$(gum choose --cursor-prefix="○ " --selected-prefix="◉ " \
+        selected=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
             --cursor.foreground="212" \
             "${gum_options[@]}") || {
             print_status "Restore cancelled"
@@ -1583,4 +1776,46 @@ handle_opencode_config() {
         print_success "OpenCode config created at: $config_path"
         return 0
     fi
+}
+
+# -----------------------------------------------------------------------------
+# Size Calculation Helpers
+# -----------------------------------------------------------------------------
+
+# Get human-readable directory size (e.g., "1.5G")
+get_dir_size() {
+    local dir="$1"
+    if [[ -d "$dir" ]]; then
+        du -sh "$dir" 2>/dev/null | cut -f1
+    else
+        echo "0"
+    fi
+}
+
+# Get human-readable file size (e.g., "256M")
+get_file_size_human() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        du -sh "$file" 2>/dev/null | cut -f1
+    else
+        echo "0"
+    fi
+}
+
+# Get file size in bytes
+get_file_size_bytes() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        stat -c%s "$file" 2>/dev/null || stat -f%z "$file" 2>/dev/null || echo "0"
+    else
+        echo "0"
+    fi
+}
+
+# Parse size string to bytes (e.g., "4.5GB" -> bytes)
+parse_size_bytes() {
+    local size="$1"
+    local mb
+    mb=$(parse_size_mb "$size")
+    echo $((mb * 1048576))
 }

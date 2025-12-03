@@ -141,7 +141,7 @@ done
 # Load Existing Config Models (for merge mode)
 # -----------------------------------------------------------------------------
 
-declare -A EXISTING_MODELS
+declare -A EXISTING_MODELS=()
 
 load_existing_config() {
     if [[ ! -f "$OPENCODE_CONFIG" ]]; then
@@ -216,22 +216,7 @@ get_installed_models() {
 # Generate Display Name for Unknown Models
 # -----------------------------------------------------------------------------
 
-generate_display_name() {
-    local model="$1"
-    local base_name size_tag
-    
-    # Extract base name and size (e.g., "qwen3:14b" -> "Qwen3" and "14B")
-    base_name="${model%%:*}"
-    size_tag="${model##*:}"
-    
-    # Capitalize and format base name
-    base_name="${base_name^}"  # Capitalize first letter
-    
-    # Format size tag (uppercase)
-    size_tag="${size_tag^^}"
-    
-    echo "$base_name $size_tag"
-}
+# generate_display_name() is now in lib/common.sh
 
 # -----------------------------------------------------------------------------
 # Generate OpenCode Config

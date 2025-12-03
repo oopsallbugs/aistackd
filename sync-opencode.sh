@@ -139,10 +139,8 @@ declare -A MODEL_CATEGORY
 declare -A MODEL_DESCRIPTION
 declare -A MODEL_SIZE
 
-# Metadata from models-metadata.conf
-declare -A MODEL_DISPLAY_NAME
-declare -A MODEL_CONTEXT_LIMIT
-declare -A MODEL_OUTPUT_LIMIT
+# Metadata arrays (MODEL_DISPLAY_NAME, MODEL_CONTEXT_LIMIT, MODEL_OUTPUT_LIMIT)
+# are declared in lib/common.sh
 
 load_models_conf_local() {
     if [[ ! -f "$MODELS_CONF" ]]; then
@@ -175,32 +173,7 @@ load_models_conf_local() {
     done < "$MODELS_CONF"
 }
 
-load_metadata_conf_local() {
-    # Load model metadata for OpenCode config generation
-    if [[ ! -f "$METADATA_CONF" ]]; then
-        return  # Silently skip if file doesn't exist
-    fi
-    
-    while IFS='|' read -r model display_name context_limit output_limit || [[ -n "$model" ]]; do
-        # Skip comments and empty lines
-        [[ "$model" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "$model" ]] && continue
-        
-        # Trim whitespace
-        model="${model#"${model%%[![:space:]]*}"}"
-        model="${model%"${model##*[![:space:]]}"}"
-        display_name="${display_name#"${display_name%%[![:space:]]*}"}"
-        display_name="${display_name%"${display_name##*[![:space:]]}"}"
-        context_limit="${context_limit#"${context_limit%%[![:space:]]*}"}"
-        context_limit="${context_limit%"${context_limit##*[![:space:]]}"}"
-        output_limit="${output_limit#"${output_limit%%[![:space:]]*}"}"
-        output_limit="${output_limit%"${output_limit##*[![:space:]]}"}"
-        
-        MODEL_DISPLAY_NAME["$model"]="$display_name"
-        MODEL_CONTEXT_LIMIT["$model"]="$context_limit"
-        MODEL_OUTPUT_LIMIT["$model"]="$output_limit"
-    done < "$METADATA_CONF"
-}
+# load_metadata_conf() is now in lib/common.sh
 
 # -----------------------------------------------------------------------------
 # Get Downloaded Models
@@ -366,7 +339,7 @@ sync_models_config() {
     
     # Load model metadata
     load_models_conf_local
-    load_metadata_conf_local
+    load_metadata_conf
     
     # Get downloaded models
     print_status "Scanning for downloaded models in: $MODELS_DIR"

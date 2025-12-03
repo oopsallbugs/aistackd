@@ -705,9 +705,9 @@ add_model() {
         local gum_selected
         if [[ -n "$recommended_file" ]]; then
             gum_selected=$(gum choose --no-limit \
-                --cursor-prefix="○ " \
-                --selected-prefix="✓ " \
-                --unselected-prefix="○ " \
+                --cursor-prefix="$GUM_CURSOR_PREFIX" \
+                --selected-prefix="$GUM_SELECTED_PREFIX" \
+                --unselected-prefix="$GUM_UNSELECTED_PREFIX" \
                 --cursor.foreground="212" \
                 --selected.foreground="212" \
                 --height=20 \
@@ -719,9 +719,9 @@ add_model() {
             }
         else
             gum_selected=$(gum choose --no-limit \
-                --cursor-prefix="○ " \
-                --selected-prefix="✓ " \
-                --unselected-prefix="○ " \
+                --cursor-prefix="$GUM_CURSOR_PREFIX" \
+                --selected-prefix="$GUM_SELECTED_PREFIX" \
+                --unselected-prefix="$GUM_UNSELECTED_PREFIX" \
                 --cursor.foreground="212" \
                 --selected.foreground="212" \
                 --height=20 \
@@ -1164,7 +1164,7 @@ cleanup_orphan_models() {
     if [[ "$HAS_GUM" == true ]]; then
         echo -e "${BOLD}What would you like to do?${NC}"
         echo
-        action=$(gum choose --cursor-prefix="○ " --selected-prefix="◉ " \
+        action=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
             --cursor.foreground="212" \
             "Delete all orphan models" \
             "Select which to delete" \
@@ -1262,9 +1262,9 @@ cleanup_orphan_models() {
             
             local selected
             selected=$(gum choose --no-limit \
-                --cursor-prefix="○ " \
-                --selected-prefix="✓ " \
-                --unselected-prefix="○ " \
+                --cursor-prefix="$GUM_CURSOR_PREFIX" \
+                --selected-prefix="$GUM_SELECTED_PREFIX" \
+                --unselected-prefix="$GUM_UNSELECTED_PREFIX" \
                 --cursor.foreground="212" \
                 --selected.foreground="212" \
                 --height=15 \

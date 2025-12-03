@@ -356,47 +356,15 @@ if [[ $RUN_VERIFY == true ]]; then
     VERIFY_PASS=0
     VERIFY_FAIL=0
     
+    # Wrapper to use common verify function and track counts
     verify_model() {
         local model_path="$1"
-        local model_name
-        model_name=$(basename "$model_path")
-        
         ((VERIFY_COUNT++))
-        
-        if [[ ! -f "$model_path" ]]; then
-            echo -e "  $CROSSMARK $model_name - file not found"
+        if verify_gguf_model "$model_path"; then
+            ((VERIFY_PASS++))
+        else
             ((VERIFY_FAIL++))
-            return 1
         fi
-        
-        if [[ ! -r "$model_path" ]]; then
-            echo -e "  $CROSSMARK $model_name - file not readable"
-            ((VERIFY_FAIL++))
-            return 1
-        fi
-        
-        local file_size
-        file_size=$(stat -f%z "$model_path" 2>/dev/null || echo 0)
-        if [[ "$file_size" -lt 1048576 ]]; then
-            echo -e "  $CROSSMARK $model_name - file too small"
-            ((VERIFY_FAIL++))
-            return 1
-        fi
-        
-        local magic
-        magic=$(head -c 4 "$model_path" 2>/dev/null | tr -d '\0')
-        if [[ "$magic" != "GGUF" ]]; then
-            echo -e "  $CROSSMARK $model_name - invalid GGUF format (magic: $magic)"
-            ((VERIFY_FAIL++))
-            return 1
-        fi
-        
-        local size_human
-        size_human=$(du -h "$model_path" | cut -f1)
-        
-        echo -e "  $CHECKMARK $model_name ($size_human) - valid GGUF"
-        ((VERIFY_PASS++))
-        return 0
     }
     
     if [[ -n "$VERIFY_MODEL" ]]; then
@@ -577,34 +545,7 @@ print_success "All dependencies satisfied!"
 
 print_header "Setting Up llama.cpp Repository"
 
-if [[ -d "$LLAMA_CPP_DIR" ]]; then
-    if [[ "$FORCE_REBUILD" == true ]]; then
-        print_status "Force rebuild requested, removing existing directory..."
-        rm -rf "$LLAMA_CPP_DIR"
-    else
-        print_status "llama.cpp directory exists, pulling latest..."
-        cd "$LLAMA_CPP_DIR"
-        if git rev-parse --git-dir &>/dev/null; then
-            git pull 2>/dev/null || print_warning "Failed to pull latest (continuing with existing)"
-        else
-            print_warning "Not a valid git repository, will re-clone"
-            cd "$SCRIPT_DIR"
-            rm -rf "$LLAMA_CPP_DIR"
-        fi
-        cd "$SCRIPT_DIR"
-    fi
-fi
-
-if [[ ! -d "$LLAMA_CPP_DIR" ]]; then
-    print_status "Cloning llama.cpp..."
-    if ! git clone --depth 1 https://github.com/ggerganov/llama.cpp "$LLAMA_CPP_DIR"; then
-        print_error "Failed to clone llama.cpp repository"
-        echo "Check your network connection and try again"
-        exit 1
-    fi
-fi
-
-print_success "llama.cpp repository ready"
+clone_or_update_repo "https://github.com/ggerganov/llama.cpp" "$LLAMA_CPP_DIR" "$FORCE_REBUILD" || exit 1
 
 # -----------------------------------------------------------------------------
 # Build llama.cpp with Metal
@@ -803,7 +744,7 @@ if [[ -n "$TEST_MODEL" ]]; then
         if [[ "$HAS_GUM" == true ]]; then
             echo -e "${BOLD}Run inference test?${NC}"
             echo
-            test_choice=$(gum choose --cursor-prefix="[ ] " --selected-prefix="[x] " \
+            test_choice=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
                 --cursor.foreground="212" \
                 "Yes - test with $TEST_MODEL (smallest)" \
                 "Choose different model" \
@@ -829,7 +770,7 @@ if [[ -n "$TEST_MODEL" ]]; then
                 if [[ "$HAS_GUM" == true ]]; then
                     echo -e "${BOLD}Select model for inference test:${NC}"
                     echo
-                    selected_label=$(gum choose --cursor-prefix="[ ] " --selected-prefix="[x] " \
+                    selected_label=$(gum choose --cursor-prefix="$GUM_RADIO_CURSOR" --selected-prefix="$GUM_RADIO_SELECTED" \
                         --cursor.foreground="212" \
                         "${test_model_labels[@]}" \
                         "Skip test") || true

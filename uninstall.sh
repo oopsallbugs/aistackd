@@ -77,22 +77,10 @@ done
 # Size Calculation
 # -----------------------------------------------------------------------------
 
-get_dir_size() {
-    local dir="$1"
-    if [[ -d "$dir" ]]; then
-        du -sh "$dir" 2>/dev/null | cut -f1
-    else
-        echo "0"
-    fi
-}
-
+# get_dir_size() and get_file_size_human() are now in lib/common.sh
+# Alias for backward compatibility
 get_file_size() {
-    local file="$1"
-    if [[ -f "$file" ]]; then
-        du -sh "$file" 2>/dev/null | cut -f1
-    else
-        echo "0"
-    fi
+    get_file_size_human "$1"
 }
 
 # -----------------------------------------------------------------------------
@@ -188,9 +176,9 @@ gum_selection() {
     # Show selection dialog
     local selections
     selections=$(gum choose --no-limit \
-        --cursor-prefix="○ " \
-        --selected-prefix="✓ " \
-        --unselected-prefix="○ " \
+        --cursor-prefix="$GUM_CURSOR_PREFIX" \
+        --selected-prefix="$GUM_SELECTED_PREFIX" \
+        --unselected-prefix="$GUM_UNSELECTED_PREFIX" \
         --cursor.foreground="212" \
         --selected.foreground="196" \
         --height=10 \
