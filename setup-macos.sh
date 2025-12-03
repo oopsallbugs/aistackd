@@ -129,13 +129,13 @@ VERIFY_MODEL=""
 RESET_AGENTS=false
 
 for arg in "$@"; do
+    # shellcheck disable=SC2034
     case $arg in
         --skip-build) SKIP_BUILD=true ;;
         --skip-models) SKIP_MODELS=true ;;
         --force-rebuild) FORCE_REBUILD=true ;;
         --force-env) FORCE_ENV=true ;;
         --non-interactive) NON_INTERACTIVE=true ;;
-        # shellcheck disable=SC2034
         --ignore-warnings) IGNORE_WARNINGS=true ;;
         --status) RUN_STATUS=true ;;
         --update) RUN_UPDATE=true ;;

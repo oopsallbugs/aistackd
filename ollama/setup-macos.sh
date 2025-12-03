@@ -92,10 +92,10 @@ RUN_UPDATE=false
 RESET_AGENTS=false
 SELECTED_MODELS=()
 for arg in "$@"; do
+    # shellcheck disable=SC2034
     case $arg in
         --skip-models) SKIP_MODELS=true ;;
         --non-interactive) NON_INTERACTIVE=true ;;
-        # shellcheck disable=SC2034
         --ignore-warnings) IGNORE_WARNINGS=true ;;
         --status) RUN_STATUS=true ;;
         --update) RUN_UPDATE=true ;;
