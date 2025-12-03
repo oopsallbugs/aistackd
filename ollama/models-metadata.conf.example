@@ -18,6 +18,13 @@
 # CHEATSHEET
 # =============================================================================
 #
+# PARAMETER COUNT:
+#   1-3B   - Small models, fast but limited capability
+#   7-8B   - Good balance for consumer GPUs (8-12GB VRAM)
+#   13-14B - Better quality, needs 12-16GB VRAM
+#   30-32B - High quality, needs 24GB+ VRAM
+#   70B+   - Best quality, needs 48GB+ VRAM or multi-GPU
+#
 # CONTEXT LIMITS (how much text the model can "see"):
 #   4096   - Very limited, basic chat only
 #   8192   - Small tasks, simple questions
