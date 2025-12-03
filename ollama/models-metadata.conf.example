@@ -15,6 +15,43 @@
 #   - Add new models here when you add them to models.conf
 #
 # =============================================================================
+# CHEATSHEET
+# =============================================================================
+#
+# CONTEXT LIMITS (how much text the model can "see"):
+#   4096   - Very limited, basic chat only
+#   8192   - Small tasks, simple questions
+#   16384  - Medium tasks, single file editing
+#   32768  - Standard for most models (recommended default)
+#   65536  - Large tasks, multi-file context, agentic coding
+#   128000 - Very large context (Llama 3.1, some Qwen models)
+#
+# OUTPUT LIMITS (max tokens per response):
+#   4096   - Short responses, quick answers
+#   8192   - Standard responses (recommended default)
+#   16384  - Long responses, code generation, agentic tasks
+#   32768  - Very long outputs (rarely needed)
+#
+# VRAM vs CONTEXT (estimates - varies by model size):
+#   8GB VRAM  -> 8192 context max, smaller models only
+#   12GB VRAM -> 8192-16384 context
+#   16GB VRAM -> 16384-32768 context
+#   24GB VRAM -> 16384-32768 context (65536 with smaller models)
+#   48GB+ VRAM -> 32768-65536+ context
+#
+# QUANTIZATION SUFFIXES:
+#   q4km  - 4-bit quantization, good balance of quality/size
+#   q3km  - 3-bit quantization, smaller but lower quality
+#   q5km  - 5-bit quantization, better quality, larger size
+#   q8    - 8-bit quantization, near-original quality
+#
+# DISPLAY NAME CONVENTIONS:
+#   Include model name, size, and purpose hints:
+#   "Qwen3 8B Q4KM (Fast)"        - General purpose, speed focused
+#   "DeepSeek-R1 32B (Reasoning)" - Shows thinking process
+#   "Qwen2.5-Coder 14B (Agentic)" - Optimized for coding tasks
+#
+# =============================================================================
 
 # -----------------------------------------------------------------------------
 # Small/Test Models
