@@ -167,6 +167,10 @@ Both can run side-by-side:
 - llama.cpp on port 8080 (for tool calling)
 - Ollama on port 11434 (for simple chat)
 
+### Other Tools
+
+The llama.cpp server provides an OpenAI-compatible API at `http://localhost:8080/v1`. This may work with other coding assistants (Continue, Cursor, Aider, etc.) but these configurations are untested. Contributions welcome!
+
 ## Scripts Reference
 
 ### llama.cpp (root)
