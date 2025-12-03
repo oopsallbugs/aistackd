@@ -44,7 +44,8 @@ jobs:
             [[ "$line" =~ ^ALIAS: ]] && continue
             [[ "$line" =~ ^IGNORE_ ]] && continue
             # Format: category|model_id|huggingface_repo|gguf_filename|size|description
-            if ! [[ "$line" =~ ^[a-z]+\|[a-z0-9._-]+\|[A-Za-z0-9._/-]+\|[A-Za-z0-9._-]+\.gguf\|[0-9]+(\.[0-9]+)?[GMK]?B\|.+ ]]; then
+            pattern='^[a-z]+\|[a-z0-9._-]+\|[A-Za-z0-9._/-]+\|[A-Za-z0-9._-]+\.gguf\|[0-9]+(\.[0-9]+)?[GMK]?B\|.+'
+            if ! [[ "$line" =~ $pattern ]]; then
               echo "Invalid line: $line"
               exit 1
             fi

@@ -501,7 +501,8 @@ remove_opencode_provider() {
     fi
     
     # Backup first
-    local backup="$OPENCODE_CONFIG.backup.$(date +%Y%m%d_%H%M%S)"
+    local backup
+    backup="$OPENCODE_CONFIG.backup.$(date +%Y%m%d_%H%M%S)"
     cp "$OPENCODE_CONFIG" "$backup"
     print_status "Backed up config to: $(basename "$backup")"
     

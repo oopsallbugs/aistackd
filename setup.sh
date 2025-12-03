@@ -603,7 +603,7 @@ if [[ $RUN_VERIFY == true ]]; then
     if [[ -n "$VERIFY_MODEL" ]]; then
         load_models_conf
         if [[ -n "${MODEL_INFO[$VERIFY_MODEL]:-}" ]]; then
-            IFS='|' read -r category hf_repo gguf_file size description <<< "${MODEL_INFO[$VERIFY_MODEL]}"
+            IFS='|' read -r _category _hf_repo gguf_file size _description <<< "${MODEL_INFO[$VERIFY_MODEL]}"
             verify_model "$MODELS_DIR/$gguf_file"
         elif [[ -f "$MODELS_DIR/$VERIFY_MODEL" ]]; then
             verify_model "$MODELS_DIR/$VERIFY_MODEL"
@@ -1030,7 +1030,7 @@ print_header "OpenCode Configuration"
 DOWNLOADED_MODELS=()
 load_models_conf
 for model in "${MODEL_ORDER[@]}"; do
-    IFS='|' read -r category hf_repo gguf_file size description <<< "${MODEL_INFO[$model]}"
+    IFS='|' read -r _category _hf_repo gguf_file size _description <<< "${MODEL_INFO[$model]}"
     if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
         DOWNLOADED_MODELS+=("$model")
     fi
@@ -1113,7 +1113,7 @@ echo "  Check status:     ./setup.sh --status"
 echo
 echo -e "${BOLD}Available models:${NC}"
 for model in "${MODEL_ORDER[@]}"; do
-    IFS='|' read -r category hf_repo gguf_file size description <<< "${MODEL_INFO[$model]}"
+    IFS='|' read -r _category _hf_repo gguf_file size _description <<< "${MODEL_INFO[$model]}"
     if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
         echo -e "  $CHECKMARK $model ($size)"
     else
