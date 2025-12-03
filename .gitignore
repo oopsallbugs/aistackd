@@ -1,14 +1,18 @@
 # Local configuration (contains system-specific values)
 .env
+ollama/.env
 
 # Model files (large binary files)
 *.gguf
 
 # llama.cpp repository (cloned by setup.sh)
-llama-cpp/llama.cpp/
+llama.cpp/
 
 # Downloaded models directory
-llama-cpp/models/
+models/
+
+# Legacy llama-cpp directory (for existing clones during transition)
+llama-cpp/
 
 # Backup files
 *.backup.*

@@ -3,10 +3,20 @@ set -euo pipefail
 
 # =============================================================================
 # llama.cpp Server Start Script
-# Convenience script to start llama-server with proper GPU settings
+# Cross-platform script to start llama-server with proper GPU settings
+# Supports: Linux (ROCm/HIP) and macOS (Metal)
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Detect platform
+IS_MACOS=false
+IS_LINUX=false
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    IS_MACOS=true
+elif [[ "$(uname -s)" == "Linux" ]]; then
+    IS_LINUX=true
+fi
 
 # Load configuration
 if [[ -f "$SCRIPT_DIR/.env" ]]; then
@@ -163,7 +173,7 @@ set_model_context() {
     fi
 }
 
-# Get HSA override version based on GPU architecture
+# Get HSA override version based on GPU architecture (Linux/ROCm only)
 get_hsa_version() {
     local gpu_target="$1"
     case "$gpu_target" in
@@ -174,6 +184,16 @@ get_hsa_version() {
         gfx900)   echo "9.0.0" ;;   # Vega 10
         *)        echo "11.0.0" ;;  # Default to RDNA3
     esac
+}
+
+# Cross-platform file size in bytes
+get_file_size() {
+    local file="$1"
+    if [[ "$IS_MACOS" == true ]]; then
+        stat -f%z "$file" 2>/dev/null
+    else
+        stat -c%s "$file" 2>/dev/null
+    fi
 }
 
 show_help() {
@@ -533,26 +553,38 @@ while [[ $# -gt 0 ]]; do
                 echo "No llama-server processes found"
             fi
             echo
-            # Show VRAM status
-            if command -v rocm-smi &>/dev/null; then
-                rocm-smi 2>/dev/null | head -10
-            elif [[ -x "/opt/rocm/bin/rocm-smi" ]]; then
-                /opt/rocm/bin/rocm-smi 2>/dev/null | head -10
+            # Show VRAM/memory status
+            if [[ "$IS_LINUX" == true ]]; then
+                if command -v rocm-smi &>/dev/null; then
+                    rocm-smi 2>/dev/null | head -10
+                elif [[ -x "/opt/rocm/bin/rocm-smi" ]]; then
+                    /opt/rocm/bin/rocm-smi 2>/dev/null | head -10
+                fi
+            elif [[ "$IS_MACOS" == true ]]; then
+                echo "Memory status:"
+                vm_stat 2>/dev/null | head -5
             fi
             echo
             exit 0
             ;;
         --status)
             echo
-            echo -e "${CYAN}${BOLD}GPU Status${NC}"
+            echo -e "${CYAN}${BOLD}GPU/Memory Status${NC}"
             echo
-            # Show rocm-smi output
-            if command -v rocm-smi &>/dev/null; then
-                rocm-smi 2>/dev/null
-            elif [[ -x "/opt/rocm/bin/rocm-smi" ]]; then
-                /opt/rocm/bin/rocm-smi 2>/dev/null
-            else
-                echo "rocm-smi not found"
+            # Show rocm-smi output (Linux) or system info (macOS)
+            if [[ "$IS_LINUX" == true ]]; then
+                if command -v rocm-smi &>/dev/null; then
+                    rocm-smi 2>/dev/null
+                elif [[ -x "/opt/rocm/bin/rocm-smi" ]]; then
+                    /opt/rocm/bin/rocm-smi 2>/dev/null
+                else
+                    echo "rocm-smi not found"
+                fi
+            elif [[ "$IS_MACOS" == true ]]; then
+                echo "Chip: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo 'Unknown')"
+                local mem_gb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 / 1024 ))
+                echo "Memory: ${mem_gb}GB unified"
+                echo
             fi
             echo
             # Show llama-server processes
@@ -701,16 +733,19 @@ if [[ ! -f "$LLAMA_SERVER" ]]; then
     exit 1
 fi
 
-# Export GPU settings
-# Use HSA version from .env, or derive from GPU_TARGET, or default to RDNA3
-if [[ -z "${HSA_OVERRIDE_GFX_VERSION:-}" ]]; then
-    if [[ -n "${GPU_TARGET:-}" ]]; then
-        HSA_OVERRIDE_GFX_VERSION=$(get_hsa_version "$GPU_TARGET")
-    else
-        HSA_OVERRIDE_GFX_VERSION="11.0.0"
+# Export GPU settings (Linux/ROCm only)
+# macOS Metal doesn't need HSA settings
+if [[ "$IS_LINUX" == true ]]; then
+    # Use HSA version from .env, or derive from GPU_TARGET, or default to RDNA3
+    if [[ -z "${HSA_OVERRIDE_GFX_VERSION:-}" ]]; then
+        if [[ -n "${GPU_TARGET:-}" ]]; then
+            HSA_OVERRIDE_GFX_VERSION=$(get_hsa_version "$GPU_TARGET")
+        else
+            HSA_OVERRIDE_GFX_VERSION="11.0.0"
+        fi
     fi
+    export HSA_OVERRIDE_GFX_VERSION
 fi
-export HSA_OVERRIDE_GFX_VERSION
 
 # =============================================================================
 # VRAM and Process Checks
@@ -755,8 +790,14 @@ check_existing_processes() {
     fi
 }
 
-# Get VRAM info from rocm-smi
+# Get VRAM info from rocm-smi (Linux only)
+# On macOS, unified memory is used - no separate VRAM
 get_vram_info() {
+    # macOS uses unified memory, skip VRAM check
+    if [[ "$IS_MACOS" == true ]]; then
+        return 1
+    fi
+    
     local rocm_smi=""
     if command -v rocm-smi &>/dev/null; then
         rocm_smi="rocm-smi"
@@ -781,7 +822,34 @@ get_vram_info() {
 }
 
 # Get detailed VRAM info (total and used in bytes)
+# Linux: from rocm-smi
+# macOS: from system memory (unified memory architecture)
 get_vram_details() {
+    local gpu_id="${1:-0}"
+    
+    if [[ "$IS_MACOS" == true ]]; then
+        # macOS uses unified memory - report system RAM
+        local total_bytes used_bytes avail_bytes
+        total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
+        
+        # Get memory pressure info from vm_stat
+        local page_size pages_free pages_inactive
+        page_size=$(vm_stat 2>/dev/null | grep "page size" | grep -oE '[0-9]+' || echo 4096)
+        pages_free=$(vm_stat 2>/dev/null | grep "Pages free" | grep -oE '[0-9]+' || echo 0)
+        pages_inactive=$(vm_stat 2>/dev/null | grep "Pages inactive" | grep -oE '[0-9]+' || echo 0)
+        
+        avail_bytes=$(( (pages_free + pages_inactive) * page_size ))
+        used_bytes=$((total_bytes - avail_bytes))
+        
+        local total_mb=$((total_bytes / 1024 / 1024))
+        local used_mb=$((used_bytes / 1024 / 1024))
+        local avail_mb=$((avail_bytes / 1024 / 1024))
+        
+        echo "$total_mb|$used_mb|$avail_mb"
+        return 0
+    fi
+    
+    # Linux: use rocm-smi
     local rocm_smi=""
     if command -v rocm-smi &>/dev/null; then
         rocm_smi="rocm-smi"
@@ -791,7 +859,6 @@ get_vram_details() {
         return 1
     fi
     
-    local gpu_id="${1:-0}"
     local vram_output
     vram_output=$($rocm_smi --showmeminfo vram 2>/dev/null)
     
@@ -817,15 +884,15 @@ get_vram_details() {
 }
 
 # Estimate VRAM needed for model + KV cache
-# Returns recommended context size that fits in available VRAM
+# Returns recommended context size that fits in available VRAM/memory
 estimate_context_for_vram() {
     local model_path="$1"
     local available_vram_mb="$2"
     local requested_context="$3"
     
-    # Get model file size in MB
+    # Get model file size in MB (cross-platform)
     local model_size_bytes model_size_mb
-    model_size_bytes=$(stat -c%s "$model_path" 2>/dev/null || stat -f%z "$model_path" 2>/dev/null)
+    model_size_bytes=$(get_file_size "$model_path")
     if [[ -z "$model_size_bytes" ]]; then
         return 1
     fi
@@ -1064,9 +1131,9 @@ select_context_size() {
     
     IFS='|' read -r total_mb used_mb avail_mb <<< "$vram_details"
     
-    # Get model info
+    # Get model info (cross-platform)
     local model_size_bytes model_size_mb model_vram_mb estimated_params_b kv_per_1k_mb
-    model_size_bytes=$(stat -c%s "$model_path" 2>/dev/null || stat -f%z "$model_path" 2>/dev/null)
+    model_size_bytes=$(get_file_size "$model_path")
     if [[ -z "$model_size_bytes" ]]; then
         print_error "Could not get model file size" >&2
         return 1
@@ -1393,7 +1460,9 @@ fi
 
 # Set up GPU selection for multi-GPU systems
 if [[ -n "$GPU_ID" ]]; then
-    export HIP_VISIBLE_DEVICES="$GPU_ID"
+    if [[ "$IS_LINUX" == true ]]; then
+        export HIP_VISIBLE_DEVICES="$GPU_ID"
+    fi
     export CUDA_VISIBLE_DEVICES="$GPU_ID"
 fi
 
@@ -1522,7 +1591,7 @@ echo -e "  ${BOLD}Endpoint:${NC} ${GREEN}http://$LLAMA_HOST:$LLAMA_PORT${NC}"
 echo -e "  ${BOLD}Context:${NC}  $LLAMA_CONTEXT tokens"
 echo -e "  ${BOLD}GPU:${NC}      $GPU_LAYERS layers"
 [[ -n "$GPU_ID" ]] && echo -e "  ${BOLD}GPU ID:${NC}   $GPU_ID"
-echo -e "  ${BOLD}HSA:${NC}      $HSA_OVERRIDE_GFX_VERSION"
+[[ "$IS_LINUX" == true && -n "${HSA_OVERRIDE_GFX_VERSION:-}" ]] && echo -e "  ${BOLD}HSA:${NC}      $HSA_OVERRIDE_GFX_VERSION"
 [[ -n "$BATCH_SIZE" ]] && echo -e "  ${BOLD}Batch:${NC}    $BATCH_SIZE"
 [[ -n "$THREADS" ]] && echo -e "  ${BOLD}Threads:${NC}  $THREADS"
 [[ -n "$PARALLEL" ]] && echo -e "  ${BOLD}Parallel:${NC} $PARALLEL"

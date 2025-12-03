@@ -5,11 +5,13 @@ on:
   push:
     branches: [main]
     paths:
-      - '*.sh'
+      - '**.sh'
+      - '.github/workflows/shellcheck.yml'
   pull_request:
     branches: [main]
     paths:
-      - '*.sh'
+      - '**.sh'
+      - '.github/workflows/shellcheck.yml'
 
 jobs:
   shellcheck:
@@ -25,5 +27,7 @@ jobs:
         with:
           scandir: '.'
           severity: warning
+          ignore_paths: >-
+            llama.cpp
         env:
           SHELLCHECK_OPTS: -e SC1091
