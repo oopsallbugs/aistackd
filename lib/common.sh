@@ -96,6 +96,7 @@ start_spinner() {
     SPINNER_PID=$!
 }
 
+# shellcheck disable=SC2120  # Function has optional parameters with defaults
 stop_spinner() {
     local success=${1:-true}
     local message="${2:-}"

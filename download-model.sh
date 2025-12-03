@@ -511,6 +511,7 @@ search_huggingface() {
     echo
 }
 
+# shellcheck disable=SC2120  # Function has optional parameters with defaults
 show_trending() {
     local limit="${1:-15}"
     
