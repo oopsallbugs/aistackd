@@ -20,6 +20,30 @@ set -euo pipefail
 #
 # =============================================================================
 
+# -----------------------------------------------------------------------------
+# Bash Version Check - Requires Bash 4+ for associative arrays
+# -----------------------------------------------------------------------------
+
+if [[ "${BASH_VERSION%%.*}" -lt 4 ]]; then
+    echo ""
+    echo "ERROR: This script requires Bash 4.0 or later."
+    echo "       Current version: $BASH_VERSION"
+    echo ""
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo "macOS ships with Bash 3.2 due to licensing restrictions."
+        echo ""
+        echo "To fix this, install Bash via Homebrew:"
+        echo "  brew install bash"
+        echo ""
+        echo "Then run this script with the new Bash:"
+        echo "  /opt/homebrew/bin/bash $0 $*"
+    else
+        echo "Please upgrade your Bash installation."
+    fi
+    echo ""
+    exit 1
+fi
+
 # Change to script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"

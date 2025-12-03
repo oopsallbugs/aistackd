@@ -11,6 +11,17 @@
 _COMMON_SH_LOADED=1
 
 # -----------------------------------------------------------------------------
+# Bash Version Check
+# -----------------------------------------------------------------------------
+# Associative arrays require bash 4+. macOS ships with bash 3.2 by default.
+# Scripts requiring associative arrays should check BASH_SUPPORTS_ASSOC_ARRAYS.
+
+BASH_SUPPORTS_ASSOC_ARRAYS=false
+if [[ ${BASH_VERSINFO[0]} -ge 4 ]]; then
+    BASH_SUPPORTS_ASSOC_ARRAYS=true
+fi
+
+# -----------------------------------------------------------------------------
 # Colors and Output Helpers
 # -----------------------------------------------------------------------------
 
@@ -208,9 +219,12 @@ init_paths() {
 # Model Metadata for OpenCode Config
 # -----------------------------------------------------------------------------
 
-declare -A MODEL_DISPLAY_NAME
-declare -A MODEL_CONTEXT_LIMIT
-declare -A MODEL_OUTPUT_LIMIT
+# Associative arrays for model metadata (requires bash 4+)
+if [[ "$BASH_SUPPORTS_ASSOC_ARRAYS" == true ]]; then
+    declare -A MODEL_DISPLAY_NAME
+    declare -A MODEL_CONTEXT_LIMIT
+    declare -A MODEL_OUTPUT_LIMIT
+fi
 
 load_metadata_conf() {
     # Load model metadata for OpenCode config generation
@@ -243,9 +257,12 @@ load_metadata_conf() {
 # Model Selection Functions
 # -----------------------------------------------------------------------------
 
-declare -A MODEL_SELECTED
-declare -a MODEL_ORDER
-declare -A MODEL_INFO
+# Associative arrays for model selection (requires bash 4+)
+if [[ "$BASH_SUPPORTS_ASSOC_ARRAYS" == true ]]; then
+    declare -A MODEL_SELECTED
+    declare -a MODEL_ORDER
+    declare -A MODEL_INFO
+fi
 
 load_models_conf() {
     if [[ ! -f "$MODELS_CONF" ]]; then
