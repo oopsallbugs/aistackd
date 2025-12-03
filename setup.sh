@@ -1154,6 +1154,14 @@ echo -e "${BOLD}Using with OpenCode:${NC}"
 echo "  1. Start server:  ./start-server.sh ${EXAMPLE_MODEL:-<model-id>}"
 echo "  2. Run opencode in any project"
 echo "  3. Use '/models' to select llama.cpp provider"
+
+if ! command -v opencode &>/dev/null; then
+    echo
+    print_warning "OpenCode is not installed"
+    echo "  Install with: npm install -g opencode"
+    echo "  More info:    https://opencode.ai"
+fi
+
 echo
 echo -e "${GREEN}${BOLD}Happy coding!${NC}"
 echo

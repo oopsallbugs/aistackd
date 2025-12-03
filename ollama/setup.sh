@@ -1808,7 +1808,10 @@ fi
 echo ""
 
 if [ "$OPENCODE_INSTALLED" = false ]; then
-    print_warning "Don't forget to install OpenCode: https://opencode.ai"
+    echo ""
+    print_warning "OpenCode is not installed"
+    echo "  Install with: npm install -g opencode"
+    echo "  More info:    https://opencode.ai"
 fi
 
 echo -e "${GREEN}${BOLD}Happy coding!${NC}"
