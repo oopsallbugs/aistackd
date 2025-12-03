@@ -1,0 +1,51 @@
+# =============================================================================
+# Model Metadata for OpenCode Configuration
+# =============================================================================
+#
+# This file contains display names and context limits for known models.
+# Used by setup scripts and sync-opencode.sh to generate OpenCode config.
+#
+# FORMAT:
+#   model:tag|display_name|context_limit|output_limit
+#
+# NOTES:
+#   - Unknown models will use defaults (32768 context, 8192 output)
+#   - Display names appear in OpenCode's model selector
+#   - Lines starting with # are ignored
+#   - Add new models here when you add them to models.conf
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Small/Test Models
+# -----------------------------------------------------------------------------
+qwen2:0.5b|Qwen2 0.5B (Tiny)|32768|8192
+qwen3:4b|Qwen3 4B (Small)|32768|8192
+
+# -----------------------------------------------------------------------------
+# Autocomplete Models
+# -----------------------------------------------------------------------------
+qwen2.5-coder:3b|Qwen2.5-Coder 3B (Autocomplete)|32768|8192
+
+# -----------------------------------------------------------------------------
+# General Purpose Models
+# -----------------------------------------------------------------------------
+qwen3:8b|Qwen3 8B (Fast General)|32768|8192
+qwen3:14b|Qwen3 14B (Balanced)|32768|8192
+qwen3:32b|Qwen3 32B (Quality)|32768|8192
+mistral-small:24b|Mistral Small 24B|32768|8192
+llama3.1:8b|Llama 3.1 8B|128000|8192
+
+# -----------------------------------------------------------------------------
+# Reasoning Models
+# -----------------------------------------------------------------------------
+deepseek-r1:14b|DeepSeek-R1 14B (Reasoning)|32768|8192
+deepseek-r1:32b|DeepSeek-R1 32B (Reasoning)|32768|8192
+
+# -----------------------------------------------------------------------------
+# Coding Models
+# -----------------------------------------------------------------------------
+qwen3-coder:30b|Qwen3-Coder 30B (Agentic/Coding)|65536|16384
+devstral:24b|Devstral 24B (Fast Coding)|65536|16384
+codestral:22b|Codestral 22B (Code Gen)|65536|16384
+deepseek-coder-v2:16b|DeepSeek-Coder-V2 16B|128000|16384

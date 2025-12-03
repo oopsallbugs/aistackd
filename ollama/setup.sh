@@ -1284,6 +1284,9 @@ fi
 
 print_success "All required dependencies satisfied!"
 
+# Ensure models-metadata.conf exists
+ensure_metadata_conf "$SCRIPT_DIR" "$NON_INTERACTIVE"
+
 # -----------------------------------------------------------------------------
 # GPU Detection & Environment Setup
 # -----------------------------------------------------------------------------

@@ -447,6 +447,9 @@ if [[ "$RESTORE_MODE" == true ]]; then
     exit 0
 fi
 
+# Ensure models-metadata.conf exists before syncing
+ensure_metadata_conf "$SCRIPT_DIR" "true"  # Non-interactive for sync script
+
 echo
 
 # Sync models if requested

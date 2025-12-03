@@ -158,6 +158,9 @@ if [[ "$SYNC_MODELS" == false && "$SYNC_AGENTS" == false && "$RESTORE_MODE" == f
     SYNC_AGENTS=true
 fi
 
+# Ensure models-metadata.conf exists (non-interactive - this script can be run automated)
+ensure_metadata_conf "$SCRIPT_DIR" "true"
+
 # -----------------------------------------------------------------------------
 # Load Model Metadata
 # -----------------------------------------------------------------------------

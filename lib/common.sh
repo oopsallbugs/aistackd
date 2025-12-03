@@ -235,6 +235,102 @@ if [[ "$BASH_SUPPORTS_ASSOC_ARRAYS" == true ]]; then
     declare -A MODEL_OUTPUT_LIMIT
 fi
 
+# Ensure models-metadata.conf exists, creating from example if needed
+# Usage: ensure_metadata_conf <script_dir> <non_interactive>
+#
+# script_dir: Directory containing models-metadata.conf.example
+# non_interactive: "true" to skip prompts, "false" for interactive mode
+#
+# If models-metadata.conf doesn't exist, copies from .example
+# If it exists but differs from .example, offers to update (interactive)
+#
+# Returns: 0 if file exists/created, 1 if skipped
+ensure_metadata_conf() {
+    local script_dir="$1"
+    local non_interactive="${2:-false}"
+    
+    local metadata_file="$script_dir/models-metadata.conf"
+    local example_file="$script_dir/models-metadata.conf.example"
+    
+    # Check if example exists
+    if [[ ! -f "$example_file" ]]; then
+        # No example file, nothing to do
+        return 0
+    fi
+    
+    # If metadata file doesn't exist, copy from example
+    if [[ ! -f "$metadata_file" ]]; then
+        cp "$example_file" "$metadata_file"
+        print_status "Created models-metadata.conf from example"
+        return 0
+    fi
+    
+    # File exists - check if it differs from example
+    if diff -q "$metadata_file" "$example_file" &>/dev/null 2>&1; then
+        # Files are identical, nothing to do
+        return 0
+    fi
+    
+    # Files differ - prompt user in interactive mode
+    if [[ "$non_interactive" == "false" && "$HAS_GUM" == true ]]; then
+        print_warning "models-metadata.conf differs from example"
+        echo
+        print_status "How would you like to handle the metadata config?"
+        echo
+        
+        local choice
+        choice=$(gum choose \
+            "Skip - Keep existing file unchanged" \
+            "Overwrite - Replace with example (backup created)" \
+            "View diff - Show differences") || choice="Skip"
+        
+        case "$choice" in
+            "View diff"*)
+                echo
+                echo -e "${CYAN}${BOLD}Differences (your file vs example):${NC}"
+                echo
+                diff --color=auto "$metadata_file" "$example_file" || true
+                echo
+                
+                # Ask again after showing diff
+                local choice2
+                choice2=$(gum choose \
+                    "Skip - Keep existing file unchanged" \
+                    "Overwrite - Replace with example (backup created)") || choice2="Skip"
+                
+                if [[ "$choice2" == "Overwrite"* ]]; then
+                    local backup_file
+                    backup_file="$metadata_file.backup.$(date +%Y%m%d_%H%M%S)"
+                    cp "$metadata_file" "$backup_file"
+                    print_status "Backed up to: $backup_file"
+                    cp "$example_file" "$metadata_file"
+                    print_success "Updated models-metadata.conf from example"
+                    return 0
+                else
+                    print_status "Keeping existing models-metadata.conf"
+                    return 1
+                fi
+                ;;
+            "Overwrite"*)
+                local backup_file
+                backup_file="$metadata_file.backup.$(date +%Y%m%d_%H%M%S)"
+                cp "$metadata_file" "$backup_file"
+                print_status "Backed up to: $backup_file"
+                cp "$example_file" "$metadata_file"
+                print_success "Updated models-metadata.conf from example"
+                return 0
+                ;;
+            "Skip"*|"")
+                print_status "Keeping existing models-metadata.conf"
+                return 1
+                ;;
+        esac
+    else
+        # Non-interactive mode or no gum - keep existing
+        return 0
+    fi
+}
+
 load_metadata_conf() {
     # Load model metadata for OpenCode config generation
     if [[ ! -f "$METADATA_CONF" ]]; then

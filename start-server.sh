@@ -32,6 +32,9 @@ LLAMA_HOST="${LLAMA_HOST:-127.0.0.1}"
 GPU_LAYERS="${GPU_LAYERS:-99}"
 LOG_FILE=""  # Optional log file
 
+# Ensure models-metadata.conf exists (copy from example if missing)
+ensure_metadata_conf "$SCRIPT_DIR" "true"  # Non-interactive for server script
+
 # Escape special regex characters for use in grep/sed patterns
 # Usage: escape_regex "string"
 escape_regex() {

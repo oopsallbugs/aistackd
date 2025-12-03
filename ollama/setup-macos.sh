@@ -949,6 +949,11 @@ else
     OPENCODE_INSTALLED=false
 fi
 
+echo ""
+
+# Ensure models-metadata.conf exists
+ensure_metadata_conf "$SCRIPT_DIR" "$NON_INTERACTIVE"
+
 # Handle missing Xcode CLI tools
 if [[ " ${MISSING_REQUIRED[*]} " =~ " xcode-cli " ]]; then
     print_header "Installing Xcode Command Line Tools"
