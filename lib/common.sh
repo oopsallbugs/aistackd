@@ -421,6 +421,80 @@ download_model() {
         print_status "$model_id already downloaded"
         return 0
     fi
+    
+    # Create models directory
+    mkdir -p "$MODELS_DIR"
+    
+    echo
+    echo -e "${CYAN}${BOLD}Downloading: $model_id${NC}"
+    echo
+    echo -e "  ${BOLD}File:${NC}        $gguf_file"
+    echo -e "  ${BOLD}Size:${NC}        ~$size"
+    echo -e "  ${BOLD}Source:${NC}      huggingface.co/$hf_repo"
+    echo
+    
+    # Get expected file size from HuggingFace API (for progress %)
+    local expected_bytes=""
+    if command -v jq &>/dev/null; then
+        expected_bytes=$(curl -sf "https://huggingface.co/api/models/$hf_repo/tree/main" 2>/dev/null | \
+            jq -r ".[] | select(.path == \"$gguf_file\") | .size" 2>/dev/null || echo)
+    fi
+    
+    # Download using huggingface-cli (preferred) or curl (fallback)
+    if command -v huggingface-cli &>/dev/null; then
+        start_download_spinner "Downloading with huggingface-cli" "$output_path" "$expected_bytes"
+        
+        huggingface-cli download "$hf_repo" "$gguf_file" \
+            --local-dir "$MODELS_DIR" \
+            --local-dir-use-symlinks False \
+            --quiet 2>/dev/null
+        local dl_status=$?
+        
+        stop_spinner
+        
+        # huggingface-cli may create nested directories, move file if needed
+        if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
+            : # File is where we expect
+        elif [[ -f "$MODELS_DIR/$hf_repo/$gguf_file" ]]; then
+            mv "$MODELS_DIR/$hf_repo/$gguf_file" "$output_path"
+            rm -rf "${MODELS_DIR:?}/${hf_repo%%/*}" 2>/dev/null || true
+        fi
+        
+        if [[ $dl_status -ne 0 ]]; then
+            print_error "Download failed"
+            return 1
+        fi
+    else
+        local url="https://huggingface.co/$hf_repo/resolve/main/$gguf_file"
+        start_download_spinner "Downloading with curl" "$output_path" "$expected_bytes"
+        
+        curl -fL \
+            --connect-timeout 30 \
+            --retry 3 \
+            --retry-delay 5 \
+            --retry-connrefused \
+            -C - \
+            -o "$output_path" "$url" 2>/dev/null
+        local dl_status=$?
+        
+        stop_spinner
+        
+        if [[ $dl_status -ne 0 ]]; then
+            print_error "Download failed"
+            rm -f "$output_path"
+            return 1
+        fi
+    fi
+    
+    # Verify download
+    if [[ -f "$output_path" ]]; then
+        local actual_size
+        actual_size=$(du -h "$output_path" | cut -f1)
+        print_success "Downloaded: $model_id ($actual_size)"
+    else
+        print_error "Download failed - file not found"
+        return 1
+    fi
 }
 
 # -----------------------------------------------------------------------------
