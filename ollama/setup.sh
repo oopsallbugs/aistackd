@@ -49,78 +49,10 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# -----------------------------------------------------------------------------
-# Colors and Output Helpers
-# -----------------------------------------------------------------------------
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
-CHECKMARK="${GREEN}✓${NC}"
-CROSSMARK="${RED}✗${NC}"
-WARNMARK="${YELLOW}!${NC}"
-
-print_status() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-print_header() { echo -e "\n${CYAN}${BOLD}$1${NC}"; }
-
-# Spinner for operations without their own progress indicator
-SPINNER_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-SPINNER_PID=""
-
-cleanup_spinner() {
-    if [[ -n "$SPINNER_PID" ]] && kill -0 "$SPINNER_PID" 2>/dev/null; then
-        kill "$SPINNER_PID" 2>/dev/null || true
-        wait "$SPINNER_PID" 2>/dev/null || true
-    fi
-    SPINNER_PID=""
-    printf "\r\033[K"  # Clear the line
-}
+# Source common library
+source "$SCRIPT_DIR/../lib/common.sh"
 
 trap cleanup_spinner EXIT
-
-start_spinner() {
-    local message="$1"
-    local start_time=$SECONDS
-    (
-        local i=0
-        local spin_len=${#SPINNER_CHARS}
-        while true; do
-            local elapsed=$((SECONDS - start_time))
-            printf "\r  ${CYAN}%s${NC} %s ${DIM}(%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$elapsed"
-            i=$(( (i + 1) % spin_len ))
-            sleep 0.1
-        done
-    ) &
-    SPINNER_PID=$!
-}
-
-stop_spinner() {
-    local success=${1:-true}
-    local message="${2:-}"
-    
-    if [[ -n "$SPINNER_PID" ]]; then
-        kill "$SPINNER_PID" 2>/dev/null || true
-        wait "$SPINNER_PID" 2>/dev/null || true
-        SPINNER_PID=""
-    fi
-    printf "\r\033[K"  # Clear the line
-    
-    if [[ -n "$message" ]]; then
-        if [[ "$success" == "true" ]]; then
-            print_success "$message"
-        else
-            print_error "$message"
-        fi
-    fi
-}
 
 # -----------------------------------------------------------------------------
 # Configuration

@@ -22,39 +22,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# -----------------------------------------------------------------------------
-# Colors and Output Helpers
-# -----------------------------------------------------------------------------
-
-# Colors - only use if terminal supports them
-if [[ -t 1 ]] && [[ "${TERM:-dumb}" != "dumb" ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    CYAN='\033[0;36m'
-    BOLD='\033[1m'
-    NC='\033[0m'
-else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    BLUE=''
-    CYAN=''
-    BOLD=''
-    NC=''
-fi
-
-# Check for gum
-HAS_GUM=false
-if command -v gum &>/dev/null; then
-    HAS_GUM=true
-fi
-
-print_status() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+# Source common library
+source "$SCRIPT_DIR/lib/common.sh"
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -209,172 +178,6 @@ load_metadata_conf() {
 }
 
 # -----------------------------------------------------------------------------
-# Restore Functions
-# -----------------------------------------------------------------------------
-
-list_backups() {
-    local backup_dir
-    backup_dir="$(dirname "$OPENCODE_CONFIG")"
-    local backup_pattern="opencode.json.backup.*"
-    
-    # Find all backups sorted by date (newest first)
-    # Output one file per line for safe handling
-    find "$backup_dir" -maxdepth 1 -name "$backup_pattern" -print 2>/dev/null | sort -r
-}
-
-restore_backup() {
-    local backup_file="$1"
-    
-    if [[ ! -f "$backup_file" ]]; then
-        print_error "Backup file not found: $backup_file"
-        exit 1
-    fi
-    
-    # Validate it's valid JSON
-    if command -v jq &>/dev/null; then
-        if ! jq empty "$backup_file" 2>/dev/null; then
-            print_error "Backup file is not valid JSON: $backup_file"
-            exit 1
-        fi
-    fi
-    
-    # Create a backup of current config before restoring
-    if [[ -f "$OPENCODE_CONFIG" ]]; then
-        local pre_restore_backup
-        pre_restore_backup="$OPENCODE_CONFIG.pre-restore.$(date +%Y%m%d_%H%M%S)"
-        cp "$OPENCODE_CONFIG" "$pre_restore_backup"
-        print_status "Backed up current config to: $pre_restore_backup"
-    fi
-    
-    # Restore the backup
-    cp "$backup_file" "$OPENCODE_CONFIG"
-    print_success "Restored config from: $backup_file"
-}
-
-handle_restore() {
-    local backup_dir
-    backup_dir="$(dirname "$OPENCODE_CONFIG")"
-    
-    echo
-    echo -e "${CYAN}${BOLD}Restore OpenCode Configuration${NC}"
-    echo
-    
-    # Get list of backups into array (one per line)
-    local -a backups=()
-    while IFS= read -r file; do
-        [[ -n "$file" ]] && backups+=("$file")
-    done < <(list_backups)
-    
-    if [[ ${#backups[@]} -eq 0 ]]; then
-        print_warning "No backup files found in: $backup_dir"
-        exit 0
-    fi
-    
-    # If --restore-latest, use the first (newest) backup
-    if [[ "$RESTORE_LATEST" == true ]]; then
-        local latest="${backups[0]}"
-        print_status "Restoring latest backup..."
-        restore_backup "$latest"
-        exit 0
-    fi
-    
-    # Interactive mode - list backups and let user choose
-    print_status "Available backups (newest first):"
-    echo
-    
-    local i=1
-    for backup in "${backups[@]}"; do
-        local basename
-        basename=$(basename "$backup")
-        # Extract timestamp from filename
-        local timestamp="${basename#opencode.json.backup.}"
-        # Format: YYYYMMDD_HHMMSS -> YYYY-MM-DD HH:MM:SS
-        local formatted_date=""
-        if [[ "$timestamp" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})$ ]]; then
-            formatted_date="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}:${BASH_REMATCH[6]}"
-        else
-            formatted_date="$timestamp"
-        fi
-        echo "  $i) $formatted_date"
-        ((i++))
-    done
-    
-    echo
-    echo "  0) Cancel"
-    echo
-    
-    local choice=""
-    if [[ "$HAS_GUM" == true ]]; then
-        # Build options for gum
-        local gum_options=()
-        local gum_backup gum_basename gum_timestamp gum_formatted
-        for gum_backup in "${backups[@]}"; do
-            gum_basename=$(basename "$gum_backup")
-            gum_timestamp="${gum_basename#opencode.json.backup.}"
-            if [[ "$gum_timestamp" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})$ ]]; then
-                gum_formatted="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}:${BASH_REMATCH[6]}"
-            else
-                gum_formatted="$gum_timestamp"
-            fi
-            gum_options+=("$gum_formatted")
-        done
-        gum_options+=("Cancel")
-        
-        local selected
-        selected=$(gum choose --cursor-prefix="○ " --selected-prefix="◉ " \
-            --cursor.foreground="212" \
-            "${gum_options[@]}") || {
-            print_status "Restore cancelled"
-            exit 0
-        }
-        
-        if [[ "$selected" == "Cancel" ]]; then
-            print_status "Restore cancelled"
-            exit 0
-        fi
-        
-        # Find matching backup
-        local idx
-        for idx in "${!backups[@]}"; do
-            gum_basename=$(basename "${backups[$idx]}")
-            gum_timestamp="${gum_basename#opencode.json.backup.}"
-            if [[ "$gum_timestamp" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})$ ]]; then
-                gum_formatted="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}:${BASH_REMATCH[6]}"
-            else
-                gum_formatted="$gum_timestamp"
-            fi
-            if [[ "$selected" == "$gum_formatted" ]]; then
-                choice=$((idx + 1))
-                break
-            fi
-        done
-    else
-        read -rp "Select backup to restore [0-${#backups[@]}]: " choice
-    fi
-    
-    # Validate input
-    if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
-        print_error "Invalid selection"
-        exit 1
-    fi
-    
-    if [[ "$choice" -eq 0 ]]; then
-        print_status "Restore cancelled"
-        exit 0
-    fi
-    
-    if [[ "$choice" -lt 1 || "$choice" -gt ${#backups[@]} ]]; then
-        print_error "Invalid selection: $choice"
-        exit 1
-    fi
-    
-    # Restore selected backup (array is 0-indexed, selection is 1-indexed)
-    local selected_backup="${backups[$((choice-1))]}"
-    echo
-    restore_backup "$selected_backup"
-}
-
-# -----------------------------------------------------------------------------
 # Get Downloaded Models
 # -----------------------------------------------------------------------------
 
@@ -525,7 +328,11 @@ merge_config() {
 
 # Handle restore mode first
 if [[ "$RESTORE_MODE" == true ]]; then
-    handle_restore
+    if [[ "$RESTORE_LATEST" == true ]]; then
+        handle_config_restore "$OPENCODE_CONFIG" "--latest"
+    else
+        handle_config_restore "$OPENCODE_CONFIG"
+    fi
     exit 0
 fi
 
@@ -586,11 +393,7 @@ if [[ "$DRY_RUN" == true ]]; then
 fi
 
 # Backup existing config if present
-if [[ -f "$OPENCODE_CONFIG" ]]; then
-    BACKUP_FILE="$OPENCODE_CONFIG.backup.$(date +%Y%m%d_%H%M%S)"
-    cp "$OPENCODE_CONFIG" "$BACKUP_FILE"
-    print_status "Backed up existing config to: $BACKUP_FILE"
-fi
+backup_config "$OPENCODE_CONFIG"
 
 # Write config
 mkdir -p "$(dirname "$OPENCODE_CONFIG")"

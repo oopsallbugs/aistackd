@@ -8,86 +8,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Source common library
+source "$SCRIPT_DIR/lib/common.sh"
+
 # Configuration
 MODELS_CONF="$SCRIPT_DIR/models.conf"
 MODELS_DIR="$SCRIPT_DIR/models"
 
-# Colors - only use if terminal supports them
-if [[ -t 1 ]] && [[ "${TERM:-dumb}" != "dumb" ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    CYAN='\033[0;36m'
-    BOLD='\033[1m'
-    DIM='\033[2m'
-    NC='\033[0m'
-else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    CYAN=''
-    BOLD=''
-    DIM=''
-    NC=''
-fi
-
-# Check for gum
-HAS_GUM=false
-if command -v gum &>/dev/null; then
-    HAS_GUM=true
-fi
-
-print_status() { echo -e "${CYAN}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-
-# Validate a models.conf entry
-# Usage: validate_model_entry <category> <model_id> <hf_repo> <gguf_file> <size> [line_num]
-# Returns 0 if valid, 1 if invalid (with warning printed)
-validate_model_entry() {
-    local category="$1"
-    local model_id="$2"
-    local hf_repo="$3"
-    local gguf_file="$4"
-    local size="$5"
-    local line_num="${6:-}"
-    
-    local line_info=""
-    [[ -n "$line_num" ]] && line_info=" (line $line_num)"
-    
-    # Required fields must not be empty
-    if [[ -z "$category" || -z "$model_id" || -z "$hf_repo" || -z "$gguf_file" ]]; then
-        print_warning "Skipping invalid entry${line_info}: missing required fields"
-        return 1
-    fi
-    
-    # model_id should be alphanumeric with hyphens/underscores/dots
-    if [[ ! "$model_id" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-        print_warning "Skipping invalid entry${line_info}: model_id contains invalid characters: $model_id"
-        return 1
-    fi
-    
-    # gguf_file must end in .gguf
-    if [[ ! "$gguf_file" =~ \.gguf$ ]]; then
-        print_warning "Skipping invalid entry${line_info}: gguf_file must end in .gguf: $gguf_file"
-        return 1
-    fi
-    
-    # gguf_file should not contain path traversal
-    if [[ "$gguf_file" =~ \.\. || "$gguf_file" =~ ^/ ]]; then
-        print_warning "Skipping invalid entry${line_info}: gguf_file contains invalid path: $gguf_file"
-        return 1
-    fi
-    
-    # hf_repo should look like owner/repo
-    if [[ ! "$hf_repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
-        print_warning "Skipping invalid entry${line_info}: hf_repo format invalid: $hf_repo"
-        return 1
-    fi
-    
-    return 0
-}
+# validate_model_entry is now in lib/common.sh
 
 # Parse size string to bytes (e.g., "20GB" -> 21474836480, "500MB" -> 524288000)
 parse_size_bytes() {
@@ -147,10 +75,6 @@ check_disk_space() {
     return 0
 }
 
-# Spinner for operations
-SPINNER_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-SPINNER_PID=""
-
 # Track temp files for cleanup
 TEMP_FILES=()
 
@@ -159,15 +83,6 @@ cleanup_temp_files() {
         [[ -f "$f" ]] && rm -f "$f"
     done
     TEMP_FILES=()
-}
-
-cleanup_spinner() {
-    if [[ -n "$SPINNER_PID" ]] && kill -0 "$SPINNER_PID" 2>/dev/null; then
-        kill "$SPINNER_PID" 2>/dev/null || true
-        wait "$SPINNER_PID" 2>/dev/null || true
-    fi
-    SPINNER_PID=""
-    printf "\r\033[K"
 }
 
 handle_interrupt() {
@@ -187,59 +102,6 @@ cleanup_all() {
 
 trap handle_interrupt INT TERM PIPE
 trap cleanup_all EXIT
-
-# Download spinner with progress tracking
-start_download_spinner() {
-    local message="$1"
-    local output_file="$2"
-    local expected_size="$3"  # Optional expected size in bytes
-    local start_time=$SECONDS
-    (
-        local i=0
-        local spin_len=${#SPINNER_CHARS}
-        while true; do
-            local elapsed=$((SECONDS - start_time))
-            local current_size=0
-            local size_str=""
-            
-            if [[ -f "$output_file" ]]; then
-                current_size=$(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null || echo 0)
-            fi
-            
-            # Format size
-            if [[ $current_size -ge 1073741824 ]]; then
-                size_str="$(echo "scale=1; $current_size / 1073741824" | bc 2>/dev/null || echo "?")GB"
-            elif [[ $current_size -ge 1048576 ]]; then
-                size_str="$(( current_size / 1048576 ))MB"
-            elif [[ $current_size -gt 0 ]]; then
-                size_str="$(( current_size / 1024 ))KB"
-            fi
-            
-            # Show progress with optional percentage
-            if [[ -n "$expected_size" && "$expected_size" -gt 0 && $current_size -gt 0 ]]; then
-                local pct=$(( current_size * 100 / expected_size ))
-                printf "\r  ${CYAN}%s${NC} %s ${DIM}[%s] %d%% (%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$size_str" "$pct" "$elapsed"
-            elif [[ -n "$size_str" ]]; then
-                printf "\r  ${CYAN}%s${NC} %s ${DIM}[%s] (%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$size_str" "$elapsed"
-            else
-                printf "\r  ${CYAN}%s${NC} %s ${DIM}(%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$elapsed"
-            fi
-            
-            i=$(( (i + 1) % spin_len ))
-            sleep 0.2
-        done
-    ) &
-    SPINNER_PID=$!
-}
-
-stop_spinner() {
-    if [[ -n "$SPINNER_PID" ]]; then
-        kill "$SPINNER_PID" 2>/dev/null || true
-        wait "$SPINNER_PID" 2>/dev/null || true
-        SPINNER_PID=""
-    fi
-    printf "\r\033[K"
-}
 
 show_help() {
     echo

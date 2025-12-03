@@ -9,14 +9,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Detect platform
-IS_MACOS=false
-IS_LINUX=false
-if [[ "$(uname -s)" == "Darwin" ]]; then
-    IS_MACOS=true
-elif [[ "$(uname -s)" == "Linux" ]]; then
-    IS_LINUX=true
-fi
+# Source common library
+source "$SCRIPT_DIR/lib/common.sh"
 
 # Load configuration
 if [[ -f "$SCRIPT_DIR/.env" ]]; then
@@ -37,87 +31,10 @@ LLAMA_HOST="${LLAMA_HOST:-127.0.0.1}"
 GPU_LAYERS="${GPU_LAYERS:-99}"
 LOG_FILE=""  # Optional log file
 
-# Colors - only use if terminal supports them
-if [[ -t 1 ]] && [[ "${TERM:-dumb}" != "dumb" ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    CYAN='\033[0;36m'
-    BOLD='\033[1m'
-    DIM='\033[2m'
-    NC='\033[0m'
-else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    CYAN=''
-    BOLD=''
-    DIM=''
-    NC=''
-fi
-
-# Check for gum
-HAS_GUM=false
-if command -v gum &>/dev/null; then
-    HAS_GUM=true
-fi
-
-print_status() { echo -e "${CYAN}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-
 # Escape special regex characters for use in grep/sed patterns
 # Usage: escape_regex "string"
 escape_regex() {
     printf '%s' "$1" | sed 's/[.[\*^$()+?{|\\]/\\&/g'
-}
-
-# Validate a models.conf entry
-# Usage: validate_model_entry <category> <model_id> <hf_repo> <gguf_file> <size> [line_num]
-# Returns 0 if valid, 1 if invalid (with warning printed)
-validate_model_entry() {
-    local category="$1"
-    local model_id="$2"
-    local hf_repo="$3"
-    local gguf_file="$4"
-    local size="$5"
-    local line_num="${6:-}"
-    
-    local line_info=""
-    [[ -n "$line_num" ]] && line_info=" (line $line_num)"
-    
-    # Required fields must not be empty
-    if [[ -z "$category" || -z "$model_id" || -z "$hf_repo" || -z "$gguf_file" ]]; then
-        print_warning "Skipping invalid entry${line_info}: missing required fields"
-        return 1
-    fi
-    
-    # model_id should be alphanumeric with hyphens/underscores/dots
-    if [[ ! "$model_id" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-        print_warning "Skipping invalid entry${line_info}: model_id contains invalid characters: $model_id"
-        return 1
-    fi
-    
-    # gguf_file must end in .gguf
-    if [[ ! "$gguf_file" =~ \.gguf$ ]]; then
-        print_warning "Skipping invalid entry${line_info}: gguf_file must end in .gguf: $gguf_file"
-        return 1
-    fi
-    
-    # gguf_file should not contain path traversal
-    if [[ "$gguf_file" =~ \.\. || "$gguf_file" =~ ^/ ]]; then
-        print_warning "Skipping invalid entry${line_info}: gguf_file contains invalid path: $gguf_file"
-        return 1
-    fi
-    
-    # hf_repo should look like owner/repo
-    if [[ ! "$hf_repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
-        print_warning "Skipping invalid entry${line_info}: hf_repo format invalid: $hf_repo"
-        return 1
-    fi
-    
-    return 0
 }
 
 # =============================================================================
@@ -184,16 +101,6 @@ get_hsa_version() {
         gfx900)   echo "9.0.0" ;;   # Vega 10
         *)        echo "11.0.0" ;;  # Default to RDNA3
     esac
-}
-
-# Cross-platform file size in bytes
-get_file_size() {
-    local file="$1"
-    if [[ "$IS_MACOS" == true ]]; then
-        stat -f%z "$file" 2>/dev/null
-    else
-        stat -c%s "$file" 2>/dev/null
-    fi
 }
 
 show_help() {

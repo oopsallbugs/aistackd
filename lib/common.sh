@@ -57,7 +57,7 @@ print_header() { echo -e "\n${CYAN}${BOLD}$1${NC}"; }
 # Spinner for Long Operations
 # -----------------------------------------------------------------------------
 
-SPINNER_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+SPINNER_CHARS='⣾⣽⣻⢿⡿⣟⣯⣷'
 SPINNER_PID=""
 
 cleanup_spinner() {
@@ -892,4 +892,293 @@ check_orphan_models() {
         echo -e "${DIM}Run './download-model.sh --cleanup' to manage orphan models${NC}"
     fi
     echo
+}
+
+# -----------------------------------------------------------------------------
+# Platform Detection
+# -----------------------------------------------------------------------------
+
+IS_MACOS=false
+IS_LINUX=false
+
+detect_platform() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        IS_MACOS=true
+    elif [[ "$(uname -s)" == "Linux" ]]; then
+        IS_LINUX=true
+    fi
+}
+
+# Run platform detection on source
+detect_platform
+
+# -----------------------------------------------------------------------------
+# Whitespace Trimming
+# -----------------------------------------------------------------------------
+
+# Trim leading and trailing whitespace from a variable
+# Usage: trimmed=$(trim "  hello world  ")
+trim() {
+    local var="$1"
+    var="${var#"${var%%[![:space:]]*}"}"
+    var="${var%"${var##*[![:space:]]}"}"
+    echo "$var"
+}
+
+# -----------------------------------------------------------------------------
+# Model Entry Validation
+# -----------------------------------------------------------------------------
+
+# Validate a models.conf entry
+# Usage: validate_model_entry <category> <model_id> <hf_repo> <gguf_file> <size> [line_num]
+# Returns 0 if valid, 1 if invalid (with warning printed)
+validate_model_entry() {
+    local category="$1"
+    local model_id="$2"
+    local hf_repo="$3"
+    local gguf_file="$4"
+    local size="$5"
+    local line_num="${6:-}"
+    
+    local line_info=""
+    [[ -n "$line_num" ]] && line_info=" (line $line_num)"
+    
+    # Required fields must not be empty
+    if [[ -z "$category" || -z "$model_id" || -z "$hf_repo" || -z "$gguf_file" ]]; then
+        print_warning "Skipping invalid entry${line_info}: missing required fields"
+        return 1
+    fi
+    
+    # model_id should be alphanumeric with hyphens/underscores/dots
+    if [[ ! "$model_id" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        print_warning "Skipping invalid entry${line_info}: model_id contains invalid characters: $model_id"
+        return 1
+    fi
+    
+    # gguf_file must end in .gguf
+    if [[ ! "$gguf_file" =~ \.gguf$ ]]; then
+        print_warning "Skipping invalid entry${line_info}: gguf_file must end in .gguf: $gguf_file"
+        return 1
+    fi
+    
+    # gguf_file should not contain path traversal
+    if [[ "$gguf_file" =~ \.\. || "$gguf_file" =~ ^/ ]]; then
+        print_warning "Skipping invalid entry${line_info}: gguf_file contains invalid path: $gguf_file"
+        return 1
+    fi
+    
+    # hf_repo should look like owner/repo
+    if [[ ! "$hf_repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
+        print_warning "Skipping invalid entry${line_info}: hf_repo format invalid: $hf_repo"
+        return 1
+    fi
+    
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# Cross-Platform File Size
+# -----------------------------------------------------------------------------
+
+# Get file size in bytes (cross-platform)
+# Usage: size=$(get_file_size "/path/to/file")
+get_file_size() {
+    local file="$1"
+    if [[ "$IS_MACOS" == true ]]; then
+        stat -f%z "$file" 2>/dev/null
+    else
+        stat -c%s "$file" 2>/dev/null
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# OpenCode Config Backup/Restore
+# -----------------------------------------------------------------------------
+
+# List available config backups (newest first)
+# Usage: backups=$(list_config_backups "/path/to/config.json")
+list_config_backups() {
+    local config_file="${1:-$OPENCODE_CONFIG}"
+    local backup_dir
+    backup_dir="$(dirname "$config_file")"
+    local config_name
+    config_name="$(basename "$config_file")"
+    local backup_pattern="${config_name}.backup.*"
+    
+    # Find all backups sorted by date (newest first)
+    find "$backup_dir" -maxdepth 1 -name "$backup_pattern" -print 2>/dev/null | sort -r
+}
+
+# Restore a config backup
+# Usage: restore_config_backup "/path/to/backup.json" "/path/to/config.json"
+restore_config_backup() {
+    local backup_file="$1"
+    local config_file="${2:-$OPENCODE_CONFIG}"
+    
+    if [[ ! -f "$backup_file" ]]; then
+        print_error "Backup file not found: $backup_file"
+        return 1
+    fi
+    
+    # Validate it's valid JSON
+    if command -v jq &>/dev/null; then
+        if ! jq empty "$backup_file" 2>/dev/null; then
+            print_error "Backup file is not valid JSON: $backup_file"
+            return 1
+        fi
+    fi
+    
+    # Create a backup of current config before restoring
+    if [[ -f "$config_file" ]]; then
+        local pre_restore_backup
+        pre_restore_backup="$config_file.pre-restore.$(date +%Y%m%d_%H%M%S)"
+        cp "$config_file" "$pre_restore_backup"
+        print_status "Backed up current config to: $pre_restore_backup"
+    fi
+    
+    # Restore the backup
+    cp "$backup_file" "$config_file"
+    print_success "Restored config from: $backup_file"
+}
+
+# Create a backup of the config file
+# Usage: backup_config "/path/to/config.json"
+backup_config() {
+    local config_file="${1:-$OPENCODE_CONFIG}"
+    
+    if [[ -f "$config_file" ]]; then
+        local backup_file
+        backup_file="$config_file.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$config_file" "$backup_file"
+        print_status "Backed up existing config to: $backup_file"
+        echo "$backup_file"
+    fi
+}
+
+# Interactive restore handler
+# Usage: handle_config_restore "/path/to/config.json" [--latest]
+handle_config_restore() {
+    local config_file="${1:-$OPENCODE_CONFIG}"
+    local restore_latest="${2:-false}"
+    local backup_dir
+    backup_dir="$(dirname "$config_file")"
+    
+    echo
+    echo -e "${CYAN}${BOLD}Restore OpenCode Configuration${NC}"
+    echo
+    
+    # Get list of backups into array
+    local -a backups=()
+    while IFS= read -r file; do
+        [[ -n "$file" ]] && backups+=("$file")
+    done < <(list_config_backups "$config_file")
+    
+    if [[ ${#backups[@]} -eq 0 ]]; then
+        print_warning "No backup files found in: $backup_dir"
+        return 0
+    fi
+    
+    # If --latest, use the first (newest) backup
+    if [[ "$restore_latest" == true || "$restore_latest" == "--latest" ]]; then
+        local latest="${backups[0]}"
+        print_status "Restoring latest backup..."
+        restore_config_backup "$latest" "$config_file"
+        return 0
+    fi
+    
+    # Interactive mode - list backups and let user choose
+    print_status "Available backups (newest first):"
+    echo
+    
+    local i=1
+    for backup in "${backups[@]}"; do
+        local bname
+        bname=$(basename "$backup")
+        # Extract timestamp from filename
+        local timestamp="${bname#*.backup.}"
+        # Format: YYYYMMDD_HHMMSS -> YYYY-MM-DD HH:MM:SS
+        local formatted_date=""
+        if [[ "$timestamp" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})$ ]]; then
+            formatted_date="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}:${BASH_REMATCH[6]}"
+        else
+            formatted_date="$timestamp"
+        fi
+        echo "  $i) $formatted_date"
+        ((i++))
+    done
+    
+    echo
+    echo "  0) Cancel"
+    echo
+    
+    local choice=""
+    if [[ "$HAS_GUM" == true ]]; then
+        # Build options for gum
+        local gum_options=()
+        for gum_backup in "${backups[@]}"; do
+            local gum_bname gum_timestamp gum_formatted
+            gum_bname=$(basename "$gum_backup")
+            gum_timestamp="${gum_bname#*.backup.}"
+            if [[ "$gum_timestamp" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})$ ]]; then
+                gum_formatted="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}:${BASH_REMATCH[6]}"
+            else
+                gum_formatted="$gum_timestamp"
+            fi
+            gum_options+=("$gum_formatted")
+        done
+        gum_options+=("Cancel")
+        
+        local selected
+        selected=$(gum choose --cursor-prefix="○ " --selected-prefix="◉ " \
+            --cursor.foreground="212" \
+            "${gum_options[@]}") || {
+            print_status "Restore cancelled"
+            return 0
+        }
+        
+        if [[ "$selected" == "Cancel" ]]; then
+            print_status "Restore cancelled"
+            return 0
+        fi
+        
+        # Find matching backup
+        local idx
+        for idx in "${!backups[@]}"; do
+            local match_bname match_timestamp match_formatted
+            match_bname=$(basename "${backups[$idx]}")
+            match_timestamp="${match_bname#*.backup.}"
+            if [[ "$match_timestamp" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})$ ]]; then
+                match_formatted="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}:${BASH_REMATCH[6]}"
+            else
+                match_formatted="$match_timestamp"
+            fi
+            if [[ "$selected" == "$match_formatted" ]]; then
+                choice=$((idx + 1))
+                break
+            fi
+        done
+    else
+        read -rp "Select backup to restore [0-${#backups[@]}]: " choice
+    fi
+    
+    # Validate input
+    if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
+        print_error "Invalid selection"
+        return 1
+    fi
+    
+    if [[ "$choice" -eq 0 ]]; then
+        print_status "Restore cancelled"
+        return 0
+    fi
+    
+    if [[ "$choice" -lt 1 || "$choice" -gt ${#backups[@]} ]]; then
+        print_error "Invalid selection: $choice"
+        return 1
+    fi
+    
+    # Restore selected backup (array is 0-indexed, selection is 1-indexed)
+    local selected_backup="${backups[$((choice-1))]}"
+    echo
+    restore_config_backup "$selected_backup" "$config_file"
 }

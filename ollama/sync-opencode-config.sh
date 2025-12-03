@@ -24,22 +24,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# -----------------------------------------------------------------------------
-# Colors and Output Helpers
-# -----------------------------------------------------------------------------
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-print_status() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+# Source common library (from parent directory)
+source "$SCRIPT_DIR/../lib/common.sh"
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -122,37 +108,9 @@ done
 # Load Model Metadata
 # -----------------------------------------------------------------------------
 
-declare -A MODEL_DISPLAY_NAME
-declare -A MODEL_CONTEXT_LIMIT
-declare -A MODEL_OUTPUT_LIMIT
-
-load_metadata() {
-    if [[ ! -f "$METADATA_CONF" ]]; then
-        print_warning "Metadata file not found: $METADATA_CONF"
-        print_status "Using default values for all models"
-        return
-    fi
-    
-    while IFS='|' read -r model display_name context_limit output_limit || [[ -n "$model" ]]; do
-        # Skip comments and empty lines
-        [[ "$model" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "$model" ]] && continue
-        
-        # Trim whitespace
-        model="${model#"${model%%[![:space:]]*}"}"
-        model="${model%"${model##*[![:space:]]}"}"
-        display_name="${display_name#"${display_name%%[![:space:]]*}"}"
-        display_name="${display_name%"${display_name##*[![:space:]]}"}"
-        context_limit="${context_limit#"${context_limit%%[![:space:]]*}"}"
-        context_limit="${context_limit%"${context_limit##*[![:space:]]}"}"
-        output_limit="${output_limit#"${output_limit%%[![:space:]]*}"}"
-        output_limit="${output_limit%"${output_limit##*[![:space:]]}"}"
-        
-        MODEL_DISPLAY_NAME["$model"]="$display_name"
-        MODEL_CONTEXT_LIMIT["$model"]="$context_limit"
-        MODEL_OUTPUT_LIMIT["$model"]="$output_limit"
-    done < "$METADATA_CONF"
-}
+# Uses load_metadata_conf from common.sh - just need to set METADATA_CONF first
+# Associative arrays MODEL_DISPLAY_NAME, MODEL_CONTEXT_LIMIT, MODEL_OUTPUT_LIMIT 
+# are already defined in common.sh
 
 # -----------------------------------------------------------------------------
 # Load Existing Config Models (for merge mode)
@@ -248,135 +206,6 @@ generate_display_name() {
     size_tag="${size_tag^^}"
     
     echo "$base_name $size_tag"
-}
-
-# -----------------------------------------------------------------------------
-# Restore Functions
-# -----------------------------------------------------------------------------
-
-list_backups() {
-    local backup_dir
-    backup_dir="$(dirname "$OPENCODE_CONFIG")"
-    local backup_pattern="opencode.json.backup.*"
-    
-    # Find all backups sorted by date (newest first)
-    local -a backups=()
-    while IFS= read -r -d '' file; do
-        backups+=("$file")
-    done < <(find "$backup_dir" -maxdepth 1 -name "$backup_pattern" -print0 2>/dev/null | sort -rz)
-    
-    echo "${backups[@]}"
-}
-
-restore_backup() {
-    local backup_file="$1"
-    
-    if [[ ! -f "$backup_file" ]]; then
-        print_error "Backup file not found: $backup_file"
-        exit 1
-    fi
-    
-    # Validate it's valid JSON
-    if command -v jq &>/dev/null; then
-        if ! jq empty "$backup_file" 2>/dev/null; then
-            print_error "Backup file is not valid JSON: $backup_file"
-            exit 1
-        fi
-    fi
-    
-    # Create a backup of current config before restoring
-    if [[ -f "$OPENCODE_CONFIG" ]]; then
-        local pre_restore_backup
-        pre_restore_backup="$OPENCODE_CONFIG.pre-restore.$(date +%Y%m%d_%H%M%S)"
-        cp "$OPENCODE_CONFIG" "$pre_restore_backup"
-        print_status "Backed up current config to: $pre_restore_backup"
-    fi
-    
-    # Restore the backup
-    cp "$backup_file" "$OPENCODE_CONFIG"
-    print_success "Restored config from: $backup_file"
-}
-
-handle_restore() {
-    local backup_dir
-    backup_dir="$(dirname "$OPENCODE_CONFIG")"
-    
-    echo ""
-    echo -e "${CYAN}${BOLD}Restore OpenCode Configuration${NC}"
-    echo ""
-    
-    # Get list of backups
-    local backups_str
-    backups_str=$(list_backups)
-    
-    if [[ -z "$backups_str" ]]; then
-        print_warning "No backup files found in: $backup_dir"
-        exit 0
-    fi
-    
-    # Convert to array
-    read -ra backups <<< "$backups_str"
-    
-    if [[ ${#backups[@]} -eq 0 ]]; then
-        print_warning "No backup files found in: $backup_dir"
-        exit 0
-    fi
-    
-    # If --restore-latest, use the first (newest) backup
-    if [[ "$RESTORE_LATEST" == "true" ]]; then
-        local latest="${backups[0]}"
-        print_status "Restoring latest backup..."
-        restore_backup "$latest"
-        exit 0
-    fi
-    
-    # Interactive mode - list backups and let user choose
-    print_status "Available backups (newest first):"
-    echo ""
-    
-    local i=1
-    for backup in "${backups[@]}"; do
-        local basename
-        basename=$(basename "$backup")
-        # Extract timestamp from filename
-        local timestamp="${basename#opencode.json.backup.}"
-        # Format: YYYYMMDD_HHMMSS -> YYYY-MM-DD HH:MM:SS
-        local formatted_date=""
-        if [[ "$timestamp" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})$ ]]; then
-            formatted_date="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}:${BASH_REMATCH[6]}"
-        else
-            formatted_date="$timestamp"
-        fi
-        echo "  $i) $formatted_date"
-        ((i++))
-    done
-    
-    echo ""
-    echo "  0) Cancel"
-    echo ""
-    
-    read -rp "Select backup to restore [0-$((${#backups[@]}))]: " choice
-    
-    # Validate input
-    if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
-        print_error "Invalid selection"
-        exit 1
-    fi
-    
-    if [[ "$choice" -eq 0 ]]; then
-        print_status "Restore cancelled"
-        exit 0
-    fi
-    
-    if [[ "$choice" -lt 1 || "$choice" -gt ${#backups[@]} ]]; then
-        print_error "Invalid selection: $choice"
-        exit 1
-    fi
-    
-    # Restore selected backup (array is 0-indexed, selection is 1-indexed)
-    local selected_backup="${backups[$((choice-1))]}"
-    echo ""
-    restore_backup "$selected_backup"
 }
 
 # -----------------------------------------------------------------------------
@@ -487,7 +316,11 @@ generate_config() {
 
 # Handle restore mode first (doesn't need Ollama running)
 if [[ "$RESTORE_MODE" == "true" ]]; then
-    handle_restore
+    if [[ "$RESTORE_LATEST" == "true" ]]; then
+        handle_config_restore "$OPENCODE_CONFIG" "--latest"
+    else
+        handle_config_restore "$OPENCODE_CONFIG"
+    fi
     exit 0
 fi
 
@@ -500,7 +333,7 @@ fi
 echo ""
 
 # Load metadata
-load_metadata
+load_metadata_conf
 
 # Load existing config if in merge mode
 if [[ "$MERGE_MODE" == "true" ]]; then
@@ -585,11 +418,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
 fi
 
 # Backup existing config if present
-if [[ -f "$OPENCODE_CONFIG" ]]; then
-    BACKUP_FILE="$OPENCODE_CONFIG.backup.$(date +%Y%m%d_%H%M%S)"
-    cp "$OPENCODE_CONFIG" "$BACKUP_FILE"
-    print_status "Backed up existing config to: $BACKUP_FILE"
-fi
+backup_config "$OPENCODE_CONFIG"
 
 # Write config
 mkdir -p "$(dirname "$OPENCODE_CONFIG")"
