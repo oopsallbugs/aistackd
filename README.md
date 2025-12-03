@@ -373,9 +373,9 @@ The `agent/` directory contains specialized agent templates that are automatical
 
 Setup syncs these files to:
 - `~/.config/opencode/AGENTS.md` - Main system prompt
-- `~/.config/opencode/agents/plan.md` - Planning agent
-- `~/.config/opencode/agents/review.md` - Review agent  
-- `~/.config/opencode/agents/debug.md` - Debug agent
+- `~/.config/opencode/agent/plan.md` - Planning agent
+- `~/.config/opencode/agent/review.md` - Review agent  
+- `~/.config/opencode/agent/debug.md` - Debug agent
 
 To reset all agent files to defaults:
 

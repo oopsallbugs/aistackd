@@ -1720,9 +1720,9 @@ handle_config_restore() {
 #
 # Syncs:
 #   agent/AGENTS.md -> ~/.config/opencode/AGENTS.md
-#   agent/plan.md   -> ~/.config/opencode/agents/plan.md
-#   agent/review.md -> ~/.config/opencode/agents/review.md
-#   agent/debug.md  -> ~/.config/opencode/agents/debug.md
+#   agent/plan.md   -> ~/.config/opencode/agent/plan.md
+#   agent/review.md -> ~/.config/opencode/agent/review.md
+#   agent/debug.md  -> ~/.config/opencode/agent/debug.md
 #
 # Returns: 0 if files were created/updated, 1 if skipped
 sync_agents() {
@@ -1732,7 +1732,7 @@ sync_agents() {
     local reset_mode="${4:-false}"
     
     local source_dir="$script_dir/agent"
-    local agents_target_dir="$target_dir/agents"
+    local agent_target_dir="$target_dir/agent"
     
     # Check source exists
     if [[ ! -d "$source_dir" ]]; then
@@ -1763,23 +1763,23 @@ sync_agents() {
             fi
         done
         
-        # Sync agent files to agents/ subdirectory
+        # Sync agent files to agent/ subdirectory
         for file in "${agent_files[@]}"; do
             local src="$source_dir/$file"
-            local dst="$agents_target_dir/$file"
+            local dst="$agent_target_dir/$file"
             if [[ -f "$src" ]]; then
                 if [[ -f "$dst" ]]; then
                     cp "$dst" "$dst.backup.$backup_timestamp"
-                    print_status "Backed up agents/$file"
+                    print_status "Backed up agent/$file"
                 fi
-                mkdir -p "$agents_target_dir"
+                mkdir -p "$agent_target_dir"
                 cp "$src" "$dst"
             fi
         done
         
         print_success "Agent files reset to defaults"
         print_status "  AGENTS.md -> $target_dir/AGENTS.md"
-        print_status "  agents/   -> $agents_target_dir/"
+        print_status "  agent/   -> $agent_target_dir/"
         return 0
     fi
     
@@ -1800,7 +1800,7 @@ sync_agents() {
     
     for file in "${agent_files[@]}"; do
         local src="$source_dir/$file"
-        local dst="$agents_target_dir/$file"
+        local dst="$agent_target_dir/$file"
         if [[ -f "$dst" ]]; then
             has_existing=true
             if ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
@@ -1848,9 +1848,9 @@ sync_agents() {
                     done
                     for file in "${agent_files[@]}"; do
                         local src="$source_dir/$file"
-                        local dst="$agents_target_dir/$file"
+                        local dst="$agent_target_dir/$file"
                         if [[ -f "$dst" ]] && ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
-                            echo -e "${BOLD}=== agents/$file ===${NC}"
+                            echo -e "${BOLD}=== agent/$file ===${NC}"
                             diff --color=auto "$dst" "$src" || true
                             echo
                         fi
@@ -1898,18 +1898,18 @@ sync_agents() {
             fi
         done
         
-        # Sync agent files to agents/ subdirectory
+        # Sync agent files to agent/ subdirectory
         for file in "${agent_files[@]}"; do
             local src="$source_dir/$file"
             if [[ -f "$src" ]]; then
-                mkdir -p "$agents_target_dir"
-                cp "$src" "$agents_target_dir/$file"
+                mkdir -p "$agent_target_dir"
+                cp "$src" "$agent_target_dir/$file"
             fi
         done
         
         print_success "Agent files created:"
         print_status "  AGENTS.md -> $target_dir/AGENTS.md"
-        print_status "  agents/   -> $agents_target_dir/"
+        print_status "  agent/   -> $agent_target_dir/"
         return 0
     fi
 }

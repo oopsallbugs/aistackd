@@ -119,7 +119,7 @@ for arg in "$@"; do
             echo "What to sync:"
             echo "  (default)         Sync both models and agents"
             echo "  --models          Sync only model config (opencode.json)"
-            echo "  --agents          Sync only agent files (AGENTS.md, agents/*.md)"
+            echo "  --agents          Sync only agent files (AGENTS.md, agent/*.md)"
             echo "  --reset-agents    Force reset agent files to defaults"
             echo
             echo "Model options:"
@@ -140,7 +140,7 @@ for arg in "$@"; do
             echo "Files:"
             echo "  Config:  $OPENCODE_CONFIG"
             echo "  Agents:  $OPENCODE_CONFIG_DIR/AGENTS.md"
-            echo "           $OPENCODE_CONFIG_DIR/agents/*.md"
+            echo "           $OPENCODE_CONFIG_DIR/agent/*.md"
             echo "  Metadata: $METADATA_CONF"
             exit 0
             ;;
@@ -478,9 +478,9 @@ sync_agents_config() {
         echo
         print_status "Files:"
         echo "    AGENTS.md -> $OPENCODE_CONFIG_DIR/AGENTS.md"
-        echo "    plan.md   -> $OPENCODE_CONFIG_DIR/agents/plan.md"
-        echo "    review.md -> $OPENCODE_CONFIG_DIR/agents/review.md"
-        echo "    debug.md  -> $OPENCODE_CONFIG_DIR/agents/debug.md"
+        echo "    plan.md   -> $OPENCODE_CONFIG_DIR/agent/plan.md"
+        echo "    review.md -> $OPENCODE_CONFIG_DIR/agent/review.md"
+        echo "    debug.md  -> $OPENCODE_CONFIG_DIR/agent/debug.md"
         echo
         return 0
     fi
