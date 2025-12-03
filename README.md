@@ -257,10 +257,12 @@ Both can run side-by-side:
 ./setup.sh --verify           # Verify downloaded models
 ./setup.sh --reset-agents     # Reset ~/.config/opencode agents to defaults
 ./setup.sh --skip-build       # Skip building llama.cpp
+./setup.sh --skip-models      # Skip model selection
 ./setup.sh --force-rebuild    # Force rebuild even if exists
+./setup.sh --force-env        # Regenerate .env file
 ./setup.sh --non-interactive  # Automated setup
 
-# macOS
+# macOS (same options, different script)
 ./setup-macos.sh              # Interactive setup
 ./setup-macos.sh --status     # Check current status
 ./setup-macos.sh --update     # Update llama.cpp

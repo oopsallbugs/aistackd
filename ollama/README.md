@@ -202,6 +202,7 @@ docker exec ollama ollama pull qwen3:14b # Retry
 ./setup.sh --skip-models       # Re-run setup without model selection
 ./setup.sh --force-env         # Regenerate configuration
 ./setup.sh --non-interactive   # Use defaults, no prompts
+./setup.sh --ignore-warnings   # Continue despite warnings
 ```
 
 ### Environment Variables
@@ -225,6 +226,7 @@ To sync after adding new models:
 ./sync-opencode.sh --agents     # Sync only agent files
 ./sync-opencode.sh --merge      # Add new models, keep existing
 ./sync-opencode.sh --reset-agents  # Reset agents to defaults
+./sync-opencode.sh --restore    # Restore from backup
 ./sync-opencode.sh --dry-run    # Preview changes
 ```
 
