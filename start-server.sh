@@ -374,6 +374,7 @@ WATCHDOG_MODE=false
 GPU_ID=""
 SKIP_VRAM_CHECK=false
 CONTEXT_MENU=false
+SKIP_UPDATE_CHECK=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -431,6 +432,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --context-menu)
             CONTEXT_MENU=true
+            shift
+            ;;
+        --no-update-check)
+            SKIP_UPDATE_CHECK=true
             shift
             ;;
         --benchmark)
@@ -1480,6 +1485,14 @@ run_benchmark() {
     
     echo
 }
+
+# Check for llama.cpp updates (uses cache, no network delay if checked recently)
+if [[ "$SKIP_UPDATE_CHECK" != true ]]; then
+    update_msg=$(check_llama_cpp_updates "$LLAMA_CPP_DIR" 2>/dev/null)
+    if [[ -n "$update_msg" ]]; then
+        show_update_notification "llama.cpp" "$update_msg" "./setup.sh --update"
+    fi
+fi
 
 # Print startup info
 print_banner "llama-server"

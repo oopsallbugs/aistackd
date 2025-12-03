@@ -127,6 +127,7 @@ RUN_UPDATE=false
 RUN_VERIFY=false
 VERIFY_MODEL=""
 RESET_AGENTS=false
+SKIP_UPDATE_CHECK=false
 
 for arg in "$@"; do
     # shellcheck disable=SC2034
@@ -142,6 +143,7 @@ for arg in "$@"; do
         --verify) RUN_VERIFY=true ;;
         --verify=*) RUN_VERIFY=true; VERIFY_MODEL="${arg#*=}" ;;
         --reset-agents) RESET_AGENTS=true ;;
+        --no-update-check) SKIP_UPDATE_CHECK=true ;;
         --help|-h)
             echo "Usage: ./setup-macos.sh [OPTIONS]"
             echo
@@ -158,6 +160,7 @@ for arg in "$@"; do
             echo "  --force-env         Regenerate .env file even if it exists"
             echo "  --non-interactive   Use default selections (no prompts)"
             echo "  --ignore-warnings   Continue setup despite warnings"
+            echo "  --no-update-check   Skip checking for updates"
             echo "  --help, -h          Show this help message"
             echo
             echo "Files:"
@@ -837,6 +840,14 @@ if ! command -v opencode &>/dev/null; then
     print_warning "OpenCode is not installed"
     echo "  Install with: npm install -g opencode"
     echo "  More info:    https://opencode.ai"
+fi
+
+# Check for llama.cpp updates (once per day, cached)
+if [[ "$SKIP_UPDATE_CHECK" != true ]]; then
+    update_msg=$(check_llama_cpp_updates "$LLAMA_CPP_DIR" 2>/dev/null)
+    if [[ -n "$update_msg" ]]; then
+        show_update_notification "llama.cpp" "$update_msg" "./setup-macos.sh --update"
+    fi
 fi
 
 echo

@@ -90,6 +90,7 @@ IGNORE_WARNINGS=false
 RUN_STATUS=false
 RUN_UPDATE=false
 RESET_AGENTS=false
+SKIP_UPDATE_CHECK=false
 SELECTED_MODELS=()
 for arg in "$@"; do
     # shellcheck disable=SC2034
@@ -100,6 +101,7 @@ for arg in "$@"; do
         --status) RUN_STATUS=true ;;
         --update) RUN_UPDATE=true ;;
         --reset-agents) RESET_AGENTS=true ;;
+        --no-update-check) SKIP_UPDATE_CHECK=true ;;
         --help|-h)
             echo "Usage: ./setup-macos.sh [OPTIONS]"
             echo ""
@@ -112,6 +114,7 @@ for arg in "$@"; do
             echo "  --non-interactive   Use default selections (no prompts)"
             echo "  --ignore-warnings   Continue setup despite warnings"
             echo "  --reset-agents      Reset agent files to defaults"
+            echo "  --no-update-check   Skip checking for updates"
             echo "  --help, -h          Show this help message"
             echo ""
             echo "This script installs Ollama natively on macOS using Homebrew."
@@ -1336,6 +1339,11 @@ if [ "$APPLE_SILICON" = false ]; then
     echo ""
     print_warning "Intel Macs run models on CPU only (no GPU acceleration)."
     print_status "Consider using smaller models (7B or less) for better performance."
+fi
+
+# Check for updates (non-blocking notification)
+if [[ "$SKIP_UPDATE_CHECK" != "true" ]]; then
+    show_update_notification "ollama-macos"
 fi
 
 echo -e "${GREEN}${BOLD}Happy coding!${NC}"

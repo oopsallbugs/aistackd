@@ -74,6 +74,7 @@ IGNORE_WARNINGS=false
 RUN_UPDATE=false
 RUN_STATUS=false
 RESET_AGENTS=false
+SKIP_UPDATE_CHECK=false
 SELECTED_MODELS=()
 for arg in "$@"; do
     case $arg in
@@ -85,6 +86,7 @@ for arg in "$@"; do
         --update) RUN_UPDATE=true ;;
         --status) RUN_STATUS=true ;;
         --reset-agents) RESET_AGENTS=true ;;
+        --no-update-check) SKIP_UPDATE_CHECK=true ;;
         --help|-h)
             echo "Usage: ./setup.sh [OPTIONS]"
             echo ""
@@ -99,6 +101,7 @@ for arg in "$@"; do
             echo "  --non-interactive   Use default selections (no prompts)"
             echo "  --fix-permissions   Attempt to fix user group permissions (requires sudo)"
             echo "  --ignore-warnings   Continue setup even with non-critical warnings"
+            echo "  --no-update-check   Skip checking for updates"
             echo "  --help, -h          Show this help message"
             echo ""
             echo "Files:"
@@ -1812,6 +1815,11 @@ if [ "$OPENCODE_INSTALLED" = false ]; then
     print_warning "OpenCode is not installed"
     echo "  Install with: npm install -g opencode"
     echo "  More info:    https://opencode.ai"
+fi
+
+# Check for updates (non-blocking notification)
+if [[ "$SKIP_UPDATE_CHECK" != "true" ]]; then
+    show_update_notification "ollama"
 fi
 
 echo -e "${GREEN}${BOLD}Happy coding!${NC}"

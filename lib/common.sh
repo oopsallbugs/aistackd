@@ -2028,3 +2028,213 @@ parse_size_bytes() {
     mb=$(parse_size_mb "$size")
     echo $((mb * 1048576))
 }
+
+# =============================================================================
+# Update Check Functions
+# =============================================================================
+
+# Cache location and settings
+UPDATE_CHECK_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/local-llm-rocm/update-check"
+UPDATE_CHECK_MAX_AGE=86400  # 24 hours in seconds
+OLLAMA_IMAGE_MAX_AGE=14     # days before suggesting Docker image update
+
+# -----------------------------------------------------------------------------
+# Cache Helpers
+# -----------------------------------------------------------------------------
+
+# Check if cache entry is fresh (< 24 hours old)
+# Usage: is_update_cache_fresh "llama.cpp"
+# Returns: 0 if fresh (skip check), 1 if stale (should check)
+is_update_cache_fresh() {
+    local component="$1"
+    local cache_file="$UPDATE_CHECK_CACHE"
+    
+    [[ -f "$cache_file" ]] || return 1
+    
+    local entry cache_time now
+    entry=$(grep "^${component}|" "$cache_file" 2>/dev/null) || return 1
+    cache_time=$(echo "$entry" | cut -d'|' -f3)
+    now=$(date +%s)
+    
+    [[ -n "$cache_time" ]] && (( now - cache_time < UPDATE_CHECK_MAX_AGE ))
+}
+
+# Get cached status for a component
+# Usage: status=$(get_update_cache "llama.cpp")
+# Returns: status string or empty
+get_update_cache() {
+    local component="$1"
+    [[ -f "$UPDATE_CHECK_CACHE" ]] || return
+    grep "^${component}|" "$UPDATE_CHECK_CACHE" 2>/dev/null | cut -d'|' -f2
+}
+
+# Save status to cache
+# Usage: set_update_cache "llama.cpp" "5 commits behind"
+set_update_cache() {
+    local component="$1"
+    local status="$2"
+    local cache_file="$UPDATE_CHECK_CACHE"
+    
+    # Ensure cache directory exists
+    mkdir -p "$(dirname "$cache_file")" 2>/dev/null || return
+    
+    # Remove old entry for this component
+    if [[ -f "$cache_file" ]]; then
+        grep -v "^${component}|" "$cache_file" > "${cache_file}.tmp" 2>/dev/null || true
+        mv "${cache_file}.tmp" "$cache_file" 2>/dev/null || true
+    fi
+    
+    # Add new entry: component|status|timestamp
+    echo "${component}|${status}|$(date +%s)" >> "$cache_file" 2>/dev/null || true
+}
+
+# -----------------------------------------------------------------------------
+# llama.cpp Update Check
+# -----------------------------------------------------------------------------
+
+# Check for llama.cpp updates (git commits behind upstream)
+# Usage: update_msg=$(check_llama_cpp_updates "/path/to/llama.cpp")
+# Returns: message string if updates available, empty if current or error
+check_llama_cpp_updates() {
+    local llama_dir="$1"
+    
+    # Use cache if fresh
+    if is_update_cache_fresh "llama.cpp"; then
+        local cached
+        cached=$(get_update_cache "llama.cpp")
+        [[ "$cached" != "current" ]] && echo "$cached"
+        return
+    fi
+    
+    # Must be a git repo
+    [[ -d "$llama_dir/.git" ]] || return
+    
+    # Check if upstream is configured
+    if ! (cd "$llama_dir" && git rev-parse --abbrev-ref "@{u}" &>/dev/null); then
+        return  # No upstream configured, skip silently
+    fi
+    
+    # Fetch with timeout (silent on failure)
+    if ! (cd "$llama_dir" && timeout 5 git fetch --quiet 2>/dev/null); then
+        return  # Network error, skip silently
+    fi
+    
+    # Count commits behind
+    local behind
+    behind=$(cd "$llama_dir" && git rev-list --count HEAD.."@{u}" 2>/dev/null) || return
+    
+    if [[ "$behind" -gt 0 ]]; then
+        set_update_cache "llama.cpp" "$behind commits behind"
+        echo "$behind commits behind"
+    else
+        set_update_cache "llama.cpp" "current"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Ollama Update Check
+# -----------------------------------------------------------------------------
+
+# Check for Ollama updates (Docker image age on Linux, brew outdated on macOS)
+# Usage: update_msg=$(check_ollama_updates)
+# Returns: message string if updates available, empty if current or error
+check_ollama_updates() {
+    # Use cache if fresh
+    if is_update_cache_fresh "ollama"; then
+        local cached
+        cached=$(get_update_cache "ollama")
+        [[ "$cached" != "current" ]] && echo "$cached"
+        return
+    fi
+    
+    if [[ "$IS_MACOS" == true ]]; then
+        check_ollama_brew_updates
+    else
+        check_ollama_docker_updates
+    fi
+}
+
+# Check Ollama Docker image age (Linux)
+# Suggests update if image is older than OLLAMA_IMAGE_MAX_AGE days
+check_ollama_docker_updates() {
+    # Check Docker is available
+    command -v docker &>/dev/null || return
+    
+    # Check Docker is running (with timeout)
+    if ! timeout 5 docker info &>/dev/null 2>&1; then
+        return  # Docker not running, skip silently
+    fi
+    
+    # Get image creation date
+    local image_date
+    image_date=$(docker inspect ollama/ollama:rocm --format '{{.Created}}' 2>/dev/null | cut -d'T' -f1) || return
+    [[ -z "$image_date" ]] && return
+    
+    # Calculate age in days
+    local image_epoch now_epoch age_days
+    image_epoch=$(date -d "$image_date" +%s 2>/dev/null) || return
+    now_epoch=$(date +%s)
+    age_days=$(( (now_epoch - image_epoch) / 86400 ))
+    
+    if [[ $age_days -gt $OLLAMA_IMAGE_MAX_AGE ]]; then
+        set_update_cache "ollama" "image is ${age_days} days old"
+        echo "image is ${age_days} days old"
+    else
+        set_update_cache "ollama" "current"
+    fi
+}
+
+# Check Ollama Homebrew updates (macOS)
+check_ollama_brew_updates() {
+    command -v brew &>/dev/null || return
+    
+    # Check if ollama is installed via brew
+    brew list ollama &>/dev/null 2>&1 || return
+    
+    # Check if outdated (with timeout)
+    local outdated
+    outdated=$(timeout 10 brew outdated --quiet ollama 2>/dev/null) || return
+    
+    if [[ -n "$outdated" ]]; then
+        local current_ver new_ver
+        current_ver=$(brew list --versions ollama 2>/dev/null | awk '{print $2}')
+        new_ver=$(timeout 5 brew info --json=v2 ollama 2>/dev/null | jq -r '.formulae[0].versions.stable // empty' 2>/dev/null)
+        
+        local msg="${current_ver:-?} → ${new_ver:-newer}"
+        set_update_cache "ollama" "$msg"
+        echo "$msg"
+    else
+        set_update_cache "ollama" "current"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Update Notification Display (with Gum UI)
+# -----------------------------------------------------------------------------
+
+# Show update notification with gum styling (or ASCII fallback)
+# Usage: show_update_notification "llama.cpp" "5 commits behind" "./setup.sh --update"
+show_update_notification() {
+    local component="$1"
+    local info="$2"
+    local update_cmd="$3"
+    
+    echo
+    
+    if [[ "$HAS_GUM" == true ]]; then
+        gum style \
+            --border rounded \
+            --border-foreground 220 \
+            --padding "0 1" \
+            --margin "0" \
+            "$(gum style --foreground 220 --bold '📦 Update Available')" \
+            "" \
+            "$(gum style --bold "$component:") $info" \
+            "$(gum style --faint "Run: $update_cmd")"
+    else
+        echo -e "${YELLOW}┌─ Update Available ─────────────────────────┐${NC}"
+        echo -e "${YELLOW}│${NC} ${BOLD}$component:${NC} $info"
+        echo -e "${YELLOW}│${NC} Run: ${DIM}$update_cmd${NC}"
+        echo -e "${YELLOW}└─────────────────────────────────────────────┘${NC}"
+    fi
+}
