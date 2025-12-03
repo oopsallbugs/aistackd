@@ -1240,7 +1240,8 @@ handle_opencode_config() {
                     return 0
                     ;;
                 Overwrite*)
-                    local backup_file="$config_path.backup.$(date +%Y%m%d_%H%M%S)"
+                    local backup_file
+                    backup_file="$config_path.backup.$(date +%Y%m%d_%H%M%S)"
                     cp "$config_path" "$backup_file"
                     print_status "Backed up existing config to: $backup_file"
                     mkdir -p "$(dirname "$config_path")"
