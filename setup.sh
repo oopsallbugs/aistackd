@@ -1037,20 +1037,9 @@ for model in "${MODEL_ORDER[@]}"; do
 done
 
 if [[ ${#DOWNLOADED_MODELS[@]} -gt 0 ]]; then
-    if [[ -f "$OPENCODE_CONFIG" ]]; then
-        print_warning "OpenCode config already exists at: $OPENCODE_CONFIG"
-        print_status "To use llama.cpp, manually add the provider or backup/replace the config"
-        echo
-        echo "Example llama.cpp provider config:"
-        echo
-        generate_opencode_config "${DOWNLOADED_MODELS[@]}"
-        echo
-    else
-        print_status "Creating OpenCode configuration..."
-        mkdir -p "$(dirname "$OPENCODE_CONFIG")"
-        generate_opencode_config "${DOWNLOADED_MODELS[@]}" > "$OPENCODE_CONFIG"
-        print_success "OpenCode config created at: $OPENCODE_CONFIG"
-    fi
+    # Callback function for config generation
+    _generate_config() { generate_opencode_config "${DOWNLOADED_MODELS[@]}"; }
+    handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode-config.sh" "$NON_INTERACTIVE" _generate_config
 else
     print_warning "No models downloaded, skipping OpenCode config"
 fi

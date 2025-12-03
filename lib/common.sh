@@ -1199,3 +1199,71 @@ handle_config_restore() {
     echo
     restore_config_backup "$selected_backup" "$config_file"
 }
+
+# -----------------------------------------------------------------------------
+# OpenCode Config Management
+# -----------------------------------------------------------------------------
+
+# Handle OpenCode config creation/update with user choice
+# Usage: handle_opencode_config <config_path> <sync_script_path> <non_interactive> <generate_config_callback>
+# 
+# The generate_config_callback should be a function that outputs the config JSON to stdout
+# Returns: 0 if config was created/merged, 1 if skipped
+#
+# Example:
+#   generate_my_config() { generate_opencode_config "${DOWNLOADED_MODELS[@]}"; }
+#   handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode-config.sh" "$NON_INTERACTIVE" generate_my_config
+handle_opencode_config() {
+    local config_path="$1"
+    local sync_script="$2"
+    local non_interactive="$3"
+    local generate_callback="$4"
+    
+    if [[ -f "$config_path" ]]; then
+        print_warning "OpenCode config already exists at: $config_path"
+        
+        if [[ "$non_interactive" == "false" ]]; then
+            echo
+            print_status "How would you like to handle the existing config?"
+            echo
+            
+            local choice
+            choice=$(gum choose \
+                "Merge - Add new models to existing config" \
+                "Overwrite - Replace with new config (backup created)" \
+                "Skip - Keep existing config unchanged")
+            
+            case "$choice" in
+                Merge*)
+                    print_status "Merging new models into existing OpenCode config..."
+                    "$sync_script" --merge
+                    return 0
+                    ;;
+                Overwrite*)
+                    local backup_file="$config_path.backup.$(date +%Y%m%d_%H%M%S)"
+                    cp "$config_path" "$backup_file"
+                    print_status "Backed up existing config to: $backup_file"
+                    mkdir -p "$(dirname "$config_path")"
+                    $generate_callback > "$config_path"
+                    print_success "OpenCode config created at: $config_path"
+                    return 0
+                    ;;
+                Skip*|"")
+                    print_status "Keeping existing OpenCode config"
+                    return 1
+                    ;;
+            esac
+        else
+            print_status "Non-interactive mode: keeping existing config"
+            print_status "Run sync-opencode-config.sh --merge to add new models"
+            return 1
+        fi
+    else
+        # No existing config - create new one
+        print_status "Creating OpenCode configuration..."
+        mkdir -p "$(dirname "$config_path")"
+        $generate_callback > "$config_path"
+        print_success "OpenCode config created at: $config_path"
+        return 0
+    fi
+}

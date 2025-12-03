@@ -1170,52 +1170,26 @@ ollama list 2>/dev/null || echo "  (none yet)"
 
 print_header "Configuring OpenCode"
 
-SKIP_OPENCODE_CONFIG=false
-
-if [ -f "$OPENCODE_CONFIG" ]; then
-    print_warning "OpenCode config already exists at: $OPENCODE_CONFIG"
-    if [ "$NON_INTERACTIVE" = false ]; then
-        read -p "Overwrite? (y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_status "Merging new models into existing OpenCode config..."
-            "$SCRIPT_DIR/sync-opencode-config.sh" --merge
-            SKIP_OPENCODE_CONFIG=true
-        else
-            BACKUP_FILE="$OPENCODE_CONFIG.backup.$(date +%Y%m%d_%H%M%S)"
-            cp "$OPENCODE_CONFIG" "$BACKUP_FILE"
-            print_status "Backed up existing config to: $BACKUP_FILE"
-        fi
-    else
-        SKIP_OPENCODE_CONFIG=true
-    fi
+# Load metadata if not already loaded
+if [[ ${#MODEL_DISPLAY_NAME[@]} -eq 0 ]]; then
+    load_metadata_conf
 fi
 
-if [ "$SKIP_OPENCODE_CONFIG" = false ]; then
-    print_status "Creating OpenCode configuration for Ollama..."
-    mkdir -p "$(dirname "$OPENCODE_CONFIG")"
-    
-    # Load metadata if not already loaded
-    if [[ ${#MODEL_DISPLAY_NAME[@]} -eq 0 ]]; then
-        load_metadata_conf
-    fi
-    
-    # Determine which models to include in config
-    if [[ ${#SELECTED_MODELS[@]} -gt 0 ]]; then
-        # Use selected models from model selection
-        CONFIG_MODELS=("${SELECTED_MODELS[@]}")
-    else
-        # No models selected (--skip-models), query installed models
-        readarray -t CONFIG_MODELS < <(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}')
-    fi
-    
-    if [[ ${#CONFIG_MODELS[@]} -gt 0 ]]; then
-        generate_opencode_config "${CONFIG_MODELS[@]}" > "$OPENCODE_CONFIG"
-        print_success "OpenCode config created at: $OPENCODE_CONFIG"
-        print_status "Configured ${#CONFIG_MODELS[@]} model(s)"
-    else
-        print_warning "No models to configure. Run sync-opencode-config.sh after installing models."
-    fi
+# Determine which models to include in config
+if [[ ${#SELECTED_MODELS[@]} -gt 0 ]]; then
+    # Use selected models from model selection
+    CONFIG_MODELS=("${SELECTED_MODELS[@]}")
+else
+    # No models selected (--skip-models), query installed models
+    readarray -t CONFIG_MODELS < <(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}')
+fi
+
+if [[ ${#CONFIG_MODELS[@]} -gt 0 ]]; then
+    # Callback function for config generation
+    _generate_config() { generate_opencode_config "${CONFIG_MODELS[@]}"; }
+    handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode-config.sh" "$NON_INTERACTIVE" _generate_config
+else
+    print_warning "No models to configure. Run sync-opencode-config.sh after installing models."
 fi
 print_status "Use '/models' in OpenCode to switch between local models"
 print_status "Run ./sync-opencode-config.sh to refresh config after pulling new models"
