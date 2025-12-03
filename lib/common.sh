@@ -472,6 +472,10 @@ generate_opencode_config() {
     
     config='{
   "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "CONTRIBUTING.md",
+    "docs/*.md"
+  ],
   "provider": {
     "llama.cpp": {
       "npm": "@ai-sdk/openai-compatible",
@@ -1201,123 +1205,211 @@ handle_config_restore() {
 }
 
 # -----------------------------------------------------------------------------
-# AGENTS.md Management
+# Agent Directory Management
 # -----------------------------------------------------------------------------
 
-# Handle AGENTS.md creation/update with user choice
-# Usage: handle_agents_md <script_dir> <target_dir> <non_interactive> [reset_mode]
+# Sync agent directory to OpenCode config
+# Usage: sync_agents <script_dir> <target_dir> <non_interactive> [reset_mode]
 #
-# script_dir: Directory containing the source AGENTS.md
-# target_dir: Directory where AGENTS.md should be copied (usually ~/.config/opencode or project root)
+# script_dir: Directory containing the source agent/ folder
+# target_dir: OpenCode config directory (usually ~/.config/opencode)
 # non_interactive: "true" to skip prompts, "false" for interactive mode
 # reset_mode: "true" to force reset to default (used with --reset-agents flag)
 #
-# Returns: 0 if file was created/updated, 1 if skipped
-handle_agents_md() {
+# Syncs:
+#   agent/AGENTS.md -> ~/.config/opencode/AGENTS.md
+#   agent/plan.md   -> ~/.config/opencode/agents/plan.md
+#   agent/review.md -> ~/.config/opencode/agents/review.md
+#   agent/debug.md  -> ~/.config/opencode/agents/debug.md
+#
+# Returns: 0 if files were created/updated, 1 if skipped
+sync_agents() {
     local script_dir="$1"
     local target_dir="$2"
     local non_interactive="$3"
     local reset_mode="${4:-false}"
     
-    local source_file="$script_dir/AGENTS.md"
-    local target_file="$target_dir/AGENTS.md"
+    local source_dir="$script_dir/agent"
+    local agents_target_dir="$target_dir/agents"
     
     # Check source exists
-    if [[ ! -f "$source_file" ]]; then
-        print_warning "AGENTS.md not found in: $script_dir"
+    if [[ ! -d "$source_dir" ]]; then
+        print_warning "agent/ directory not found in: $script_dir"
         return 1
     fi
     
-    # Reset mode - just copy with backup
+    # Files to sync
+    local -a main_files=("AGENTS.md")
+    local -a agent_files=("plan.md" "review.md" "debug.md")
+    
+    # Reset mode - copy all with backups
     if [[ "$reset_mode" == "true" ]]; then
-        if [[ -f "$target_file" ]]; then
-            local backup_file
-            backup_file="$target_file.backup.$(date +%Y%m%d_%H%M%S)"
-            cp "$target_file" "$backup_file"
-            print_status "Backed up existing AGENTS.md to: $backup_file"
-        fi
-        mkdir -p "$target_dir"
-        cp "$source_file" "$target_file"
-        print_success "AGENTS.md reset to default at: $target_file"
+        local backup_timestamp
+        backup_timestamp="$(date +%Y%m%d_%H%M%S)"
+        
+        # Sync AGENTS.md to target root
+        for file in "${main_files[@]}"; do
+            local src="$source_dir/$file"
+            local dst="$target_dir/$file"
+            if [[ -f "$src" ]]; then
+                if [[ -f "$dst" ]]; then
+                    cp "$dst" "$dst.backup.$backup_timestamp"
+                    print_status "Backed up $file"
+                fi
+                mkdir -p "$target_dir"
+                cp "$src" "$dst"
+            fi
+        done
+        
+        # Sync agent files to agents/ subdirectory
+        for file in "${agent_files[@]}"; do
+            local src="$source_dir/$file"
+            local dst="$agents_target_dir/$file"
+            if [[ -f "$src" ]]; then
+                if [[ -f "$dst" ]]; then
+                    cp "$dst" "$dst.backup.$backup_timestamp"
+                    print_status "Backed up agents/$file"
+                fi
+                mkdir -p "$agents_target_dir"
+                cp "$src" "$dst"
+            fi
+        done
+        
+        print_success "Agent files reset to defaults"
+        print_status "  AGENTS.md -> $target_dir/AGENTS.md"
+        print_status "  agents/   -> $agents_target_dir/"
         return 0
     fi
     
-    # Check if target already exists
-    if [[ -f "$target_file" ]]; then
-        # Check if files are identical
-        if diff -q "$source_file" "$target_file" &>/dev/null; then
-            print_status "AGENTS.md already up to date"
-            return 0
+    # Check if any target files exist
+    local has_existing=false
+    local has_changes=false
+    
+    for file in "${main_files[@]}"; do
+        local src="$source_dir/$file"
+        local dst="$target_dir/$file"
+        if [[ -f "$dst" ]]; then
+            has_existing=true
+            if ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
+                has_changes=true
+            fi
         fi
-        
-        print_warning "AGENTS.md already exists at: $target_file"
+    done
+    
+    for file in "${agent_files[@]}"; do
+        local src="$source_dir/$file"
+        local dst="$agents_target_dir/$file"
+        if [[ -f "$dst" ]]; then
+            has_existing=true
+            if ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
+                has_changes=true
+            fi
+        fi
+    done
+    
+    # If files exist but no changes, we're done
+    if [[ "$has_existing" == true && "$has_changes" == false ]]; then
+        print_status "Agent files already up to date"
+        return 0
+    fi
+    
+    # If files exist with changes, prompt user
+    if [[ "$has_existing" == true && "$has_changes" == true ]]; then
+        print_warning "Agent files already exist with modifications"
         
         if [[ "$non_interactive" == "false" && "$HAS_GUM" == true ]]; then
             echo
-            print_status "How would you like to handle the existing AGENTS.md?"
+            print_status "How would you like to handle existing agent files?"
             echo
             
             local choice
             choice=$(gum choose \
-                "Skip - Keep existing AGENTS.md unchanged" \
-                "Overwrite - Replace with default (backup created)" \
-                "Reset to default - Same as overwrite" \
+                "Skip - Keep existing files unchanged" \
+                "Overwrite - Replace with defaults (backups created)" \
                 "View diff - Show differences") || choice="Skip"
             
             case "$choice" in
                 "View diff"*)
                     echo
-                    echo -e "${CYAN}${BOLD}Differences (your file vs default):${NC}"
+                    echo -e "${CYAN}${BOLD}Differences (your files vs defaults):${NC}"
                     echo
-                    diff --color=auto "$target_file" "$source_file" || true
-                    echo
+                    for file in "${main_files[@]}"; do
+                        local src="$source_dir/$file"
+                        local dst="$target_dir/$file"
+                        if [[ -f "$dst" ]] && ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
+                            echo -e "${BOLD}=== $file ===${NC}"
+                            diff --color=auto "$dst" "$src" || true
+                            echo
+                        fi
+                    done
+                    for file in "${agent_files[@]}"; do
+                        local src="$source_dir/$file"
+                        local dst="$agents_target_dir/$file"
+                        if [[ -f "$dst" ]] && ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
+                            echo -e "${BOLD}=== agents/$file ===${NC}"
+                            diff --color=auto "$dst" "$src" || true
+                            echo
+                        fi
+                    done
+                    
                     # Ask again after showing diff
                     local choice2
                     choice2=$(gum choose \
-                        "Skip - Keep existing AGENTS.md unchanged" \
-                        "Overwrite - Replace with default (backup created)") || choice2="Skip"
+                        "Skip - Keep existing files unchanged" \
+                        "Overwrite - Replace with defaults (backups created)") || choice2="Skip"
                     
                     if [[ "$choice2" == "Overwrite"* ]]; then
-                        local backup_file
-                        backup_file="$target_file.backup.$(date +%Y%m%d_%H%M%S)"
-                        cp "$target_file" "$backup_file"
-                        print_status "Backed up existing AGENTS.md to: $backup_file"
-                        cp "$source_file" "$target_file"
-                        print_success "AGENTS.md updated at: $target_file"
+                        sync_agents "$script_dir" "$target_dir" "$non_interactive" "true"
                         return 0
                     else
-                        print_status "Keeping existing AGENTS.md"
+                        print_status "Keeping existing agent files"
                         return 1
                     fi
                     ;;
-                "Overwrite"*|"Reset"*)
-                    local backup_file
-                    backup_file="$target_file.backup.$(date +%Y%m%d_%H%M%S)"
-                    cp "$target_file" "$backup_file"
-                    print_status "Backed up existing AGENTS.md to: $backup_file"
-                    cp "$source_file" "$target_file"
-                    print_success "AGENTS.md updated at: $target_file"
+                "Overwrite"*)
+                    sync_agents "$script_dir" "$target_dir" "$non_interactive" "true"
                     return 0
                     ;;
                 "Skip"*|"")
-                    print_status "Keeping existing AGENTS.md"
+                    print_status "Keeping existing agent files"
                     return 1
                     ;;
             esac
         else
-            print_status "Non-interactive mode: keeping existing AGENTS.md"
-            print_status "Run setup.sh --reset-agents to reset to default"
+            print_status "Non-interactive mode: keeping existing agent files"
+            print_status "Run setup.sh --reset-agents to reset to defaults"
             return 1
         fi
     else
-        # No existing file - create new one
-        print_status "Creating AGENTS.md for OpenCode..."
-        mkdir -p "$target_dir"
-        cp "$source_file" "$target_file"
-        print_success "AGENTS.md created at: $target_file"
+        # No existing files - create all
+        print_status "Setting up OpenCode agent files..."
+        
+        # Sync AGENTS.md to target root
+        for file in "${main_files[@]}"; do
+            local src="$source_dir/$file"
+            if [[ -f "$src" ]]; then
+                mkdir -p "$target_dir"
+                cp "$src" "$target_dir/$file"
+            fi
+        done
+        
+        # Sync agent files to agents/ subdirectory
+        for file in "${agent_files[@]}"; do
+            local src="$source_dir/$file"
+            if [[ -f "$src" ]]; then
+                mkdir -p "$agents_target_dir"
+                cp "$src" "$agents_target_dir/$file"
+            fi
+        done
+        
+        print_success "Agent files created:"
+        print_status "  AGENTS.md -> $target_dir/AGENTS.md"
+        print_status "  agents/   -> $agents_target_dir/"
         return 0
     fi
 }
+
+
 
 # -----------------------------------------------------------------------------
 # OpenCode Config Management
@@ -1331,7 +1423,7 @@ handle_agents_md() {
 #
 # Example:
 #   generate_my_config() { generate_opencode_config "${DOWNLOADED_MODELS[@]}"; }
-#   handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode-config.sh" "$NON_INTERACTIVE" generate_my_config
+#   handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode.sh" "$NON_INTERACTIVE" generate_my_config
 handle_opencode_config() {
     local config_path="$1"
     local sync_script="$2"
@@ -1375,7 +1467,7 @@ handle_opencode_config() {
             esac
         else
             print_status "Non-interactive mode: keeping existing config"
-            print_status "Run sync-opencode-config.sh --merge to add new models"
+            print_status "Run sync-opencode.sh --merge to add new models"
             return 1
         fi
     else

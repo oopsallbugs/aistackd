@@ -10,6 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source common library
+# shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
 # Load configuration
@@ -523,7 +524,7 @@ done
 
 # Validate model
 if [[ -z "$MODEL_PATH" ]]; then
-    echo -e "${RED}Error: No model specified${NC}"
+    print_error "No model specified"
     echo
     echo "Usage: ./start-server.sh <model-id>"
     echo "Run './start-server.sh --list' to see available models"
@@ -609,7 +610,7 @@ else
     done < "$SCRIPT_DIR/models.conf"
     
     if [[ -z "$GGUF_FILE" ]]; then
-        echo -e "${RED}Error: Model '$MODEL_PATH' not found in models.conf${NC}"
+        print_error "Model '$MODEL_PATH' not found in models.conf"
         echo "Run './start-server.sh --list' to see available models"
         exit 1
     fi
@@ -617,7 +618,7 @@ else
     GGUF_PATH="$MODELS_DIR/$GGUF_FILE"
     
     if [[ ! -f "$GGUF_PATH" ]]; then
-        echo -e "${RED}Error: Model file not downloaded: $GGUF_FILE${NC}"
+        print_error "Model file not downloaded: $GGUF_FILE"
         echo "Run './download-model.sh $MODEL_PATH' to download it"
         exit 1
     fi
@@ -634,7 +635,7 @@ fi
 # Check llama-server exists
 LLAMA_SERVER="$LLAMA_CPP_DIR/build/bin/llama-server"
 if [[ ! -f "$LLAMA_SERVER" ]]; then
-    echo -e "${RED}Error: llama-server not found at $LLAMA_SERVER${NC}"
+    print_error "llama-server not found at $LLAMA_SERVER"
     echo "Run './setup.sh' to build llama.cpp"
     exit 1
 fi
@@ -1231,7 +1232,7 @@ check_and_recommend_context() {
     
     # Check if model won't fit at all
     if [[ "$max_context" -eq 0 ]]; then
-        echo -e "${RED}${BOLD}ERROR: Model too large for available VRAM${NC}"
+        print_error "Model too large for available VRAM"
         echo
         echo "  Model needs ~$((model_vram_mb / 1024))GB but only $((total_mb / 1024))GB total."
         echo

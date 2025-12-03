@@ -68,6 +68,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Source common library
+# shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
 # Set up signal handlers for graceful cancellation
@@ -108,7 +109,7 @@ for arg in "$@"; do
             echo "  --skip-models       Skip model selection and downloading"
             echo "  --non-interactive   Use default selections (no prompts)"
             echo "  --ignore-warnings   Continue setup despite warnings"
-            echo "  --reset-agents      Re-copy AGENTS.md (OpenCode system prompt)"
+            echo "  --reset-agents      Reset agent files to defaults"
             echo "  --help, -h          Show this help message"
             echo ""
             echo "This script installs Ollama natively on macOS using Homebrew."
@@ -333,6 +334,10 @@ generate_opencode_config() {
     # JSON header
     config='{
   "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "CONTRIBUTING.md",
+    "docs/*.md"
+  ],
   "provider": {
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
@@ -866,13 +871,13 @@ if [ "$RUN_UPDATE" = true ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Reset AGENTS.md Mode
+# Reset Agent Files Mode
 # -----------------------------------------------------------------------------
 
 if [ "$RESET_AGENTS" = true ]; then
-    print_header "Resetting AGENTS.md"
+    print_header "Resetting agent files"
     OPENCODE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-    handle_agents_md "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "false" "true"
+    sync_agents "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "false" "true"
     echo ""
     exit 0
 fi
@@ -1206,16 +1211,16 @@ fi
 if [[ ${#CONFIG_MODELS[@]} -gt 0 ]]; then
     # Callback function for config generation
     _generate_config() { generate_opencode_config "${CONFIG_MODELS[@]}"; }
-    handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode-config.sh" "$NON_INTERACTIVE" _generate_config
+    handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode.sh" "$NON_INTERACTIVE" _generate_config
 else
-    print_warning "No models to configure. Run sync-opencode-config.sh after installing models."
+    print_warning "No models to configure. Run sync-opencode.sh after installing models."
 fi
 print_status "Use '/models' in OpenCode to switch between local models"
-print_status "Run ./sync-opencode-config.sh to refresh config after pulling new models"
+print_status "Run ./sync-opencode.sh to refresh config after pulling new models"
 
-# Handle AGENTS.md (OpenCode system prompt)
+# Sync agent files (AGENTS.md, plan.md, review.md, debug.md)
 OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
-handle_agents_md "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "$NON_INTERACTIVE" "false"
+sync_agents "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "$NON_INTERACTIVE" "false"
 
 # -----------------------------------------------------------------------------
 # Test Ollama

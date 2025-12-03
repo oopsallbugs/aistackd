@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Source common library
+# shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
 trap cleanup_spinner EXIT INT TERM PIPE

@@ -9,14 +9,14 @@ set -euo pipefail
 # configuration file with proper model metadata.
 #
 # Usage:
-#   ./sync-opencode-config.sh              # Full sync (replaces config with installed models)
-#   ./sync-opencode-config.sh --merge      # Only add new models, keep existing entries
-#   ./sync-opencode-config.sh --restore    # List and restore from a backup
-#   ./sync-opencode-config.sh --restore-latest  # Restore most recent backup
-#   ./sync-opencode-config.sh --docker     # Force Docker mode (Linux)
-#   ./sync-opencode-config.sh --native     # Force native mode (macOS)
-#   ./sync-opencode-config.sh --dry-run    # Show config without writing
-#   ./sync-opencode-config.sh --help       # Show help
+#   ./sync-opencode.sh              # Full sync (replaces config with installed models)
+#   ./sync-opencode.sh --merge      # Only add new models, keep existing entries
+#   ./sync-opencode.sh --restore    # List and restore from a backup
+#   ./sync-opencode.sh --restore-latest  # Restore most recent backup
+#   ./sync-opencode.sh --docker     # Force Docker mode (Linux)
+#   ./sync-opencode.sh --native     # Force native mode (macOS)
+#   ./sync-opencode.sh --dry-run    # Show config without writing
+#   ./sync-opencode.sh --help       # Show help
 #
 # =============================================================================
 
@@ -49,6 +49,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Source common library (from parent directory)
+# shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
 # -----------------------------------------------------------------------------
@@ -93,7 +94,7 @@ for arg in "$@"; do
             RESTORE_LATEST=true
             ;;
         --help|-h)
-            echo "Usage: ./sync-opencode-config.sh [OPTIONS]"
+            echo "Usage: ./sync-opencode.sh [OPTIONS]"
             echo ""
             echo "Syncs OpenCode configuration with currently installed Ollama models."
             echo ""

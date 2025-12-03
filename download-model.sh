@@ -9,6 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source common library
+# shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
 # Configuration
@@ -436,9 +437,9 @@ download_model() {
         print_success "Downloaded: $search_model ($actual_size)"
         
         # Auto-sync to OpenCode config
-        if [[ -x "$SCRIPT_DIR/sync-opencode-config.sh" ]]; then
+        if [[ -x "$SCRIPT_DIR/sync-opencode.sh" ]]; then
             echo
-            "$SCRIPT_DIR/sync-opencode-config.sh"
+            "$SCRIPT_DIR/sync-opencode.sh"
         fi
         
         echo
@@ -918,9 +919,9 @@ add_model() {
     fi
     
     # Auto-sync to OpenCode config
-    if [[ -x "$SCRIPT_DIR/sync-opencode-config.sh" ]]; then
+    if [[ -x "$SCRIPT_DIR/sync-opencode.sh" ]]; then
         echo
-        "$SCRIPT_DIR/sync-opencode-config.sh"
+        "$SCRIPT_DIR/sync-opencode.sh"
     fi
     
     echo

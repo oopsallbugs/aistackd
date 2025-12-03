@@ -2,19 +2,18 @@
 set -euo pipefail
 
 # =============================================================================
-# Sync OpenCode Configuration with Downloaded llama.cpp Models
+# Sync OpenCode Configuration
 # =============================================================================
 #
-# This script scans the models directory for downloaded GGUF files and syncs
-# the OpenCode configuration with proper model metadata.
+# Syncs downloaded models and agent files to OpenCode configuration.
 #
 # Usage:
-#   ./sync-opencode-config.sh              # Full sync (replaces llama.cpp models in config)
-#   ./sync-opencode-config.sh --merge      # Only add new models, keep existing entries
-#   ./sync-opencode-config.sh --restore    # List and restore from a backup
-#   ./sync-opencode-config.sh --restore-latest  # Restore most recent backup
-#   ./sync-opencode-config.sh --dry-run    # Show config without writing
-#   ./sync-opencode-config.sh --help       # Show help
+#   ./sync-opencode.sh                  # Sync both models and agents
+#   ./sync-opencode.sh --models         # Sync only model config (opencode.json)
+#   ./sync-opencode.sh --agents         # Sync only agent files
+#   ./sync-opencode.sh --restore        # Restore config from backup
+#   ./sync-opencode.sh --dry-run        # Show what would be synced
+#   ./sync-opencode.sh --help           # Show help
 #
 # =============================================================================
 
@@ -23,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Source common library
+# shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
 # -----------------------------------------------------------------------------
@@ -33,10 +33,16 @@ MODELS_CONF="$SCRIPT_DIR/models.conf"
 METADATA_CONF="$SCRIPT_DIR/models-metadata.conf"
 MODELS_DIR="$SCRIPT_DIR/models"
 OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
+OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
+
+# Modes
+SYNC_MODELS=false
+SYNC_AGENTS=false
 DRY_RUN=false
 MERGE_MODE=false
 RESTORE_MODE=false
 RESTORE_LATEST=false
+RESET_AGENTS=false
 
 # Load .env for port config
 if [[ -f "$SCRIPT_DIR/.env" ]]; then
@@ -60,6 +66,16 @@ CODING_OUTPUT=16384
 
 for arg in "$@"; do
     case $arg in
+        --models)
+            SYNC_MODELS=true
+            ;;
+        --agents)
+            SYNC_AGENTS=true
+            ;;
+        --reset-agents)
+            SYNC_AGENTS=true
+            RESET_AGENTS=true
+            ;;
         --dry-run)
             DRY_RUN=true
             ;;
@@ -74,27 +90,30 @@ for arg in "$@"; do
             RESTORE_LATEST=true
             ;;
         --help|-h)
-            echo "Usage: ./sync-opencode-config.sh [OPTIONS]"
+            echo "Usage: ./sync-opencode.sh [OPTIONS]"
             echo
-            echo "Syncs OpenCode configuration with downloaded llama.cpp GGUF models."
+            echo "Syncs downloaded models and agent files to OpenCode configuration."
             echo
-            echo "Options:"
+            echo "What to sync:"
+            echo "  (default)         Sync both models and agents"
+            echo "  --models          Sync only model config (opencode.json)"
+            echo "  --agents          Sync only agent files (AGENTS.md, agents/*.md)"
+            echo "  --reset-agents    Force reset agent files to defaults"
+            echo
+            echo "Model options:"
             echo "  --merge           Only add new models, keep existing config entries"
-            echo "                    (preserves other providers like Ollama)"
-            echo "  --restore         List available backups and select one to restore"
-            echo "  --restore-latest  Restore the most recent backup automatically"
-            echo "  --dry-run         Print generated config without writing to file"
+            echo "  --restore         List available config backups and restore one"
+            echo "  --restore-latest  Restore the most recent config backup"
+            echo
+            echo "General options:"
+            echo "  --dry-run         Show what would be synced without writing"
             echo "  --help, -h        Show this help message"
             echo
-            echo "By default, the script performs a full sync - updating the llama.cpp"
-            echo "provider section with currently downloaded models while preserving"
-            echo "other providers."
-            echo
-            echo "Backups are created automatically before each sync."
-            echo
-            echo "Config file: $OPENCODE_CONFIG"
-            echo "Models conf: $MODELS_CONF"
-            echo "Models dir:  $MODELS_DIR"
+            echo "Files:"
+            echo "  Config:  $OPENCODE_CONFIG"
+            echo "  Agents:  $OPENCODE_CONFIG_DIR/AGENTS.md"
+            echo "           $OPENCODE_CONFIG_DIR/agents/*.md"
+            echo "  Models:  $MODELS_DIR/*.gguf"
             exit 0
             ;;
         *)
@@ -104,6 +123,12 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# Default: sync both if neither specified
+if [[ "$SYNC_MODELS" == false && "$SYNC_AGENTS" == false && "$RESTORE_MODE" == false ]]; then
+    SYNC_MODELS=true
+    SYNC_AGENTS=true
+fi
 
 # -----------------------------------------------------------------------------
 # Load Model Metadata from models.conf
@@ -119,7 +144,7 @@ declare -A MODEL_DISPLAY_NAME
 declare -A MODEL_CONTEXT_LIMIT
 declare -A MODEL_OUTPUT_LIMIT
 
-load_models_conf() {
+load_models_conf_local() {
     if [[ ! -f "$MODELS_CONF" ]]; then
         print_warning "models.conf not found: $MODELS_CONF"
         return 1
@@ -150,7 +175,7 @@ load_models_conf() {
     done < "$MODELS_CONF"
 }
 
-load_metadata_conf() {
+load_metadata_conf_local() {
     # Load model metadata for OpenCode config generation
     if [[ ! -f "$METADATA_CONF" ]]; then
         return  # Silently skip if file doesn't exist
@@ -282,7 +307,7 @@ merge_config() {
     
     # Check if jq is available
     if ! command -v jq &>/dev/null; then
-        print_error "jq is required for config merging. Install it with: sudo pacman -S jq"
+        print_error "jq is required for config merging. Install it with your package manager."
         exit 1
     fi
     
@@ -305,7 +330,7 @@ merge_config() {
     if ! echo "$existing_config" | jq empty 2>/dev/null; then
         print_error "Existing config is not valid JSON: $OPENCODE_CONFIG"
         print_status "Please fix the config manually or restore from backup:"
-        print_status "  ./sync-opencode-config.sh --restore"
+        print_status "  ./sync-opencode.sh --restore"
         exit 1
     fi
     
@@ -323,6 +348,118 @@ merge_config() {
 }
 
 # -----------------------------------------------------------------------------
+# Sync Models
+# -----------------------------------------------------------------------------
+
+sync_models_config() {
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${CYAN}${BOLD}[dry-run] Would sync models to opencode.json${NC}"
+        echo
+    else
+        if [[ "$MERGE_MODE" == true ]]; then
+            echo -e "${CYAN}${BOLD}Syncing models (merge mode)${NC}"
+        else
+            echo -e "${CYAN}${BOLD}Syncing models${NC}"
+        fi
+        echo
+    fi
+    
+    # Load model metadata
+    load_models_conf_local
+    load_metadata_conf_local
+    
+    # Get downloaded models
+    print_status "Scanning for downloaded models in: $MODELS_DIR"
+    DOWNLOADED_MODELS=$(get_downloaded_models)
+    
+    if [[ -z "$DOWNLOADED_MODELS" ]]; then
+        print_warning "No GGUF models found in: $MODELS_DIR"
+        echo
+        echo "Download models first with:"
+        echo "  ./download-model.sh --list"
+        echo "  ./download-model.sh <model-id>"
+        return 1
+    fi
+    
+    # Convert to array
+    read -ra MODEL_ARRAY <<< "$DOWNLOADED_MODELS"
+    
+    echo
+    print_status "Found ${#MODEL_ARRAY[@]} downloaded model(s):"
+    for model_id in "${MODEL_ARRAY[@]}"; do
+        category="${MODEL_CATEGORY[$model_id]:-unknown}"
+        size="${MODEL_SIZE[$model_id]:-?}"
+        desc="${MODEL_DESCRIPTION[$model_id]:-}"
+        echo "    - $model_id ($size) [$category] $desc"
+    done
+    echo
+    
+    # Generate llama.cpp provider config
+    LLAMA_PROVIDER=$(generate_llama_cpp_provider "${MODEL_ARRAY[@]}")
+    
+    # Merge with existing config
+    CONFIG_JSON=$(merge_config "$LLAMA_PROVIDER")
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        print_status "Generated configuration:"
+        echo
+        if command -v jq &>/dev/null; then
+            echo "$CONFIG_JSON" | jq .
+        else
+            echo "$CONFIG_JSON"
+        fi
+        echo
+        return 0
+    fi
+    
+    # Backup existing config if present
+    backup_config "$OPENCODE_CONFIG"
+    
+    # Write config
+    mkdir -p "$(dirname "$OPENCODE_CONFIG")"
+    if command -v jq &>/dev/null; then
+        echo "$CONFIG_JSON" | jq . > "$OPENCODE_CONFIG"
+    else
+        echo "$CONFIG_JSON" > "$OPENCODE_CONFIG"
+    fi
+    
+    print_success "Models synced to: $OPENCODE_CONFIG"
+    echo
+}
+
+# -----------------------------------------------------------------------------
+# Sync Agents
+# -----------------------------------------------------------------------------
+
+sync_agents_config() {
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${CYAN}${BOLD}[dry-run] Would sync agent files${NC}"
+        echo
+        print_status "Source: $SCRIPT_DIR/agent/"
+        print_status "Target: $OPENCODE_CONFIG_DIR/"
+        echo
+        print_status "Files:"
+        echo "    AGENTS.md -> $OPENCODE_CONFIG_DIR/AGENTS.md"
+        echo "    plan.md   -> $OPENCODE_CONFIG_DIR/agents/plan.md"
+        echo "    review.md -> $OPENCODE_CONFIG_DIR/agents/review.md"
+        echo "    debug.md  -> $OPENCODE_CONFIG_DIR/agents/debug.md"
+        echo
+        return 0
+    fi
+    
+    if [[ "$RESET_AGENTS" == true ]]; then
+        echo -e "${CYAN}${BOLD}Resetting agent files${NC}"
+        echo
+        sync_agents "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "true" "true"
+    else
+        echo -e "${CYAN}${BOLD}Syncing agent files${NC}"
+        echo
+        sync_agents "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "false" "false"
+    fi
+    echo
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
@@ -337,79 +474,17 @@ if [[ "$RESTORE_MODE" == true ]]; then
 fi
 
 echo
-if [[ "$MERGE_MODE" == true ]]; then
-    echo -e "${CYAN}${BOLD}Sync OpenCode Configuration - llama.cpp (merge mode)${NC}"
-else
-    echo -e "${CYAN}${BOLD}Sync OpenCode Configuration - llama.cpp${NC}"
-fi
-echo
 
-# Load model metadata
-load_models_conf
-load_metadata_conf
-
-# Get downloaded models
-print_status "Scanning for downloaded models in: $MODELS_DIR"
-DOWNLOADED_MODELS=$(get_downloaded_models)
-
-if [[ -z "$DOWNLOADED_MODELS" ]]; then
-    print_warning "No GGUF models found in: $MODELS_DIR"
-    echo
-    echo "Download models first with:"
-    echo "  ./download-model.sh --list"
-    echo "  ./download-model.sh <model-id>"
-    exit 0
+# Sync models if requested
+if [[ "$SYNC_MODELS" == true ]]; then
+    sync_models_config
 fi
 
-# Convert to array
-read -ra MODEL_ARRAY <<< "$DOWNLOADED_MODELS"
-
-echo
-print_status "Found ${#MODEL_ARRAY[@]} downloaded model(s):"
-for model_id in "${MODEL_ARRAY[@]}"; do
-    category="${MODEL_CATEGORY[$model_id]:-unknown}"
-    size="${MODEL_SIZE[$model_id]:-?}"
-    desc="${MODEL_DESCRIPTION[$model_id]:-}"
-    echo "    - $model_id ($size) [$category] $desc"
-done
-echo
-
-# Generate llama.cpp provider config
-LLAMA_PROVIDER=$(generate_llama_cpp_provider "${MODEL_ARRAY[@]}")
-
-# Merge with existing config
-CONFIG_JSON=$(merge_config "$LLAMA_PROVIDER")
-
-if [[ "$DRY_RUN" == true ]]; then
-    print_status "Generated configuration (dry-run):"
-    echo
-    if command -v jq &>/dev/null; then
-        echo "$CONFIG_JSON" | jq .
-    else
-        echo "$CONFIG_JSON"
-    fi
-    echo
-    exit 0
+# Sync agents if requested
+if [[ "$SYNC_AGENTS" == true ]]; then
+    sync_agents_config
 fi
 
-# Backup existing config if present
-backup_config "$OPENCODE_CONFIG"
-
-# Write config
-mkdir -p "$(dirname "$OPENCODE_CONFIG")"
-if command -v jq &>/dev/null; then
-    echo "$CONFIG_JSON" | jq . > "$OPENCODE_CONFIG"
-else
-    echo "$CONFIG_JSON" > "$OPENCODE_CONFIG"
+if [[ "$DRY_RUN" == false ]]; then
+    print_success "Sync complete"
 fi
-
-print_success "OpenCode config synced: $OPENCODE_CONFIG"
-echo
-echo "Models added to llama.cpp provider:"
-for model_id in "${MODEL_ARRAY[@]}"; do
-    echo "    - $model_id"
-done
-echo
-echo "Start the server with:"
-echo "    ./start-server.sh ${MODEL_ARRAY[0]}"
-echo

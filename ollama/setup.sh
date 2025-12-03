@@ -50,6 +50,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Source common library
+# shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
 # Set up signal handlers for graceful cancellation
@@ -90,7 +91,7 @@ for arg in "$@"; do
             echo "Commands:"
             echo "  --status            Show current Ollama status and configuration"
             echo "  --update            Update Ollama to latest version"
-            echo "  --reset-agents      Reset AGENTS.md to default template"
+            echo "  --reset-agents      Reset agent files to defaults"
             echo ""
             echo "Setup Options:"
             echo "  --skip-models       Skip model selection and downloading"
@@ -343,6 +344,10 @@ generate_opencode_config() {
     # JSON header
     config='{
   "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "CONTRIBUTING.md",
+    "docs/*.md"
+  ],
   "provider": {
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
@@ -729,7 +734,7 @@ detect_amd_gpu() {
 
 if [[ "$RESET_AGENTS" == "true" ]]; then
     OPENCODE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-    handle_agents_md "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "false" "true"
+    sync_agents "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "false" "true"
     exit 0
 fi
 
@@ -1682,17 +1687,17 @@ fi
 if [[ ${#CONFIG_MODELS[@]} -gt 0 ]]; then
     # Callback function for config generation
     _generate_config() { generate_opencode_config "${CONFIG_MODELS[@]}"; }
-    handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode-config.sh" "$NON_INTERACTIVE" _generate_config
+    handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode.sh" "$NON_INTERACTIVE" _generate_config
 else
-    print_warning "No models to configure. Run sync-opencode-config.sh after installing models."
+    print_warning "No models to configure. Run sync-opencode.sh after installing models."
 fi
 
-# Handle AGENTS.md
+# Sync agent files (AGENTS.md, plan.md, review.md, debug.md)
 OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
-handle_agents_md "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "$NON_INTERACTIVE" "false"
+sync_agents "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "$NON_INTERACTIVE" "false"
 
 print_status "Use '/models' in OpenCode to switch between local models"
-print_status "Run ./sync-opencode-config.sh to refresh config after pulling new models"
+print_status "Run ./sync-opencode.sh to refresh config after pulling new models"
 
 # -----------------------------------------------------------------------------
 # Test GPU Acceleration
@@ -1811,7 +1816,7 @@ echo -e "${BOLD}Adding more models:${NC}"
 echo "  1. Edit models.conf and re-run ./setup.sh to select new models for download"
 echo "     and to regenerate the OpenCode config file"
 echo "  2. Or pull directly: docker exec ollama ollama pull <model:tag>"
-echo "  3. After pulling directly, run ./sync-opencode-config.sh to update OpenCode"
+echo "  3. After pulling directly, run ./sync-opencode.sh to update OpenCode"
 echo ""
 echo -e "${BOLD}Using OpenCode:${NC}"
 echo "  1. Run 'opencode' in any project directory"

@@ -147,7 +147,7 @@ for arg in "$@"; do
             echo "  --status            Show current llama.cpp status"
             echo "  --update            Update llama.cpp to latest version and rebuild"
             echo "  --verify[=model]    Verify model file integrity (all or specific)"
-            echo "  --reset-agents      Reset AGENTS.md to default template"
+            echo "  --reset-agents      Reset agent files to defaults"
             echo
             echo "Setup Options:"
             echo "  --skip-build        Skip building llama.cpp (use existing build)"
@@ -179,7 +179,7 @@ done
 
 if [[ $RESET_AGENTS == true ]]; then
     OPENCODE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-    handle_agents_md "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "false" "true"
+    sync_agents "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "false" "true"
     exit 0
 fi
 
@@ -691,14 +691,14 @@ done
 if [[ ${#DOWNLOADED_MODELS[@]} -gt 0 ]]; then
     # Callback function for config generation
     _generate_config() { generate_opencode_config "${DOWNLOADED_MODELS[@]}"; }
-    handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode-config.sh" "$NON_INTERACTIVE" _generate_config
+    handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode.sh" "$NON_INTERACTIVE" _generate_config
 else
     print_warning "No models downloaded, skipping OpenCode config"
 fi
 
-# Handle AGENTS.md
+# Sync agent files (AGENTS.md, plan.md, review.md, debug.md)
 OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
-handle_agents_md "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "$NON_INTERACTIVE" "false"
+sync_agents "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "$NON_INTERACTIVE" "false"
 
 # -----------------------------------------------------------------------------
 # Orphan Model Cleanup

@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Source common library
+# shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
 print_debug() { [ "$DEBUG_MODE" = true ] && echo -e "${DIM}[DEBUG]${NC} $1" || true; }
@@ -105,7 +106,7 @@ for arg in "$@"; do
             echo "  --force, -f        Skip final confirmation prompt"
             echo "  --dry-run          Show what would be removed without doing it"
             echo "  --non-interactive  Use default selections (container + image only)"
-            echo "  --debug            Enable debug output"
+            echo "  --debug            Show detailed debug output for troubleshooting"
             echo "  --help, -h         Show this help message"
             echo ""
             echo "Model deletion always requires explicit y/N confirmation for safety."

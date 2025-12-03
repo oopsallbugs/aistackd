@@ -31,7 +31,7 @@ jobs:
 
       - name: Test help commands
         run: |
-          ./sync-opencode-config.sh --help
+          ./sync-opencode.sh --help
           ./download-model.sh --help || true
           ./start-server.sh --help || true
 
@@ -78,7 +78,7 @@ jobs:
 
       - name: Test help commands
         run: |
-          ./ollama/sync-opencode-config.sh --help
+          ./ollama/sync-opencode.sh --help
 
       - name: Validate Ollama models.conf format
         run: |
