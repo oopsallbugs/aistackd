@@ -95,6 +95,7 @@ for arg in "$@"; do
     case $arg in
         --skip-models) SKIP_MODELS=true ;;
         --non-interactive) NON_INTERACTIVE=true ;;
+        # shellcheck disable=SC2034
         --ignore-warnings) IGNORE_WARNINGS=true ;;
         --status) RUN_STATUS=true ;;
         --update) RUN_UPDATE=true ;;
