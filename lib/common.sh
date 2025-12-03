@@ -323,7 +323,7 @@ gum_model_selection() {
         # Check if model already downloaded
         local downloaded_prefix=""
         if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
-            downloaded_prefix="* "
+            downloaded_prefix="★ "
         fi
         
         local label="${downloaded_prefix}$model (~$size) - $description"
@@ -335,7 +335,7 @@ gum_model_selection() {
     echo -e "${CYAN}${BOLD}  Select GGUF Models to Download${NC}"
     echo -e "${CYAN}${BOLD}============================================${NC}"
     echo
-    echo -e "${DIM}* = already downloaded${NC}"
+    echo -e "${DIM}★ = already downloaded${NC}"
     echo -e "${DIM}Use Space to toggle, Enter to confirm${NC}"
     echo
     
@@ -346,7 +346,7 @@ gum_model_selection() {
             IFS='|' read -r category hf_repo gguf_file size description <<< "${MODEL_INFO[$model]}"
             local downloaded_prefix=""
             if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
-                downloaded_prefix="* "
+                downloaded_prefix="★ "
             fi
             preselected_labels+=("${downloaded_prefix}$model (~$size) - $description")
         fi
@@ -394,7 +394,7 @@ gum_model_selection() {
     
     # Parse selections
     while IFS= read -r line; do
-        line="${line#\* }"  # Strip star prefix
+        line="${line#★ }"  # Strip star prefix
         local selected_model="${line%% (~*}"
         if [[ -n "$selected_model" && -n "${MODEL_INFO[$selected_model]+x}" ]]; then
             MODEL_SELECTED["$selected_model"]=1
@@ -1198,6 +1198,125 @@ handle_config_restore() {
     local selected_backup="${backups[$((choice-1))]}"
     echo
     restore_config_backup "$selected_backup" "$config_file"
+}
+
+# -----------------------------------------------------------------------------
+# AGENTS.md Management
+# -----------------------------------------------------------------------------
+
+# Handle AGENTS.md creation/update with user choice
+# Usage: handle_agents_md <script_dir> <target_dir> <non_interactive> [reset_mode]
+#
+# script_dir: Directory containing the source AGENTS.md
+# target_dir: Directory where AGENTS.md should be copied (usually ~/.config/opencode or project root)
+# non_interactive: "true" to skip prompts, "false" for interactive mode
+# reset_mode: "true" to force reset to default (used with --reset-agents flag)
+#
+# Returns: 0 if file was created/updated, 1 if skipped
+handle_agents_md() {
+    local script_dir="$1"
+    local target_dir="$2"
+    local non_interactive="$3"
+    local reset_mode="${4:-false}"
+    
+    local source_file="$script_dir/AGENTS.md"
+    local target_file="$target_dir/AGENTS.md"
+    
+    # Check source exists
+    if [[ ! -f "$source_file" ]]; then
+        print_warning "AGENTS.md not found in: $script_dir"
+        return 1
+    fi
+    
+    # Reset mode - just copy with backup
+    if [[ "$reset_mode" == "true" ]]; then
+        if [[ -f "$target_file" ]]; then
+            local backup_file
+            backup_file="$target_file.backup.$(date +%Y%m%d_%H%M%S)"
+            cp "$target_file" "$backup_file"
+            print_status "Backed up existing AGENTS.md to: $backup_file"
+        fi
+        mkdir -p "$target_dir"
+        cp "$source_file" "$target_file"
+        print_success "AGENTS.md reset to default at: $target_file"
+        return 0
+    fi
+    
+    # Check if target already exists
+    if [[ -f "$target_file" ]]; then
+        # Check if files are identical
+        if diff -q "$source_file" "$target_file" &>/dev/null; then
+            print_status "AGENTS.md already up to date"
+            return 0
+        fi
+        
+        print_warning "AGENTS.md already exists at: $target_file"
+        
+        if [[ "$non_interactive" == "false" && "$HAS_GUM" == true ]]; then
+            echo
+            print_status "How would you like to handle the existing AGENTS.md?"
+            echo
+            
+            local choice
+            choice=$(gum choose \
+                "Skip - Keep existing AGENTS.md unchanged" \
+                "Overwrite - Replace with default (backup created)" \
+                "Reset to default - Same as overwrite" \
+                "View diff - Show differences") || choice="Skip"
+            
+            case "$choice" in
+                "View diff"*)
+                    echo
+                    echo -e "${CYAN}${BOLD}Differences (your file vs default):${NC}"
+                    echo
+                    diff --color=auto "$target_file" "$source_file" || true
+                    echo
+                    # Ask again after showing diff
+                    local choice2
+                    choice2=$(gum choose \
+                        "Skip - Keep existing AGENTS.md unchanged" \
+                        "Overwrite - Replace with default (backup created)") || choice2="Skip"
+                    
+                    if [[ "$choice2" == "Overwrite"* ]]; then
+                        local backup_file
+                        backup_file="$target_file.backup.$(date +%Y%m%d_%H%M%S)"
+                        cp "$target_file" "$backup_file"
+                        print_status "Backed up existing AGENTS.md to: $backup_file"
+                        cp "$source_file" "$target_file"
+                        print_success "AGENTS.md updated at: $target_file"
+                        return 0
+                    else
+                        print_status "Keeping existing AGENTS.md"
+                        return 1
+                    fi
+                    ;;
+                "Overwrite"*|"Reset"*)
+                    local backup_file
+                    backup_file="$target_file.backup.$(date +%Y%m%d_%H%M%S)"
+                    cp "$target_file" "$backup_file"
+                    print_status "Backed up existing AGENTS.md to: $backup_file"
+                    cp "$source_file" "$target_file"
+                    print_success "AGENTS.md updated at: $target_file"
+                    return 0
+                    ;;
+                "Skip"*|"")
+                    print_status "Keeping existing AGENTS.md"
+                    return 1
+                    ;;
+            esac
+        else
+            print_status "Non-interactive mode: keeping existing AGENTS.md"
+            print_status "Run setup.sh --reset-agents to reset to default"
+            return 1
+        fi
+    else
+        # No existing file - create new one
+        print_status "Creating AGENTS.md for OpenCode..."
+        mkdir -p "$target_dir"
+        cp "$source_file" "$target_file"
+        print_success "AGENTS.md created at: $target_file"
+        return 0
+    fi
 }
 
 # -----------------------------------------------------------------------------

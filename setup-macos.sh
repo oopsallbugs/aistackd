@@ -120,10 +120,12 @@ SKIP_MODELS=false
 FORCE_REBUILD=false
 FORCE_ENV=false
 NON_INTERACTIVE=false
+IGNORE_WARNINGS=false
 RUN_STATUS=false
 RUN_UPDATE=false
 RUN_VERIFY=false
 VERIFY_MODEL=""
+RESET_AGENTS=false
 
 for arg in "$@"; do
     case $arg in
@@ -132,10 +134,12 @@ for arg in "$@"; do
         --force-rebuild) FORCE_REBUILD=true ;;
         --force-env) FORCE_ENV=true ;;
         --non-interactive) NON_INTERACTIVE=true ;;
+        --ignore-warnings) IGNORE_WARNINGS=true ;;
         --status) RUN_STATUS=true ;;
         --update) RUN_UPDATE=true ;;
         --verify) RUN_VERIFY=true ;;
         --verify=*) RUN_VERIFY=true; VERIFY_MODEL="${arg#*=}" ;;
+        --reset-agents) RESET_AGENTS=true ;;
         --help|-h)
             echo "Usage: ./setup-macos.sh [OPTIONS]"
             echo
@@ -143,6 +147,7 @@ for arg in "$@"; do
             echo "  --status            Show current llama.cpp status"
             echo "  --update            Update llama.cpp to latest version and rebuild"
             echo "  --verify[=model]    Verify model file integrity (all or specific)"
+            echo "  --reset-agents      Reset AGENTS.md to default template"
             echo
             echo "Setup Options:"
             echo "  --skip-build        Skip building llama.cpp (use existing build)"
@@ -150,6 +155,7 @@ for arg in "$@"; do
             echo "  --force-rebuild     Force rebuild even if build exists"
             echo "  --force-env         Regenerate .env file even if it exists"
             echo "  --non-interactive   Use default selections (no prompts)"
+            echo "  --ignore-warnings   Continue setup despite warnings"
             echo "  --help, -h          Show this help message"
             echo
             echo "Files:"
@@ -166,6 +172,16 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# -----------------------------------------------------------------------------
+# Reset Agents Mode
+# -----------------------------------------------------------------------------
+
+if [[ $RESET_AGENTS == true ]]; then
+    OPENCODE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+    handle_agents_md "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "false" "true"
+    exit 0
+fi
 
 # -----------------------------------------------------------------------------
 # Status Mode
@@ -679,6 +695,10 @@ if [[ ${#DOWNLOADED_MODELS[@]} -gt 0 ]]; then
 else
     print_warning "No models downloaded, skipping OpenCode config"
 fi
+
+# Handle AGENTS.md
+OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
+handle_agents_md "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "$NON_INTERACTIVE" "false"
 
 # -----------------------------------------------------------------------------
 # Orphan Model Cleanup

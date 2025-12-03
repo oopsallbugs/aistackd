@@ -70,7 +70,8 @@ cd "$SCRIPT_DIR"
 # Source common library
 source "$SCRIPT_DIR/../lib/common.sh"
 
-trap cleanup_spinner EXIT
+# Set up signal handlers for graceful cancellation
+setup_signal_handlers
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -83,15 +84,19 @@ OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
 # Parse command line arguments
 SKIP_MODELS=false
 NON_INTERACTIVE=false
+IGNORE_WARNINGS=false
 RUN_STATUS=false
 RUN_UPDATE=false
+RESET_AGENTS=false
 SELECTED_MODELS=()
 for arg in "$@"; do
     case $arg in
         --skip-models) SKIP_MODELS=true ;;
         --non-interactive) NON_INTERACTIVE=true ;;
+        --ignore-warnings) IGNORE_WARNINGS=true ;;
         --status) RUN_STATUS=true ;;
         --update) RUN_UPDATE=true ;;
+        --reset-agents) RESET_AGENTS=true ;;
         --help|-h)
             echo "Usage: ./setup-macos.sh [OPTIONS]"
             echo ""
@@ -102,6 +107,8 @@ for arg in "$@"; do
             echo "Setup Options:"
             echo "  --skip-models       Skip model selection and downloading"
             echo "  --non-interactive   Use default selections (no prompts)"
+            echo "  --ignore-warnings   Continue setup despite warnings"
+            echo "  --reset-agents      Re-copy AGENTS.md (OpenCode system prompt)"
             echo "  --help, -h          Show this help message"
             echo ""
             echo "This script installs Ollama natively on macOS using Homebrew."
@@ -859,6 +866,18 @@ if [ "$RUN_UPDATE" = true ]; then
 fi
 
 # -----------------------------------------------------------------------------
+# Reset AGENTS.md Mode
+# -----------------------------------------------------------------------------
+
+if [ "$RESET_AGENTS" = true ]; then
+    print_header "Resetting AGENTS.md"
+    OPENCODE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+    handle_agents_md "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "false" "true"
+    echo ""
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
 # Dependency Check
 # -----------------------------------------------------------------------------
 
@@ -1193,6 +1212,10 @@ else
 fi
 print_status "Use '/models' in OpenCode to switch between local models"
 print_status "Run ./sync-opencode-config.sh to refresh config after pulling new models"
+
+# Handle AGENTS.md (OpenCode system prompt)
+OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
+handle_agents_md "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "$NON_INTERACTIVE" "false"
 
 # -----------------------------------------------------------------------------
 # Test Ollama

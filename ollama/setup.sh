@@ -52,7 +52,8 @@ cd "$SCRIPT_DIR"
 # Source common library
 source "$SCRIPT_DIR/../lib/common.sh"
 
-trap cleanup_spinner EXIT
+# Set up signal handlers for graceful cancellation
+setup_signal_handlers
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -71,6 +72,7 @@ FIX_PERMISSIONS=false
 IGNORE_WARNINGS=false
 RUN_UPDATE=false
 RUN_STATUS=false
+RESET_AGENTS=false
 SELECTED_MODELS=()
 for arg in "$@"; do
     case $arg in
@@ -81,12 +83,14 @@ for arg in "$@"; do
         --ignore-warnings) IGNORE_WARNINGS=true ;;
         --update) RUN_UPDATE=true ;;
         --status) RUN_STATUS=true ;;
+        --reset-agents) RESET_AGENTS=true ;;
         --help|-h)
             echo "Usage: ./setup.sh [OPTIONS]"
             echo ""
             echo "Commands:"
             echo "  --status            Show current Ollama status and configuration"
             echo "  --update            Update Ollama to latest version"
+            echo "  --reset-agents      Reset AGENTS.md to default template"
             echo ""
             echo "Setup Options:"
             echo "  --skip-models       Skip model selection and downloading"
@@ -718,6 +722,16 @@ detect_amd_gpu() {
         echo "unknown|Unknown AMD GPU|11.0.0"
     fi
 }
+
+# -----------------------------------------------------------------------------
+# Reset Agents Mode
+# -----------------------------------------------------------------------------
+
+if [[ "$RESET_AGENTS" == "true" ]]; then
+    OPENCODE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+    handle_agents_md "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "false" "true"
+    exit 0
+fi
 
 # -----------------------------------------------------------------------------
 # Banner
@@ -1672,6 +1686,11 @@ if [[ ${#CONFIG_MODELS[@]} -gt 0 ]]; then
 else
     print_warning "No models to configure. Run sync-opencode-config.sh after installing models."
 fi
+
+# Handle AGENTS.md
+OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
+handle_agents_md "$SCRIPT_DIR/.." "$OPENCODE_CONFIG_DIR" "$NON_INTERACTIVE" "false"
+
 print_status "Use '/models' in OpenCode to switch between local models"
 print_status "Run ./sync-opencode-config.sh to refresh config after pulling new models"
 
