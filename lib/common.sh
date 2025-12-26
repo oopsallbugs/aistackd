@@ -2124,7 +2124,7 @@ check_llama_cpp_updates() {
         local cached
         cached=$(get_update_cache "llama.cpp")
         [[ "$cached" != "current" ]] && echo "$cached"
-        return
+        return 0
     fi
     
     # Must be a git repo
@@ -2165,7 +2165,7 @@ check_ollama_updates() {
         local cached
         cached=$(get_update_cache "ollama")
         [[ "$cached" != "current" ]] && echo "$cached"
-        return
+        return 0
     fi
     
     if [[ "$IS_MACOS" == true ]]; then
