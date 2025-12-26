@@ -31,6 +31,7 @@ LLAMA_CONTEXT="${LLAMA_CONTEXT:-32768}"
 LLAMA_HOST="${LLAMA_HOST:-127.0.0.1}"
 GPU_LAYERS="${GPU_LAYERS:-99}"
 LOG_FILE=""  # Optional log file
+MMPROJ_PATH=""  # Vision model multimodal projector
 
 # Ensure models-metadata.conf exists (copy from example if missing)
 ensure_metadata_conf "$SCRIPT_DIR" "true"  # Non-interactive for server script
@@ -125,6 +126,7 @@ show_help() {
     echo "  -b, --batch SIZE      Batch size for prompt processing (default: 512)"
     echo "  -t, --threads N       Number of CPU threads"
     echo "  --parallel N          Number of parallel request slots"
+    echo "  --mmproj FILE         Vision model projector file (auto-detected for vision models)"
     echo "  --flash-attn          Enable flash attention (faster)"
     echo "  --no-flash-attn       Disable flash attention"
     echo "  --gpu GPU_ID          Select GPU by ID for multi-GPU systems (default: 0)"
@@ -314,6 +316,8 @@ get_model_info() {
     echo "$file_size|$model_desc|$model_category"
 }
 
+# Note: Vision model functions (is_vision_model, detect_mmproj) are in lib/common.sh
+
 # =============================================================================
 # Validate models.conf Syntax
 # =============================================================================
@@ -404,6 +408,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --parallel)
             PARALLEL="$2"
+            shift 2
+            ;;
+        --mmproj)
+            MMPROJ_PATH="$2"
             shift 2
             ;;
         --flash-attn)
@@ -633,6 +641,37 @@ if [[ -n "$MODEL_ID" && "$LLAMA_CONTEXT" == "32768" ]]; then
     if [[ -n "$SAVED_CONTEXT" ]]; then
         LLAMA_CONTEXT="$SAVED_CONTEXT"
     fi
+fi
+
+# =============================================================================
+# Vision Model / mmproj Auto-Detection
+# =============================================================================
+
+# Auto-detect mmproj for vision models (if not manually specified)
+if [[ -z "$MMPROJ_PATH" ]] && is_vision_model "$GGUF_PATH"; then
+    detected_mmproj=$(detect_mmproj "$GGUF_PATH" "$MODELS_DIR")
+    if [[ -n "$detected_mmproj" ]]; then
+        MMPROJ_PATH="$detected_mmproj"
+        echo -e "${GREEN}Auto-detected mmproj:${NC} $(basename "$MMPROJ_PATH")"
+    else
+        echo
+        print_warning "Vision model detected but no mmproj file found"
+        echo
+        echo "  Vision models require a multimodal projector (mmproj) file."
+        echo "  The model will load but image processing won't work."
+        echo
+        echo "  To download mmproj files:"
+        echo "    ./download-model.sh --add $(basename "$(dirname "$GGUF_PATH")")"
+        echo
+        echo "  Or manually specify with: --mmproj <path>"
+        echo
+    fi
+fi
+
+# Validate mmproj path if specified
+if [[ -n "$MMPROJ_PATH" && ! -f "$MMPROJ_PATH" ]]; then
+    print_error "mmproj file not found: $MMPROJ_PATH"
+    exit 1
 fi
 
 # Check llama-server exists
@@ -1407,6 +1446,10 @@ if [[ -n "$PARALLEL" ]]; then
     CMD+=(--parallel "$PARALLEL")
 fi
 
+if [[ -n "$MMPROJ_PATH" ]]; then
+    CMD+=(--mmproj "$MMPROJ_PATH")
+fi
+
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
     CMD+=("${EXTRA_ARGS[@]}")
 fi
@@ -1514,6 +1557,7 @@ echo -e "  ${BOLD}GPU:${NC}      $GPU_LAYERS layers"
 [[ -n "$BATCH_SIZE" ]] && echo -e "  ${BOLD}Batch:${NC}    $BATCH_SIZE"
 [[ -n "$THREADS" ]] && echo -e "  ${BOLD}Threads:${NC}  $THREADS"
 [[ -n "$PARALLEL" ]] && echo -e "  ${BOLD}Parallel:${NC} $PARALLEL"
+[[ -n "$MMPROJ_PATH" ]] && echo -e "  ${BOLD}mmproj:${NC}   $(basename "$MMPROJ_PATH")"
 [[ -n "$LOG_FILE" ]] && echo -e "  ${BOLD}Log:${NC}      $LOG_FILE"
 [[ "$WATCHDOG_MODE" == true ]] && echo -e "  ${BOLD}Watchdog:${NC} ${GREEN}enabled${NC}"
 echo

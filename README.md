@@ -215,6 +215,70 @@ The llama.cpp server provides an OpenAI-compatible API at `http://localhost:8080
 | Maximum quality | `qwen2.5-coder-32b-q4km` |
 | Reasoning tasks | `deepseek-r1-32b-q4km` |
 | Limited memory | `qwen3-8b-q4km` |
+| Vision/image analysis | `qwen3vl-8b-q4km` |
+
+## Vision Models
+
+Vision models (VLMs) can process images alongside text. These are useful for:
+
+- **Frigate NVR** - AI-powered camera event descriptions
+- **Image analysis** - Describing, captioning, or analyzing images
+- **Document understanding** - Reading text from images
+
+### Available Vision Models
+
+| Model | Size | VRAM | Notes |
+|-------|------|------|-------|
+| `qwen3vl-8b-q8` | 8.7GB | 12-16GB | Best quality |
+| `qwen3vl-8b-q4km` | 5GB | 8-12GB | Balanced |
+| `qwen3vl-4b-q8` | 4.3GB | 8GB | Smaller, quality |
+| `qwen3vl-4b-q4km` | 2.5GB | 6-8GB | Smallest |
+
+### Vision Model Setup
+
+Vision models require an additional "mmproj" (multimodal projector) file. The download script automatically prompts you to download mmproj files when downloading a vision model:
+
+```bash
+# Download vision model - will prompt for mmproj file selection
+./download-model.sh qwen3vl-8b-q4km
+
+# Add a new vision model from HuggingFace - also prompts for mmproj
+./download-model.sh --add Qwen/Qwen3-VL-8B-Instruct-GGUF
+
+# Skip mmproj download (download model only)
+./download-model.sh --no-mmproj qwen3vl-8b-q4km
+```
+
+When prompted, select an mmproj file:
+- **F16** - Higher quality (recommended)
+- **Q8_0** - Smaller size
+
+### Starting Vision Server
+
+```bash
+# Auto-detects mmproj file
+./start-server.sh vision
+
+# Or specify mmproj manually
+./start-server.sh --mmproj models/mmproj-Qwen3VL-8B-Instruct-F16.gguf qwen3vl-8b-q4km
+
+# For Frigate (needs port 11434 for Ollama API compatibility)
+./start-server.sh -p 11434 --host 0.0.0.0 vision
+```
+
+### Frigate Integration
+
+Configure Frigate to use the local vision model:
+
+```yaml
+# Frigate config.yaml
+genai:
+  enabled: true
+  provider: ollama
+  base_url: http://your-server-ip:11434
+  model: qwen3vl-8b-q4km
+  prompt: "Describe what you see in this image."
+```
 
 ## Usage Examples
 
@@ -245,6 +309,12 @@ The llama.cpp server provides an OpenAI-compatible API at `http://localhost:8080
 
 # Download a specific model
 ./download-model.sh qwen3-30b-q4km
+
+# Download vision model (prompts for mmproj file)
+./download-model.sh qwen3vl-8b-q4km
+
+# Download vision model without mmproj
+./download-model.sh --no-mmproj qwen3vl-8b-q4km
 
 # Search HuggingFace
 ./download-model.sh --search "qwen gguf"

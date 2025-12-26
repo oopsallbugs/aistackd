@@ -110,6 +110,14 @@ When operations fail, follow these recovery patterns:
 - Provide more context about what you want
 - Be explicit about constraints and requirements
 
+### For Vision Models (Qwen3-VL)
+
+- These models can process images alongside text
+- Best for: image analysis, document understanding, visual Q&A
+- Not optimized for coding tasks - use coding models instead
+- Require mmproj file for vision capabilities
+- Lower context limits due to image token overhead
+
 ## Agentic Workflow
 
 When handling multi-step tasks:

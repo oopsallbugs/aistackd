@@ -117,6 +117,7 @@ show_help() {
     echo "  --list-downloaded List only downloaded models"
     echo "  --info <model>    Show detailed info about a model"
     echo "  --force           Re-download even if model exists"
+    echo "  --no-mmproj       Skip mmproj download for vision models"
     echo "  --search [query]  Search HuggingFace for GGUF models"
     echo "  --trending        Show trending GGUF models on HuggingFace"
     echo "  --browse <repo>   List GGUF files in a HuggingFace repo"
@@ -279,6 +280,7 @@ download_model() {
     fi
     
     local found=false
+    local model_category=""
     local hf_repo=""
     local gguf_file=""
     local size=""
@@ -296,8 +298,8 @@ download_model() {
         if [[ "$model_id" == "$search_model" ]]; then
             found=true
             # Trim all fields
-            category="${category#"${category%%[![:space:]]*}"}"
-            category="${category%"${category##*[![:space:]]}"}"
+            model_category="${category#"${category%%[![:space:]]*}"}"
+            model_category="${model_category%"${model_category##*[![:space:]]}"}"
             hf_repo="${repo#"${repo%%[![:space:]]*}"}"
             hf_repo="${hf_repo%"${hf_repo##*[![:space:]]}"}"
             gguf_file="${file#"${file%%[![:space:]]*}"}"
@@ -308,7 +310,7 @@ download_model() {
             description="${description%"${description##*[![:space:]]}"}"
             
             # Validate the entry before using it
-            if ! validate_model_entry "$category" "$model_id" "$hf_repo" "$gguf_file" "$size"; then
+            if ! validate_model_entry "$model_category" "$model_id" "$hf_repo" "$gguf_file" "$size"; then
                 print_error "Model entry for '$search_model' is invalid"
                 exit 1
             fi
@@ -330,6 +332,16 @@ download_model() {
         local actual_size
         actual_size=$(du -h "$output_path" | cut -f1)
         print_success "$search_model already downloaded ($actual_size)"
+        
+        # For vision models, still check/offer mmproj download if missing
+        if [[ "$model_category" == "vision" && "${SKIP_MMPROJ:-false}" != true ]]; then
+            if detect_mmproj "$output_path" "$MODELS_DIR" >/dev/null 2>&1; then
+                print_status "mmproj file already exists"
+            else
+                handle_vision_model_mmproj "$hf_repo" "$MODELS_DIR" "false"
+            fi
+        fi
+        
         echo
         echo "Use --force to re-download"
         exit 0
@@ -434,6 +446,11 @@ download_model() {
         actual_size=$(du -h "$output_path" | cut -f1)
         echo
         print_success "Downloaded: $search_model ($actual_size)"
+        
+        # Handle mmproj for vision models (unless --no-mmproj was specified)
+        if [[ "$model_category" == "vision" && "${SKIP_MMPROJ:-false}" != true ]]; then
+            handle_vision_model_mmproj "$hf_repo" "$MODELS_DIR" "false"
+        fi
         
         # Auto-sync to OpenCode config
         if [[ -x "$SCRIPT_DIR/sync-opencode.sh" ]]; then
@@ -611,6 +628,9 @@ browse_model_files() {
     echo "  ./download-model.sh --add $repo"
     echo
 }
+
+# Note: Vision model functions (get_mmproj_files, download_mmproj_files, handle_vision_model_mmproj) 
+# are in lib/common.sh
 
 add_model() {
     local repo="$1"
@@ -910,6 +930,13 @@ add_model() {
         exit 0
     fi
     
+    # Check for mmproj files (vision model support)
+    local mmproj_files
+    mmproj_files=$(get_mmproj_files "$response")
+    if [[ -n "$mmproj_files" ]]; then
+        download_mmproj_files "$repo" "$MODELS_DIR" "$mmproj_files" "false"
+    fi
+    
     # Auto-sync to OpenCode config
     if [[ -x "$SCRIPT_DIR/sync-opencode.sh" ]]; then
         echo
@@ -1097,6 +1124,9 @@ cleanup_orphan_models() {
         [[ -f "$gguf" ]] || continue
         local filename
         filename=$(basename "$gguf")
+        
+        # Skip mmproj files (companion files for vision models, not main models)
+        [[ "$filename" == mmproj-* ]] && continue
         
         # Check if it's known or whitelisted
         if [[ -z "${known_files[$filename]:-}" && -z "${whitelisted_files[$filename]:-}" ]]; then
@@ -1330,6 +1360,7 @@ if [[ $# -eq 0 ]]; then
 fi
 
 FORCE=false
+SKIP_MMPROJ=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -1383,6 +1414,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force)
             FORCE=true
+            shift
+            ;;
+        --no-mmproj)
+            SKIP_MMPROJ=true
             shift
             ;;
         --help|-h)

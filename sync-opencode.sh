@@ -248,10 +248,13 @@ generate_llama_cpp_provider() {
             display_name="${MODEL_DESCRIPTION[$model_id]:-$model_id}"
             context_limit=$DEFAULT_CONTEXT
             output_limit=$DEFAULT_OUTPUT
-            # Use larger limits for coding models
+            # Use larger limits for coding models, smaller for vision
             if [[ "$category" == "coding" ]]; then
                 context_limit=$CODING_CONTEXT
                 output_limit=$CODING_OUTPUT
+            elif [[ "$category" == "vision" ]]; then
+                context_limit=16384
+                output_limit=4096
             fi
         fi
         

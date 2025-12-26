@@ -97,3 +97,13 @@ qwen3-30b-q3km|Qwen3 30B MoE Q3KM (Agentic)|65536|16384
 qwen2.5-coder-14b-q4km|Qwen2.5-Coder 14B Q4KM|65536|16384
 qwen2.5-coder-32b-q4km|Qwen2.5-Coder 32B Q4KM|65536|16384
 qwen2.5-coder-32b-q3km|Qwen2.5-Coder 32B Q3KM|65536|16384
+
+# -----------------------------------------------------------------------------
+# Vision Models (multimodal image understanding)
+# Lower context due to image token overhead - suitable for Frigate/genAI tasks
+# Require mmproj files for vision capabilities
+# -----------------------------------------------------------------------------
+qwen3vl-8b-q8|Qwen3-VL 8B Q8 (Vision)|16384|4096
+qwen3vl-8b-q4km|Qwen3-VL 8B Q4KM (Vision)|16384|4096
+qwen3vl-4b-q8|Qwen3-VL 4B Q8 (Vision)|16384|4096
+qwen3vl-4b-q4km|Qwen3-VL 4B Q4KM (Vision)|16384|4096

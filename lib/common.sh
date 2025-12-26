@@ -549,6 +549,17 @@ download_model() {
     
     if [[ -f "$output_path" ]]; then
         print_status "$model_id already downloaded"
+        
+        # For vision models, still check/offer mmproj download if missing
+        if [[ "$category" == "vision" ]]; then
+            if detect_mmproj "$output_path" "$MODELS_DIR" >/dev/null 2>&1; then
+                print_status "mmproj file already exists"
+            else
+                local mmproj_mode="${NON_INTERACTIVE:-false}"
+                handle_vision_model_mmproj "$hf_repo" "$MODELS_DIR" "$mmproj_mode"
+            fi
+        fi
+        
         return 0
     fi
     
@@ -621,6 +632,13 @@ download_model() {
         local actual_size
         actual_size=$(du -h "$output_path" | cut -f1)
         print_success "Downloaded: $model_id ($actual_size)"
+        
+        # Handle mmproj for vision models
+        # Uses global NON_INTERACTIVE variable (set by setup scripts) or defaults to interactive
+        if [[ "$category" == "vision" ]]; then
+            local mmproj_mode="${NON_INTERACTIVE:-false}"
+            handle_vision_model_mmproj "$hf_repo" "$MODELS_DIR" "$mmproj_mode"
+        fi
     else
         print_error "Download failed - file not found"
         return 1
@@ -1249,6 +1267,9 @@ check_orphan_models() {
         [[ -f "$gguf" ]] || continue
         local filename
         filename=$(basename "$gguf")
+        
+        # Skip mmproj files (companion files for vision models, not main models)
+        [[ "$filename" == mmproj-* ]] && continue
         
         if [[ -z "${known_files[$filename]:-}" && -z "${whitelisted_files[$filename]:-}" ]]; then
             orphan_files+=("$filename")
@@ -2237,4 +2258,315 @@ show_update_notification() {
         echo -e "${YELLOW}│${NC} Run: ${DIM}$update_cmd${NC}"
         echo -e "${YELLOW}└─────────────────────────────────────────────┘${NC}"
     fi
+}
+
+# -----------------------------------------------------------------------------
+# Vision Model Support
+# -----------------------------------------------------------------------------
+
+# Check if a model is a vision model (requires mmproj)
+# Usage: is_vision_model <gguf_path_or_basename>
+# Returns: 0 if vision model, 1 otherwise
+is_vision_model() {
+    local gguf_path="$1"
+    local model_basename
+    model_basename=$(basename "$gguf_path")
+    
+    # Check models.conf for category
+    if [[ -f "$MODELS_CONF" ]]; then
+        while IFS='|' read -r category model_id hf_repo gguf_file size description || [[ -n "$category" ]]; do
+            [[ "$category" =~ ^[[:space:]]*# ]] && continue
+            [[ "$category" =~ ^ALIAS: ]] && continue
+            [[ -z "$category" ]] && continue
+            
+            # Trim
+            gguf_file="${gguf_file#"${gguf_file%%[![:space:]]*}"}"
+            gguf_file="${gguf_file%"${gguf_file##*[![:space:]]}"}"
+            category="${category#"${category%%[![:space:]]*}"}"
+            category="${category%"${category##*[![:space:]]}"}"
+            
+            if [[ "$gguf_file" == "$model_basename" && "$category" == "vision" ]]; then
+                return 0
+            fi
+        done < "$MODELS_CONF"
+    fi
+    
+    # Also detect by filename pattern (e.g., Qwen3VL, llava, etc.)
+    if [[ "$model_basename" =~ [Vv][Ll][-_]?[0-9] ]] || \
+       [[ "$model_basename" =~ [Ll]lava ]] || \
+       [[ "$model_basename" =~ [Mm]iniCPM-V ]] || \
+       [[ "$model_basename" =~ [Pp]hi-3.*[Vv]ision ]]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# Detect mmproj file for a vision model
+# Usage: detect_mmproj <gguf_path> <models_dir>
+# Returns: path to mmproj file, or empty string if not found
+detect_mmproj() {
+    local gguf_path="$1"
+    local models_dir="$2"
+    local model_basename
+    model_basename=$(basename "$gguf_path")
+    
+    # Extract model name pattern from the main model file
+    # e.g., "Qwen3VL-8B-Instruct-Q8_0.gguf" -> "Qwen3VL-8B-Instruct"
+    local model_base="${model_basename%.gguf}"
+    # Remove quantization suffix (Q4_K_M, Q8_0, etc.)
+    model_base=$(echo "$model_base" | sed -E 's/-Q[0-9]+[_A-Za-z]*$//' | sed -E 's/_Q[0-9]+[_A-Za-z]*$//')
+    
+    # Look for mmproj files (prefer F16 over Q8_0 for quality)
+    local mmproj_patterns=(
+        "mmproj-${model_base}-F16.gguf"
+        "mmproj-${model_base}-f16.gguf"
+        "mmproj-${model_base}-Q8_0.gguf"
+        "mmproj-${model_base}-q8_0.gguf"
+        "mmproj-${model_base}.gguf"
+    )
+    
+    for pattern in "${mmproj_patterns[@]}"; do
+        if [[ -f "$models_dir/$pattern" ]]; then
+            echo "$models_dir/$pattern"
+            return 0
+        fi
+    done
+    
+    # Try glob pattern as fallback (any mmproj with similar name)
+    local found
+    found=$(find "$models_dir" -maxdepth 1 -name "mmproj-*${model_base}*" -type f 2>/dev/null | head -1)
+    if [[ -n "$found" ]]; then
+        echo "$found"
+        return 0
+    fi
+    
+    return 1
+}
+
+# Get mmproj files from a HuggingFace API response
+# Usage: get_mmproj_files <json_response>
+# Returns: pipe-separated list of "filename|size" for mmproj files
+get_mmproj_files() {
+    local response="$1"
+    echo "$response" | jq -r '.[] | select(.path | startswith("mmproj-")) | "\(.path)|\(.size)"'
+}
+
+# Download mmproj files for a vision model
+# Usage: download_mmproj_files <repo> <models_dir> <mmproj_files_list> [non_interactive]
+# non_interactive: "true" = auto-download F16, "false" = prompt user, "skip" = don't download
+download_mmproj_files() {
+    local repo="$1"
+    local models_dir="$2"
+    local mmproj_list="$3"
+    local non_interactive="${4:-false}"
+    
+    local mmproj_array=()
+    local mmproj_sizes=()
+    local mmproj_display=()
+    
+    while IFS='|' read -r filename size; do
+        [[ -z "$filename" ]] && continue
+        mmproj_array+=("$filename")
+        mmproj_sizes+=("$size")
+        
+        local size_formatted
+        if [[ $size -ge 1073741824 ]]; then
+            size_formatted="$(echo "scale=1; $size / 1073741824" | bc)GB"
+        elif [[ $size -ge 1048576 ]]; then
+            size_formatted="$(( size / 1048576 ))MB"
+        else
+            size_formatted="${size}B"
+        fi
+        
+        # Mark F16 as recommended (higher quality)
+        if [[ "$filename" == *"F16"* || "$filename" == *"f16"* ]]; then
+            mmproj_display+=("$filename ($size_formatted) ← recommended")
+        else
+            mmproj_display+=("$filename ($size_formatted)")
+        fi
+    done <<< "$mmproj_list"
+    
+    if [[ ${#mmproj_array[@]} -eq 0 ]]; then
+        return 0
+    fi
+    
+    local selected_mmproj=()
+    
+    # Non-interactive mode: skip or auto-select
+    if [[ "$non_interactive" == "skip" ]]; then
+        print_status "Skipping mmproj download (--no-mmproj)"
+        return 0
+    fi
+    
+    if [[ "$non_interactive" == "true" ]]; then
+        # Auto-select F16 version (recommended) or first available
+        local auto_select=""
+        for i in "${!mmproj_array[@]}"; do
+            if [[ "${mmproj_array[$i]}" == *"F16"* || "${mmproj_array[$i]}" == *"f16"* ]]; then
+                auto_select="${mmproj_array[$i]}"
+                break
+            fi
+        done
+        [[ -z "$auto_select" ]] && auto_select="${mmproj_array[0]}"
+        
+        echo
+        print_status "Vision model detected - auto-downloading mmproj: $auto_select"
+        selected_mmproj=("$auto_select")
+    else
+        # Interactive mode
+        echo
+        echo -e "${CYAN}${BOLD}Vision Model Detected - mmproj Files Available${NC}"
+        echo
+        echo "  Vision models require multimodal projector (mmproj) files for image processing."
+        echo "  F16 = higher quality | Q8_0 = smaller size"
+        echo
+        
+        if [[ "$HAS_GUM" == true ]]; then
+            echo -e "  ${DIM}Use Space to toggle, Enter to confirm${NC}"
+            echo
+            
+            # Pre-select F16 version if available
+            local preselect=""
+            for opt in "${mmproj_display[@]}"; do
+                if [[ "$opt" == *"F16"* ]]; then
+                    preselect="$opt"
+                    break
+                fi
+            done
+            
+            local gum_selected gum_exit
+            if [[ -n "$preselect" ]]; then
+                gum_selected=$(gum choose --no-limit \
+                    --cursor-prefix="$GUM_CURSOR_PREFIX" \
+                    --selected-prefix="$GUM_SELECTED_PREFIX" \
+                    --unselected-prefix="$GUM_UNSELECTED_PREFIX" \
+                    --cursor.foreground="212" \
+                    --selected.foreground="212" \
+                    --height=10 \
+                    --selected="$preselect" \
+                    "${mmproj_display[@]}") && gum_exit=0 || gum_exit=$?
+                check_user_interrupt $gum_exit
+            else
+                gum_selected=$(gum choose --no-limit \
+                    --cursor-prefix="$GUM_CURSOR_PREFIX" \
+                    --selected-prefix="$GUM_SELECTED_PREFIX" \
+                    --unselected-prefix="$GUM_UNSELECTED_PREFIX" \
+                    --cursor.foreground="212" \
+                    --selected.foreground="212" \
+                    --height=10 \
+                    "${mmproj_display[@]}") && gum_exit=0 || gum_exit=$?
+                check_user_interrupt $gum_exit
+            fi
+            
+            if [[ -n "$gum_selected" ]]; then
+                while IFS= read -r line; do
+                    local selected_name="${line%% (*}"
+                    for i in "${!mmproj_array[@]}"; do
+                        if [[ "${mmproj_array[$i]}" == "$selected_name" ]]; then
+                            selected_mmproj+=("${mmproj_array[$i]}")
+                            break
+                        fi
+                    done
+                done <<< "$gum_selected"
+            fi
+        else
+            echo "  Available mmproj files:"
+            local i=1
+            for opt in "${mmproj_display[@]}"; do
+                echo "    $i) $opt"
+                ((i++))
+            done
+            echo "    $i) Skip (no mmproj)"
+            echo
+            read -r -p "Select mmproj to download [1-${#mmproj_array[@]}, or $i to skip]: " selection
+            
+            if [[ "$selection" =~ ^[0-9]+$ ]] && [[ $selection -ge 1 ]] && [[ $selection -le ${#mmproj_array[@]} ]]; then
+                selected_mmproj+=("${mmproj_array[$((selection-1))]}")
+            fi
+        fi
+    fi
+    
+    # Download selected mmproj files
+    for mmproj_file in "${selected_mmproj[@]}"; do
+        local output_path="$models_dir/$mmproj_file"
+        
+        if [[ -f "$output_path" ]]; then
+            local actual_size
+            actual_size=$(du -h "$output_path" | cut -f1)
+            print_status "mmproj already exists: $mmproj_file ($actual_size)"
+            continue
+        fi
+        
+        echo
+        echo -e "${BOLD}Downloading mmproj: $mmproj_file${NC}"
+        
+        if command -v huggingface-cli &>/dev/null; then
+            # Get file size for spinner
+            local mmproj_size=""
+            for i in "${!mmproj_array[@]}"; do
+                if [[ "${mmproj_array[$i]}" == "$mmproj_file" ]]; then
+                    mmproj_size="${mmproj_sizes[$i]}"
+                    break
+                fi
+            done
+            
+            start_download_spinner "Downloading mmproj" "$output_path" "$mmproj_size"
+            huggingface-cli download "$repo" "$mmproj_file" \
+                --local-dir "$models_dir" \
+                --local-dir-use-symlinks False \
+                --quiet 2>/dev/null
+            local dl_status=$?
+            stop_spinner
+            
+            if [[ $dl_status -ne 0 ]]; then
+                print_error "Failed to download mmproj: $mmproj_file"
+            else
+                print_success "Downloaded: $mmproj_file"
+            fi
+        else
+            local dl_url="https://huggingface.co/$repo/resolve/main/$mmproj_file"
+            start_download_spinner "Downloading mmproj" "$output_path" ""
+            curl -fL --connect-timeout 30 --retry 3 -C - -o "$output_path" "$dl_url" 2>/dev/null
+            local dl_status=$?
+            stop_spinner
+            
+            if [[ $dl_status -ne 0 ]]; then
+                print_error "Failed to download mmproj: $mmproj_file"
+                rm -f "$output_path"
+            else
+                print_success "Downloaded: $mmproj_file"
+            fi
+        fi
+    done
+}
+
+# Fetch and offer mmproj download for a vision model
+# Usage: handle_vision_model_mmproj <hf_repo> <models_dir> [non_interactive]
+# Convenience wrapper that fetches HF file listing and calls download_mmproj_files
+handle_vision_model_mmproj() {
+    local hf_repo="$1"
+    local models_dir="$2"
+    local non_interactive="${3:-false}"
+    
+    # Check if jq is available (required for parsing HF API response)
+    if ! command -v jq &>/dev/null; then
+        print_warning "jq not installed - cannot fetch mmproj files"
+        return 1
+    fi
+    
+    local hf_response
+    hf_response=$(curl -sf --connect-timeout 15 --max-time 30 "https://huggingface.co/api/models/$hf_repo/tree/main" 2>/dev/null)
+    if [[ -z "$hf_response" ]]; then
+        print_warning "Could not fetch mmproj files from HuggingFace"
+        return 1
+    fi
+    
+    local mmproj_files
+    mmproj_files=$(get_mmproj_files "$hf_response")
+    if [[ -z "$mmproj_files" ]]; then
+        return 0  # No mmproj files available - not an error
+    fi
+    
+    download_mmproj_files "$hf_repo" "$models_dir" "$mmproj_files" "$non_interactive"
 }
