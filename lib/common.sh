@@ -2315,7 +2315,7 @@ detect_mmproj() {
     # e.g., "Qwen3VL-8B-Instruct-Q8_0.gguf" -> "Qwen3VL-8B-Instruct"
     local model_base="${model_basename%.gguf}"
     # Remove quantization suffix (Q4_K_M, Q8_0, etc.)
-    model_base=$(echo "$model_base" | sed -E 's/-Q[0-9]+[_A-Za-z]*$//' | sed -E 's/_Q[0-9]+[_A-Za-z]*$//')
+    model_base=$(echo "$model_base" | sed -E 's/[-_]Q[0-9]+[_A-Za-z0-9]*$//')
     
     # Look for mmproj files (prefer F16 over Q8_0 for quality)
     local mmproj_patterns=(
