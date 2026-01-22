@@ -1287,70 +1287,34 @@ detect_platform
 # -----------------------------------------------------------------------------
 
 # Detect and show dependencies that were installed but won't be removed
-# Usage: show_dependency_notice [setup_type]
-#   setup_type: "llama" for llama.cpp, "ollama" for Ollama (auto-detects if not specified)
+# Usage: show_dependency_notice
 #
 # This function detects common dependencies and shows a notice explaining
 # they are kept because other applications may use them.
 show_dependency_notice() {
-    local setup_type="${1:-auto}"
     local -a installed_deps=()
     
-    # Auto-detect setup type based on platform and available files if not specified
-    if [[ "$setup_type" == "auto" ]]; then
-        if [[ "$IS_LINUX" == true ]]; then
-            # Check if Docker-based (Ollama) or native (llama.cpp)
-            if command -v docker &>/dev/null && docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^ollama$'; then
-                setup_type="ollama"
-            else
-                setup_type="llama"
-            fi
-        elif [[ "$IS_MACOS" == true ]]; then
-            # On macOS, check for Ollama via Homebrew
-            if command -v brew &>/dev/null && brew list ollama &>/dev/null 2>&1; then
-                setup_type="ollama"
-            else
-                setup_type="llama"
-            fi
-        fi
-    fi
-    
-    # Detect dependencies based on platform and setup type
+    # Detect dependencies based on platform
     if [[ "$IS_LINUX" == true ]]; then
-        if [[ "$setup_type" == "ollama" ]]; then
-            # Ollama Linux dependencies
-            command -v docker &>/dev/null && installed_deps+=("Docker")
-            command -v gum &>/dev/null && installed_deps+=("gum")
-            command -v bc &>/dev/null && installed_deps+=("bc")
-            command -v curl &>/dev/null && installed_deps+=("curl")
-        else
-            # llama.cpp Linux (ROCm) dependencies
-            command -v hipcc &>/dev/null && installed_deps+=("ROCm/HIP")
-            command -v cmake &>/dev/null && installed_deps+=("cmake")
-            command -v make &>/dev/null && installed_deps+=("make")
-            command -v git &>/dev/null && installed_deps+=("git")
-            command -v gum &>/dev/null && installed_deps+=("gum")
-            command -v curl &>/dev/null && installed_deps+=("curl")
-            command -v jq &>/dev/null && installed_deps+=("jq")
-        fi
+        # llama.cpp Linux (ROCm) dependencies
+        command -v hipcc &>/dev/null && installed_deps+=("ROCm/HIP")
+        command -v cmake &>/dev/null && installed_deps+=("cmake")
+        command -v make &>/dev/null && installed_deps+=("make")
+        command -v git &>/dev/null && installed_deps+=("git")
+        command -v gum &>/dev/null && installed_deps+=("gum")
+        command -v curl &>/dev/null && installed_deps+=("curl")
+        command -v jq &>/dev/null && installed_deps+=("jq")
     fi
     
     if [[ "$IS_MACOS" == true ]]; then
-        if [[ "$setup_type" == "ollama" ]]; then
-            # Ollama macOS dependencies
-            command -v brew &>/dev/null && installed_deps+=("Homebrew")
-            command -v gum &>/dev/null && installed_deps+=("gum")
-            [[ -x "/opt/homebrew/bin/bash" ]] && installed_deps+=("Bash 4+ (Homebrew)")
-        else
-            # llama.cpp macOS (Metal) dependencies
-            command -v brew &>/dev/null && installed_deps+=("Homebrew")
-            xcode-select -p &>/dev/null && installed_deps+=("Xcode Command Line Tools")
-            command -v cmake &>/dev/null && installed_deps+=("cmake")
-            command -v git &>/dev/null && installed_deps+=("git")
-            command -v gum &>/dev/null && installed_deps+=("gum")
-            command -v curl &>/dev/null && installed_deps+=("curl")
-            command -v jq &>/dev/null && installed_deps+=("jq")
-        fi
+        # llama.cpp macOS (Metal) dependencies
+        command -v brew &>/dev/null && installed_deps+=("Homebrew")
+        xcode-select -p &>/dev/null && installed_deps+=("Xcode Command Line Tools")
+        command -v cmake &>/dev/null && installed_deps+=("cmake")
+        command -v git &>/dev/null && installed_deps+=("git")
+        command -v gum &>/dev/null && installed_deps+=("gum")
+        command -v curl &>/dev/null && installed_deps+=("curl")
+        command -v jq &>/dev/null && installed_deps+=("jq")
     fi
     
     # If no dependencies found, nothing to show
@@ -1369,14 +1333,9 @@ show_dependency_notice() {
     echo -e "${DIM}To remove them manually:${NC}"
     
     if [[ "$IS_LINUX" == true ]]; then
-        if [[ "$setup_type" == "ollama" ]]; then
-            echo -e "${DIM}  sudo pacman -R docker gum bc  # Arch${NC}"
-            echo -e "${DIM}  sudo apt remove docker.io gum bc  # Ubuntu${NC}"
-        else
-            echo -e "${DIM}  # ROCm: Follow AMD's uninstall guide${NC}"
-            echo -e "${DIM}  sudo pacman -R cmake make gum jq  # Arch${NC}"
-            echo -e "${DIM}  sudo apt remove cmake make gum jq  # Ubuntu${NC}"
-        fi
+        echo -e "${DIM}  # ROCm: Follow AMD's uninstall guide${NC}"
+        echo -e "${DIM}  sudo pacman -R cmake make gum jq  # Arch${NC}"
+        echo -e "${DIM}  sudo apt remove cmake make gum jq  # Ubuntu${NC}"
     fi
     
     if [[ "$IS_MACOS" == true ]]; then
@@ -1985,7 +1944,6 @@ parse_size_bytes() {
 # Cache location and settings
 UPDATE_CHECK_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/local-llm-rocm/update-check"
 UPDATE_CHECK_MAX_AGE=86400  # 24 hours in seconds
-OLLAMA_IMAGE_MAX_AGE=14     # days before suggesting Docker image update
 
 # -----------------------------------------------------------------------------
 # Cache Helpers
@@ -2077,83 +2035,6 @@ check_llama_cpp_updates() {
         echo "$behind commits behind"
     else
         set_update_cache "llama.cpp" "current"
-    fi
-}
-
-# -----------------------------------------------------------------------------
-# Ollama Update Check
-# -----------------------------------------------------------------------------
-
-# Check for Ollama updates (Docker image age on Linux, brew outdated on macOS)
-# Usage: update_msg=$(check_ollama_updates)
-# Returns: message string if updates available, empty if current or error
-check_ollama_updates() {
-    # Use cache if fresh
-    if is_update_cache_fresh "ollama"; then
-        local cached
-        cached=$(get_update_cache "ollama")
-        [[ "$cached" != "current" ]] && echo "$cached"
-        return 0
-    fi
-    
-    if [[ "$IS_MACOS" == true ]]; then
-        check_ollama_brew_updates
-    else
-        check_ollama_docker_updates
-    fi
-}
-
-# Check Ollama Docker image age (Linux)
-# Suggests update if image is older than OLLAMA_IMAGE_MAX_AGE days
-check_ollama_docker_updates() {
-    # Check Docker is available
-    command -v docker &>/dev/null || return
-    
-    # Check Docker is running (with timeout)
-    if ! timeout 5 docker info &>/dev/null 2>&1; then
-        return  # Docker not running, skip silently
-    fi
-    
-    # Get image creation date
-    local image_date
-    image_date=$(docker inspect ollama/ollama:rocm --format '{{.Created}}' 2>/dev/null | cut -d'T' -f1) || return
-    [[ -z "$image_date" ]] && return
-    
-    # Calculate age in days
-    local image_epoch now_epoch age_days
-    image_epoch=$(date -d "$image_date" +%s 2>/dev/null) || return
-    now_epoch=$(date +%s)
-    age_days=$(( (now_epoch - image_epoch) / 86400 ))
-    
-    if [[ $age_days -gt $OLLAMA_IMAGE_MAX_AGE ]]; then
-        set_update_cache "ollama" "image is ${age_days} days old"
-        echo "image is ${age_days} days old"
-    else
-        set_update_cache "ollama" "current"
-    fi
-}
-
-# Check Ollama Homebrew updates (macOS)
-check_ollama_brew_updates() {
-    command -v brew &>/dev/null || return
-    
-    # Check if ollama is installed via brew
-    brew list ollama &>/dev/null 2>&1 || return
-    
-    # Check if outdated (with timeout)
-    local outdated
-    outdated=$(timeout 10 brew outdated --quiet ollama 2>/dev/null) || return
-    
-    if [[ -n "$outdated" ]]; then
-        local current_ver new_ver
-        current_ver=$(brew list --versions ollama 2>/dev/null | awk '{print $2}')
-        new_ver=$(timeout 5 brew info --json=v2 ollama 2>/dev/null | jq -r '.formulae[0].versions.stable // empty' 2>/dev/null)
-        
-        local msg="${current_ver:-?} → ${new_ver:-newer}"
-        set_update_cache "ollama" "$msg"
-        echo "$msg"
-    else
-        set_update_cache "ollama" "current"
     fi
 }
 

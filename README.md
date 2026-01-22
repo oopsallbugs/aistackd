@@ -1,18 +1,13 @@
 # Local LLM Setup
 
-Run local LLMs with GPU acceleration. This repository provides two backends:
-
-| Backend | Best For | Tool Calling | Setup Complexity |
-|---------|----------|--------------|------------------|
-| **llama.cpp** (recommended) | AI coding assistants, agentic workflows | Excellent | Medium |
-| **Ollama** | Simple chat, quick experiments | Limited | Easy |
+Run local LLMs with GPU acceleration using llama.cpp.
 
 ## Platform Support
 
 | Platform | GPU | Backend |
 |----------|-----|---------|
-| **Linux** | AMD (ROCm) | llama.cpp, Ollama |
-| **macOS** | Apple Silicon (Metal) | llama.cpp, Ollama |
+| **Linux** | AMD (ROCm) | llama.cpp (ROCm/HIP) |
+| **macOS** | Apple Silicon (Metal) | llama.cpp (Metal) |
 
 ## Quick Start
 
@@ -52,16 +47,6 @@ cd local-llm-rocm
 cd /your/project
 opencode
 # Use /models to select llama.cpp provider
-```
-
-## Alternative: Ollama
-
-For simpler use cases (chat, experimentation), Ollama offers an easier setup experience. See [ollama/README.md](ollama/README.md).
-
-```bash
-cd ollama
-./setup.sh        # Linux with Docker
-./setup-macos.sh  # macOS with Homebrew
 ```
 
 ## Requirements
@@ -134,45 +119,20 @@ local-llm-rocm/
 ├── lib/
 │   └── common.sh             # Shared functions for setup scripts
 │
-├── ollama/                   # Alternative: Ollama backend
-│   ├── README.md             # Ollama-specific documentation
-│   ├── setup.sh              # Linux setup (Docker)
-│   ├── setup-macos.sh        # macOS setup (Homebrew)
-│   └── ...
-│
 ├── llama.cpp/                # Cloned llama.cpp repo (created by setup)
 └── models/                   # Downloaded GGUF files (created by setup)
 ```
 
-## llama.cpp vs Ollama
+## Why llama.cpp?
 
-### Why llama.cpp?
-
-Ollama's OpenAI-compatible API (`/v1` endpoints) doesn't properly translate tool calls for many local models. This causes issues with AI coding assistants - models output malformed XML-style tags instead of proper JSON tool calls.
-
-**llama.cpp's native server handles tool calling correctly**, making it the better choice for:
+llama.cpp's native server handles tool calling correctly, making it the best choice for:
 - OpenCode and other AI coding assistants
 - Agentic workflows requiring function calling
 - Any application using the OpenAI API format
 
-### When to use Ollama
-
-Ollama is still great for:
-- Simple chat interactions
-- Quick experimentation with different models
-- Users who don't need tool calling
-
-Both can run side-by-side:
-- llama.cpp on port 8080 (for tool calling)
-- Ollama on port 11434 (for simple chat)
-
-### Other Tools
-
 The llama.cpp server provides an OpenAI-compatible API at `http://localhost:8080/v1`. This may work with other coding assistants (Continue, Cursor, Aider, etc.) but these configurations are untested. Contributions welcome!
 
 ## Scripts Reference
-
-### llama.cpp (root)
 
 | Script | Platform | Description |
 |--------|----------|-------------|
@@ -182,15 +142,6 @@ The llama.cpp server provides an OpenAI-compatible API at `http://localhost:8080
 | `download-model.sh` | Both | Download individual GGUF models |
 | `sync-opencode.sh` | Both | Sync models and agents to OpenCode |
 | `uninstall.sh` | Both | Remove llama.cpp build, models, config |
-
-### Ollama (ollama/)
-
-| Script | Platform | Description |
-|--------|----------|-------------|
-| `setup.sh` | Linux | Setup with Docker |
-| `setup-macos.sh` | macOS | Setup with Homebrew |
-| `sync-opencode.sh` | Both | Sync Ollama models and agents to OpenCode |
-| `uninstall.sh` | Both | Remove Ollama and models |
 
 ## Model Recommendations
 
@@ -261,20 +212,20 @@ When prompted, select an mmproj file:
 # Or specify mmproj manually
 ./start-server.sh --mmproj models/mmproj-Qwen3VL-8B-Instruct-F16.gguf qwen3vl-8b-q4km
 
-# For Frigate (needs port 11434 for Ollama API compatibility)
+# For Frigate or other integrations (bind to all interfaces)
 ./start-server.sh -p 11434 --host 0.0.0.0 vision
 ```
 
 ### Frigate Integration
 
-Configure Frigate to use the local vision model:
+Configure Frigate to use the local vision model via OpenAI-compatible API:
 
 ```yaml
 # Frigate config.yaml
 genai:
   enabled: true
-  provider: ollama
-  base_url: http://your-server-ip:11434
+  provider: openai
+  base_url: http://your-server-ip:11434/v1
   model: qwen3vl-8b-q4km
   prompt: "Describe what you see in this image."
 ```
@@ -393,7 +344,7 @@ xcode-select -p
 
 ### Tool Calls Not Working
 
-1. Ensure you're using llama.cpp provider in OpenCode (not Ollama)
+1. Ensure you're using llama.cpp provider in OpenCode
 2. Verify server is running: `curl http://127.0.0.1:8080/health`
 3. Use a model that supports tool calling (Qwen3, Qwen2.5-Coder recommended)
 
@@ -503,7 +454,6 @@ Or in `opencode.json`:
 ## Links
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp)
-- [Ollama](https://ollama.com)
 - [OpenCode](https://opencode.ai)
 - [HuggingFace GGUF Models](https://huggingface.co/models?sort=trending&search=gguf)
 - [ROCm Documentation](https://rocm.docs.amd.com)

@@ -1,6 +1,5 @@
 # Local configuration (contains system-specific values)
 .env
-ollama/.env
 
 # Model files (large binary files)
 *.gguf
@@ -10,9 +9,6 @@ llama.cpp/
 
 # Downloaded models directory
 models/
-
-# Ollama metadata configuration (deprecated, merged into models.conf)
-ollama/models-metadata.conf
 
 # Legacy llama-cpp directory (for existing clones during transition)
 llama-cpp/

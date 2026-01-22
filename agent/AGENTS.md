@@ -1,6 +1,6 @@
 # OpenCode Rules for Local LLM Models
 
-This AGENTS.md file is optimized for local models running via llama.cpp or Ollama.
+This AGENTS.md file is optimized for local models running via llama.cpp.
 The setup script copies this to `~/.config/opencode/AGENTS.md` for global rules.
 You can also place a project-specific AGENTS.md in your project root.
 
