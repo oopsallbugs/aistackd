@@ -235,6 +235,19 @@ check_user_interrupt() {
 }
 
 # -----------------------------------------------------------------------------
+# Argument Helpers
+# -----------------------------------------------------------------------------
+
+# Check if --help or -h is in arguments (for early exit before .env validation)
+# Usage: if has_help_arg "$@"; then SHOW_HELP_EARLY=true; fi
+has_help_arg() {
+    for arg in "$@"; do
+        [[ "$arg" == "--help" || "$arg" == "-h" ]] && return 0
+    done
+    return 1
+}
+
+# -----------------------------------------------------------------------------
 # Configuration Paths
 # -----------------------------------------------------------------------------
 

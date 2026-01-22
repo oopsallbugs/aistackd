@@ -13,32 +13,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-# Load configuration (required)
-if [[ -f "$SCRIPT_DIR/.env" ]]; then
-    set -a
-    # shellcheck source=/dev/null
-    source "$SCRIPT_DIR/.env"
-    set +a
-else
-    echo "Error: .env file not found. Run ./setup.sh first." >&2
-    exit 1
-fi
-
-# Validate required .env variables
-missing_vars=()
-[[ -z "${LLAMA_CPP_DIR:-}" ]] && missing_vars+=("LLAMA_CPP_DIR")
-[[ -z "${MODELS_DIR:-}" ]] && missing_vars+=("MODELS_DIR")
-[[ -z "${LLAMA_PORT:-}" ]] && missing_vars+=("LLAMA_PORT")
-[[ -z "${GPU_LAYERS:-}" ]] && missing_vars+=("GPU_LAYERS")
-
-if [[ ${#missing_vars[@]} -gt 0 ]]; then
-    echo "Error: Missing required variables in .env: ${missing_vars[*]}" >&2
-    echo "Run ./setup.sh to regenerate .env" >&2
-    exit 1
-fi
-
 # MODELS_CONF is not in .env (always relative to script)
 MODELS_CONF="$SCRIPT_DIR/models.conf"
+
+# Load configuration (required, unless just showing help)
+if ! has_help_arg "$@"; then
+    if [[ -f "$SCRIPT_DIR/.env" ]]; then
+        set -a
+        # shellcheck source=/dev/null
+        source "$SCRIPT_DIR/.env"
+        set +a
+    else
+        echo "Error: .env file not found. Run ./setup.sh first." >&2
+        exit 1
+    fi
+
+    # Validate required .env variables
+    missing_vars=()
+    [[ -z "${LLAMA_CPP_DIR:-}" ]] && missing_vars+=("LLAMA_CPP_DIR")
+    [[ -z "${MODELS_DIR:-}" ]] && missing_vars+=("MODELS_DIR")
+    [[ -z "${LLAMA_PORT:-}" ]] && missing_vars+=("LLAMA_PORT")
+    [[ -z "${GPU_LAYERS:-}" ]] && missing_vars+=("GPU_LAYERS")
+
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        echo "Error: Missing required variables in .env: ${missing_vars[*]}" >&2
+        echo "Run ./setup.sh to regenerate .env" >&2
+        exit 1
+    fi
+fi
 
 # =============================================================================
 # Model Metadata Configuration
@@ -443,7 +445,7 @@ while [[ $# -gt 0 ]]; do
             echo
             exit 0
             ;;
-        --help)
+        --help|-h)
             show_help
             exit 0
             ;;
