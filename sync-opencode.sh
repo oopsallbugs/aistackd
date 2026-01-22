@@ -124,10 +124,10 @@ for arg in "$@"; do
             echo "  --help, -h        Show this help message"
             echo
             echo "Files:"
-            echo "  Config:  $OPENCODE_CONFIG"
-            echo "  Agents:  $OPENCODE_CONFIG_DIR/AGENTS.md"
-            echo "           $OPENCODE_CONFIG_DIR/agent/*.md"
-            echo "  Models:  $MODELS_DIR/*.gguf"
+            echo "  Config:  ~/.config/opencode/opencode.json"
+            echo "  Agents:  ~/.config/opencode/AGENTS.md"
+            echo "           ~/.config/opencode/agent/*.md"
+            echo "  Models:  <models-dir>/*.gguf (from .env)"
             exit 0
             ;;
         *)
