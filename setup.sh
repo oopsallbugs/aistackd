@@ -208,11 +208,6 @@ get_vram_gb() {
     fi
 }
 
-# Hardware status functions are now in lib/common.sh:
-# - get_model_size_gb()
-# - get_model_hardware_status()
-# - format_hardware_tag()
-
 # -----------------------------------------------------------------------------
 # Command Line Arguments
 # -----------------------------------------------------------------------------
