@@ -915,8 +915,12 @@ add_model() {
             local auto_desc
             auto_desc=$(echo "$sel_file" | sed 's/\.gguf$//' | sed 's/[._-]/ /g' | sed 's/  */ /g')
             
-            # Add the model entry
-            echo "uncategorized|${model_id}|${repo}|${sel_file}|${size_formatted}|${auto_desc}" >> "$MODELS_CONF"
+            # Set default context/output limits based on category (uncategorized uses general defaults)
+            local context_limit="32768"
+            local output_limit="8192"
+            
+            # Add the model entry (8 fields: category|id|repo|file|size|desc|context|output)
+            echo "uncategorized|${model_id}|${repo}|${sel_file}|${size_formatted}|${auto_desc}|${context_limit}|${output_limit}" >> "$MODELS_CONF"
         fi
         
         local actual_size
@@ -1003,12 +1007,13 @@ validate_models_conf() {
             continue
         fi
         
-        # Model entries should have exactly 5 pipes (6 fields)
+        # Model entries should have 5-7 pipes (6-8 fields)
+        # Format: category|model_id|huggingface_repo|gguf_filename|size|description[|context_limit][|output_limit]
         local pipe_count
         pipe_count=$(echo "$line" | tr -cd '|' | wc -c)
         
-        if [[ $pipe_count -ne 5 ]]; then
-            echo -e "  ${RED}✗${NC} Line $line_num: Expected 5 pipes (6 fields), found $pipe_count"
+        if [[ $pipe_count -lt 5 || $pipe_count -gt 7 ]]; then
+            echo -e "  ${RED}✗${NC} Line $line_num: Expected 5-7 pipes (6-8 fields), found $pipe_count"
             echo -e "    ${DIM}$line${NC}"
             errors=$((errors + 1))
             continue

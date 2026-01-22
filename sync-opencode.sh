@@ -30,8 +30,6 @@ source "$SCRIPT_DIR/lib/common.sh"
 # -----------------------------------------------------------------------------
 
 MODELS_CONF="$SCRIPT_DIR/models.conf"
-# shellcheck disable=SC2034  # Used by load_metadata_conf() from common.sh
-METADATA_CONF="$SCRIPT_DIR/models-metadata.conf"
 MODELS_DIR="$SCRIPT_DIR/models"
 OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
 OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
@@ -141,7 +139,7 @@ declare -A MODEL_DESCRIPTION
 declare -A MODEL_SIZE
 
 # Metadata arrays (MODEL_DISPLAY_NAME, MODEL_CONTEXT_LIMIT, MODEL_OUTPUT_LIMIT)
-# are declared in lib/common.sh
+# are populated by load_metadata_conf() from common.sh, reading from models.conf
 
 load_models_conf_local() {
     if [[ ! -f "$MODELS_CONF" ]]; then
@@ -449,9 +447,6 @@ if [[ "$RESTORE_MODE" == true ]]; then
     fi
     exit 0
 fi
-
-# Ensure models-metadata.conf exists before syncing
-ensure_metadata_conf "$SCRIPT_DIR" "true"  # Non-interactive for sync script
 
 echo
 

@@ -165,7 +165,6 @@ for arg in "$@"; do
             echo
             echo "Files:"
             echo "  models.conf         Edit to customize available GGUF models"
-            echo "  models-metadata.conf  Display names and context limits for OpenCode"
             echo "  .env                Local configuration"
             echo
             echo "Examples:"
@@ -537,12 +536,6 @@ if [[ ${#MISSING_REQUIRED[@]} -gt 0 ]]; then
 fi
 
 print_success "All dependencies satisfied!"
-
-# -----------------------------------------------------------------------------
-# Ensure models-metadata.conf exists
-# -----------------------------------------------------------------------------
-
-ensure_metadata_conf "$SCRIPT_DIR" "$NON_INTERACTIVE"
 
 # -----------------------------------------------------------------------------
 # Clone/Update llama.cpp

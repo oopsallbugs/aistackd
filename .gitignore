@@ -11,8 +11,7 @@ llama.cpp/
 # Downloaded models directory
 models/
 
-# Model metadata configuration files
-models-metadata.conf
+# Ollama metadata configuration (deprecated, merged into models.conf)
 ollama/models-metadata.conf
 
 # Legacy llama-cpp directory (for existing clones during transition)

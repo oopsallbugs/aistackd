@@ -25,16 +25,12 @@ fi
 LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$SCRIPT_DIR/llama.cpp}"
 MODELS_DIR="${MODELS_DIR:-$SCRIPT_DIR/models}"
 MODELS_CONF="${MODELS_CONF:-$SCRIPT_DIR/models.conf}"
-MODELS_METADATA="${MODELS_METADATA:-$SCRIPT_DIR/models-metadata.conf}"
 LLAMA_PORT="${LLAMA_PORT:-8080}"
 LLAMA_CONTEXT="${LLAMA_CONTEXT:-32768}"
 LLAMA_HOST="${LLAMA_HOST:-127.0.0.1}"
 GPU_LAYERS="${GPU_LAYERS:-99}"
 LOG_FILE=""  # Optional log file
 MMPROJ_PATH=""  # Vision model multimodal projector
-
-# Ensure models-metadata.conf exists (copy from example if missing)
-ensure_metadata_conf "$SCRIPT_DIR" "true"  # Non-interactive for server script
 
 # Escape special regex characters for use in grep/sed patterns
 # Usage: escape_regex "string"
@@ -46,51 +42,105 @@ escape_regex() {
 # Model Metadata Configuration
 # =============================================================================
 
-# Get context limit for a model from metadata
+# Get context limit for a model from models.conf
+# Format: category|model_id|huggingface_repo|gguf_filename|size|description|context_limit|output_limit
 # Usage: get_model_context <model_id> [default_value]
 get_model_context() {
     local model_id="$1"
     local default="${2:-32768}"
     
-    if [[ ! -f "$MODELS_METADATA" ]]; then
+    if [[ ! -f "$MODELS_CONF" ]]; then
         echo "$default"
         return
     fi
     
-    # Format: model_id|display_name|context_limit|output_limit
-    local context escaped_id
+    local context escaped_id category
     escaped_id=$(escape_regex "$model_id")
-    context=$(grep "^${escaped_id}|" "$MODELS_METADATA" 2>/dev/null | head -1 | cut -d'|' -f3)
     
-    if [[ -n "$context" && "$context" =~ ^[0-9]+$ ]]; then
-        echo "$context"
-    else
-        echo "$default"
-    fi
+    # Parse models.conf to find the model entry
+    while IFS='|' read -r cat mid _ _ _ _ ctx _ || [[ -n "$cat" ]]; do
+        [[ "$cat" =~ ^[[:space:]]*# ]] && continue
+        [[ "$cat" =~ ^ALIAS: ]] && continue
+        [[ -z "$cat" ]] && continue
+        
+        # Trim model_id
+        mid="${mid#"${mid%%[![:space:]]*}"}"
+        mid="${mid%"${mid##*[![:space:]]}"}"
+        
+        if [[ "$mid" == "$model_id" ]]; then
+            # Trim context
+            ctx="${ctx#"${ctx%%[![:space:]]*}"}"
+            ctx="${ctx%"${ctx##*[![:space:]]}"}"
+            category="${cat#"${cat%%[![:space:]]*}"}"
+            category="${category%"${category##*[![:space:]]}"}"
+            
+            if [[ -n "$ctx" && "$ctx" =~ ^[0-9]+$ ]]; then
+                echo "$ctx"
+                return
+            fi
+            
+            # No explicit context, use category-based default
+            case "$category" in
+                coding)  echo "65536" ;;
+                vision)  echo "16384" ;;
+                *)       echo "$default" ;;
+            esac
+            return
+        fi
+    done < "$MODELS_CONF"
+    
+    echo "$default"
 }
 
-# Update context limit for a model in metadata
+# Update context limit for a model in models.conf
+# Format: category|model_id|huggingface_repo|gguf_filename|size|description|context_limit|output_limit
 # Usage: set_model_context <model_id> <context_limit>
 set_model_context() {
     local model_id="$1"
     local context="$2"
     
-    if [[ ! -f "$MODELS_METADATA" ]]; then
+    if [[ ! -f "$MODELS_CONF" ]]; then
         return 1
     fi
     
     local escaped_id
     escaped_id=$(escape_regex "$model_id")
     
-    # Check if model exists in metadata
-    if grep -q "^${escaped_id}|" "$MODELS_METADATA" 2>/dev/null; then
-        # Update existing entry - replace the context field (3rd field)
-        # Format: model_id|display_name|context_limit|output_limit
-        # Use # as sed delimiter since | is in the data
-        sed -i "s#^\(${escaped_id}|[^|]*|\)[^|]*|\(.*\)\$#\1${context}|\2#" "$MODELS_METADATA"
+    # Check if model exists in models.conf
+    # Match pattern: |model_id| (with pipes around it to avoid partial matches)
+    if grep -q "|${escaped_id}|" "$MODELS_CONF" 2>/dev/null; then
+        # Update existing entry - replace fields 7 and 8 (context_limit|output_limit)
+        # This is complex because we need to handle both 6-field and 8-field entries
+        # Use a temp file approach for safer editing
+        local temp_file
+        temp_file=$(mktemp)
+        
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" =~ ^[[:space:]]*# ]] || [[ "$line" =~ ^ALIAS: ]] || [[ -z "$line" ]]; then
+                echo "$line"
+            elif [[ "$line" == *"|${model_id}|"* ]]; then
+                # This is our model - update it
+                IFS='|' read -r cat mid repo file size desc old_ctx old_out <<< "$line"
+                # Preserve output limit if it exists, otherwise use default based on category
+                local out_limit="${old_out:-8192}"
+                cat="${cat#"${cat%%[![:space:]]*}"}"
+                cat="${cat%"${cat##*[![:space:]]}"}"
+                if [[ -z "$old_out" ]]; then
+                    case "$cat" in
+                        coding)  out_limit="16384" ;;
+                        vision)  out_limit="4096" ;;
+                        *)       out_limit="8192" ;;
+                    esac
+                fi
+                echo "${cat}|${mid}|${repo}|${file}|${size}|${desc}|${context}|${out_limit}"
+            else
+                echo "$line"
+            fi
+        done < "$MODELS_CONF" > "$temp_file"
+        
+        mv "$temp_file" "$MODELS_CONF"
         return 0
     else
-        # Model not in metadata - we could add it, but for now just skip
         return 1
     fi
 }
@@ -1177,7 +1227,7 @@ select_context_size() {
         # Save the choice for future runs (if model_id is known)
         if [[ -n "$model_id" ]]; then
             if set_model_context "$model_id" "$chosen_ctx"; then
-                echo -e "${DIM}Saved context preference to models-metadata.conf${NC}" >&2
+                echo -e "${DIM}Saved context preference to models.conf${NC}" >&2
             fi
         fi
         
@@ -1195,7 +1245,7 @@ select_context_size() {
             # Save the choice for future runs (if model_id is known)
             if [[ -n "$model_id" ]]; then
                 if set_model_context "$model_id" "$custom_ctx"; then
-                    echo -e "${DIM}Saved context preference to models-metadata.conf${NC}" >&2
+echo -e "${DIM}Saved context preference to models.conf${NC}" >&2
                 fi
             fi
             

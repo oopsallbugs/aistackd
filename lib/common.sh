@@ -245,7 +245,6 @@ init_paths() {
     LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$script_dir/llama.cpp}"
     MODELS_DIR="${MODELS_DIR:-$script_dir/models}"
     MODELS_CONF="${MODELS_CONF:-$script_dir/models.conf}"
-    METADATA_CONF="${METADATA_CONF:-$script_dir/models-metadata.conf}"
     LOCAL_ENV="${LOCAL_ENV:-$script_dir/.env}"
     OPENCODE_CONFIG="${OPENCODE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json}"
     
@@ -266,129 +265,58 @@ if [[ "$BASH_SUPPORTS_ASSOC_ARRAYS" == true ]]; then
     declare -A MODEL_OUTPUT_LIMIT
 fi
 
-# Ensure models-metadata.conf exists, creating from example if needed
-# Usage: ensure_metadata_conf <script_dir> <non_interactive>
-#
-# script_dir: Directory containing models-metadata.conf.example
-# non_interactive: "true" to skip prompts, "false" for interactive mode
-#
-# If models-metadata.conf doesn't exist, copies from .example
-# If it exists but differs from .example, offers to update (interactive)
-#
-# Returns: Always 0 (success) - skipping is not an error
-ensure_metadata_conf() {
-    local script_dir="$1"
-    local non_interactive="${2:-false}"
-    
-    local metadata_file="$script_dir/models-metadata.conf"
-    local example_file="$script_dir/models-metadata.conf.example"
-    
-    # Check if example exists
-    if [[ ! -f "$example_file" ]]; then
-        # No example file, nothing to do
-        return 0
-    fi
-    
-    # If metadata file doesn't exist, copy from example
-    if [[ ! -f "$metadata_file" ]]; then
-        cp "$example_file" "$metadata_file"
-        print_status "Created models-metadata.conf from example"
-        return 0
-    fi
-    
-    # File exists - check if it differs from example
-    if diff -q "$metadata_file" "$example_file" &>/dev/null 2>&1; then
-        # Files are identical, nothing to do
-        return 0
-    fi
-    
-    # Files differ - prompt user in interactive mode
-    if [[ "$non_interactive" == "false" && "$HAS_GUM" == true ]]; then
-        print_warning "models-metadata.conf differs from example"
-        echo
-        print_status "How would you like to handle the metadata config?"
-        echo
-        
-        local choice gum_exit
-        choice=$(gum choose \
-            "Skip - Keep existing file unchanged" \
-            "Overwrite - Replace with example (backup created)" \
-            "View diff - Show differences") && gum_exit=0 || gum_exit=$?
-        check_user_interrupt $gum_exit
-        [[ -z "$choice" ]] && choice="Skip"
-        
-        case "$choice" in
-            "View diff"*)
-                echo
-                echo -e "${CYAN}${BOLD}Differences (your file vs example):${NC}"
-                echo
-                diff --color=auto "$metadata_file" "$example_file" || true
-                echo
-                
-                # Ask again after showing diff
-                local choice2 gum_exit2
-                choice2=$(gum choose \
-                    "Skip - Keep existing file unchanged" \
-                    "Overwrite - Replace with example (backup created)") && gum_exit2=0 || gum_exit2=$?
-                check_user_interrupt $gum_exit2
-                [[ -z "$choice2" ]] && choice2="Skip"
-                
-                if [[ "$choice2" == "Overwrite"* ]]; then
-                    local backup_file
-                    backup_file="$metadata_file.backup.$(date +%Y%m%d_%H%M%S)"
-                    cp "$metadata_file" "$backup_file"
-                    print_status "Backed up to: $backup_file"
-                    cp "$example_file" "$metadata_file"
-                    print_success "Updated models-metadata.conf from example"
-                fi
-                # Skip is not an error, return success
-                return 0
-                ;;
-            "Overwrite"*)
-                local backup_file
-                backup_file="$metadata_file.backup.$(date +%Y%m%d_%H%M%S)"
-                cp "$metadata_file" "$backup_file"
-                print_status "Backed up to: $backup_file"
-                cp "$example_file" "$metadata_file"
-                print_success "Updated models-metadata.conf from example"
-                return 0
-                ;;
-            "Skip"*|"")
-                print_status "Keeping existing models-metadata.conf"
-                return 0
-                ;;
-        esac
-    else
-        # Non-interactive mode or no gum - keep existing
-        return 0
-    fi
-}
-
 load_metadata_conf() {
-    # Load model metadata for OpenCode config generation
-    if [[ ! -f "$METADATA_CONF" ]]; then
+    # Load model metadata from models.conf (context_limit and output_limit are optional fields 7 and 8)
+    # Format: category|model_id|huggingface_repo|gguf_filename|size|description|context_limit|output_limit
+    if [[ ! -f "$MODELS_CONF" ]]; then
         return  # Silently skip if file doesn't exist
     fi
     
-    while IFS='|' read -r model display_name context_limit output_limit || [[ -n "$model" ]]; do
-        # Skip comments and empty lines
-        [[ "$model" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "$model" ]] && continue
+    while IFS='|' read -r category model_id hf_repo gguf_file size description context_limit output_limit || [[ -n "$category" ]]; do
+        # Skip comments, empty lines, and aliases
+        [[ "$category" =~ ^[[:space:]]*# ]] && continue
+        [[ "$category" =~ ^ALIAS: ]] && continue
+        [[ "$category" =~ ^WHITELIST: ]] && continue
+        [[ -z "$category" ]] && continue
         
         # Trim whitespace
-        model="${model#"${model%%[![:space:]]*}"}"
-        model="${model%"${model##*[![:space:]]}"}"
-        display_name="${display_name#"${display_name%%[![:space:]]*}"}"
-        display_name="${display_name%"${display_name##*[![:space:]]}"}"
+        category="${category#"${category%%[![:space:]]*}"}"
+        category="${category%"${category##*[![:space:]]}"}"
+        model_id="${model_id#"${model_id%%[![:space:]]*}"}"
+        model_id="${model_id%"${model_id##*[![:space:]]}"}"
+        description="${description#"${description%%[![:space:]]*}"}"
+        description="${description%"${description##*[![:space:]]}"}"
         context_limit="${context_limit#"${context_limit%%[![:space:]]*}"}"
         context_limit="${context_limit%"${context_limit##*[![:space:]]}"}"
         output_limit="${output_limit#"${output_limit%%[![:space:]]*}"}"
         output_limit="${output_limit%"${output_limit##*[![:space:]]}"}"
         
-        MODEL_DISPLAY_NAME["$model"]="$display_name"
-        MODEL_CONTEXT_LIMIT["$model"]="$context_limit"
-        MODEL_OUTPUT_LIMIT["$model"]="$output_limit"
-    done < "$METADATA_CONF"
+        # Use description as display name
+        MODEL_DISPLAY_NAME["$model_id"]="$description"
+        
+        # Use explicit limits if provided, otherwise use category-based defaults
+        if [[ -n "$context_limit" && "$context_limit" =~ ^[0-9]+$ ]]; then
+            MODEL_CONTEXT_LIMIT["$model_id"]="$context_limit"
+        else
+            # Category-based defaults
+            case "$category" in
+                coding)       MODEL_CONTEXT_LIMIT["$model_id"]=65536 ;;
+                vision)       MODEL_CONTEXT_LIMIT["$model_id"]=16384 ;;
+                *)            MODEL_CONTEXT_LIMIT["$model_id"]=32768 ;;
+            esac
+        fi
+        
+        if [[ -n "$output_limit" && "$output_limit" =~ ^[0-9]+$ ]]; then
+            MODEL_OUTPUT_LIMIT["$model_id"]="$output_limit"
+        else
+            # Category-based defaults
+            case "$category" in
+                coding)       MODEL_OUTPUT_LIMIT["$model_id"]=16384 ;;
+                vision)       MODEL_OUTPUT_LIMIT["$model_id"]=4096 ;;
+                *)            MODEL_OUTPUT_LIMIT["$model_id"]=8192 ;;
+            esac
+        fi
+    done < "$MODELS_CONF"
 }
 
 # -----------------------------------------------------------------------------

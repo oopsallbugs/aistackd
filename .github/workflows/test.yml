@@ -53,28 +53,16 @@ jobs:
             [[ -z "$line" ]] && continue
             [[ "$line" =~ ^ALIAS: ]] && continue
             [[ "$line" =~ ^IGNORE_ ]] && continue
-            # Format: category|model_id|huggingface_repo|gguf_filename|size|description
-            pattern='^[a-z]+\|[a-z0-9._-]+\|[A-Za-z0-9._/-]+\|[A-Za-z0-9._-]+\.gguf\|[0-9]+(\.[0-9]+)?[GMK]?B\|.+'
+            [[ "$line" =~ ^WHITELIST: ]] && continue
+            # Format: category|model_id|huggingface_repo|gguf_filename|size|description[|context][|output]
+            # 6 required fields, 2 optional (context_limit, output_limit)
+            pattern='^[a-z]+\|[a-z0-9._-]+\|[A-Za-z0-9._/-]+\|[A-Za-z0-9._-]+\.gguf\|[0-9]+(\.[0-9]+)?[GMK]?B\|[^|]+(\|[0-9]*)?(\|[0-9]*)?$'
             if ! [[ "$line" =~ $pattern ]]; then
               echo "Invalid line: $line"
               exit 1
             fi
           done < models.conf
           echo "models.conf: OK"
-
-      - name: Validate llama.cpp models-metadata.conf.example format
-        run: |
-          echo "Validating models-metadata.conf.example..."
-          while IFS= read -r line; do
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ -z "$line" ]] && continue
-            # Format: model_id|name|context|output
-            if ! [[ "$line" =~ ^[a-z0-9._-]+\|.+\|[0-9]+\|[0-9]+$ ]]; then
-              echo "Invalid line: $line"
-              exit 1
-            fi
-          done < models-metadata.conf.example
-          echo "models-metadata.conf.example: OK"
 
       - name: Validate .env.example format
         run: |
