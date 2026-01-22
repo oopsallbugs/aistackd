@@ -7,6 +7,50 @@ set -euo pipefail
 # =============================================================================
 
 # -----------------------------------------------------------------------------
+# Early --help Check (before OS validation)
+# -----------------------------------------------------------------------------
+
+for arg in "$@"; do
+    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+        echo "Usage: ./setup.sh [OPTIONS]"
+        echo
+        echo "Linux setup for llama.cpp with AMD GPUs (ROCm/HIP backend)."
+        echo "For macOS, use ./setup-macos.sh instead."
+        echo
+        echo "Commands:"
+        echo "  --status            Show current llama.cpp status"
+        echo "  --update            Update llama.cpp to latest version and rebuild"
+        echo "  --fix-permissions   Fix GPU access permissions (add user to groups)"
+        echo "  --verify[=model]    Verify model file integrity (all or specific)"
+        echo "  --reset-agents      Reset agent files to defaults"
+        echo
+        echo "Setup Options:"
+        echo "  --skip-build        Skip building llama.cpp (use existing build)"
+        echo "  --skip-models       Skip model selection and downloading"
+        echo "  --force-rebuild     Force rebuild even if build exists"
+        echo "  --force-env         Regenerate .env file even if it exists"
+        echo "  --non-interactive   Use default selections (no prompts)"
+        echo "  --ignore-warnings   Continue setup despite permission warnings"
+        echo "  --no-update-check   Skip checking for updates"
+        echo "  --help, -h          Show this help message"
+        echo
+        echo "Files:"
+        echo "  models.conf         Edit to customize available GGUF models"
+        echo "  .env                Local configuration"
+        echo "  .env.example        Server configuration example"
+        echo
+        echo "Examples:"
+        echo "  ./setup.sh                      # Interactive setup"
+        echo "  ./setup.sh --status             # Check current status"
+        echo "  ./setup.sh --update             # Update llama.cpp"
+        echo "  ./setup.sh --fix-permissions    # Fix GPU permissions"
+        echo "  ./setup.sh --verify             # Verify all downloaded models"
+        echo "  ./setup.sh --non-interactive    # Automated setup with defaults"
+        exit 0
+    fi
+done
+
+# -----------------------------------------------------------------------------
 # OS Check - This script is Linux-only (ROCm/HIP)
 # -----------------------------------------------------------------------------
 
@@ -203,40 +247,7 @@ for arg in "$@"; do
         --verify=*) RUN_VERIFY=true; VERIFY_MODEL="${arg#*=}" ;;
         --reset-agents) RESET_AGENTS=true ;;
         --no-update-check) SKIP_UPDATE_CHECK=true ;;
-        --help|-h)
-            echo "Usage: ./setup.sh [OPTIONS]"
-            echo
-            echo "Commands:"
-            echo "  --status            Show current llama.cpp status"
-            echo "  --update            Update llama.cpp to latest version and rebuild"
-            echo "  --fix-permissions   Fix GPU access permissions (add user to groups)"
-            echo "  --verify[=model]    Verify model file integrity (all or specific)"
-            echo "  --reset-agents      Reset agent files to defaults"
-            echo
-            echo "Setup Options:"
-            echo "  --skip-build        Skip building llama.cpp (use existing build)"
-            echo "  --skip-models       Skip model selection and downloading"
-            echo "  --force-rebuild     Force rebuild even if build exists"
-            echo "  --force-env         Regenerate .env file even if it exists"
-            echo "  --non-interactive   Use default selections (no prompts)"
-            echo "  --ignore-warnings   Continue setup despite permission warnings"
-            echo "  --no-update-check   Skip checking for updates"
-            echo "  --help, -h          Show this help message"
-            echo
-            echo "Files:"
-            echo "  models.conf         Edit to customize available GGUF models"
-            echo "  .env                Local configuration"
-            echo "  .env.example        Server configuration example"
-            echo
-            echo "Examples:"
-            echo "  ./setup.sh                      # Interactive setup"
-            echo "  ./setup.sh --status             # Check current status"
-            echo "  ./setup.sh --update             # Update llama.cpp"
-            echo "  ./setup.sh --fix-permissions    # Fix GPU permissions"
-            echo "  ./setup.sh --verify             # Verify all downloaded models"
-            echo "  ./setup.sh --non-interactive    # Automated setup with defaults"
-            exit 0
-            ;;
+        # --help is handled early (before OS check)
     esac
 done
 

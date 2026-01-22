@@ -7,6 +7,46 @@ set -euo pipefail
 # =============================================================================
 
 # -----------------------------------------------------------------------------
+# Early --help Check (before OS validation)
+# -----------------------------------------------------------------------------
+
+for arg in "$@"; do
+    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+        echo "Usage: ./setup-macos.sh [OPTIONS]"
+        echo
+        echo "macOS setup for llama.cpp with Apple Silicon (Metal backend)."
+        echo "For Linux with AMD GPUs, use ./setup.sh instead."
+        echo
+        echo "Commands:"
+        echo "  --status            Show current llama.cpp status"
+        echo "  --update            Update llama.cpp to latest version and rebuild"
+        echo "  --verify[=model]    Verify model file integrity (all or specific)"
+        echo "  --reset-agents      Reset agent files to defaults"
+        echo
+        echo "Setup Options:"
+        echo "  --skip-build        Skip building llama.cpp (use existing build)"
+        echo "  --skip-models       Skip model selection and downloading"
+        echo "  --force-rebuild     Force rebuild even if build exists"
+        echo "  --force-env         Regenerate .env file even if it exists"
+        echo "  --non-interactive   Use default selections (no prompts)"
+        echo "  --ignore-warnings   Continue setup despite warnings"
+        echo "  --no-update-check   Skip checking for updates"
+        echo "  --help, -h          Show this help message"
+        echo
+        echo "Files:"
+        echo "  models.conf         Edit to customize available GGUF models"
+        echo "  .env                Local configuration"
+        echo
+        echo "Examples:"
+        echo "  ./setup-macos.sh                  # Interactive setup"
+        echo "  ./setup-macos.sh --status         # Check current status"
+        echo "  ./setup-macos.sh --update         # Update llama.cpp"
+        echo "  ./setup-macos.sh --non-interactive  # Automated setup"
+        exit 0
+    fi
+done
+
+# -----------------------------------------------------------------------------
 # OS Check - This script is macOS-only (Metal)
 # -----------------------------------------------------------------------------
 
@@ -144,36 +184,7 @@ for arg in "$@"; do
         --verify=*) RUN_VERIFY=true; VERIFY_MODEL="${arg#*=}" ;;
         --reset-agents) RESET_AGENTS=true ;;
         --no-update-check) SKIP_UPDATE_CHECK=true ;;
-        --help|-h)
-            echo "Usage: ./setup-macos.sh [OPTIONS]"
-            echo
-            echo "Commands:"
-            echo "  --status            Show current llama.cpp status"
-            echo "  --update            Update llama.cpp to latest version and rebuild"
-            echo "  --verify[=model]    Verify model file integrity (all or specific)"
-            echo "  --reset-agents      Reset agent files to defaults"
-            echo
-            echo "Setup Options:"
-            echo "  --skip-build        Skip building llama.cpp (use existing build)"
-            echo "  --skip-models       Skip model selection and downloading"
-            echo "  --force-rebuild     Force rebuild even if build exists"
-            echo "  --force-env         Regenerate .env file even if it exists"
-            echo "  --non-interactive   Use default selections (no prompts)"
-            echo "  --ignore-warnings   Continue setup despite warnings"
-            echo "  --no-update-check   Skip checking for updates"
-            echo "  --help, -h          Show this help message"
-            echo
-            echo "Files:"
-            echo "  models.conf         Edit to customize available GGUF models"
-            echo "  .env                Local configuration"
-            echo
-            echo "Examples:"
-            echo "  ./setup-macos.sh                  # Interactive setup"
-            echo "  ./setup-macos.sh --status         # Check current status"
-            echo "  ./setup-macos.sh --update         # Update llama.cpp"
-            echo "  ./setup-macos.sh --non-interactive  # Automated setup"
-            exit 0
-            ;;
+        # --help is handled early (before OS check)
     esac
 done
 
