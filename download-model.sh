@@ -12,9 +12,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-# Configuration
+# Load .env (required)
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/.env"
+    set +a
+else
+    echo "Error: .env file not found. Run ./setup.sh first." >&2
+    exit 1
+fi
+
+# Validate required .env variables
+if [[ -z "${MODELS_DIR:-}" ]]; then
+    echo "Error: MODELS_DIR not set in .env" >&2
+    echo "Run ./setup.sh to regenerate .env" >&2
+    exit 1
+fi
+
+# MODELS_CONF is not in .env (always relative to script)
 MODELS_CONF="$SCRIPT_DIR/models.conf"
-MODELS_DIR="$SCRIPT_DIR/models"
 
 # validate_model_entry is now in lib/common.sh
 

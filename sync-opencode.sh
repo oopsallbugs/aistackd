@@ -29,8 +29,6 @@ source "$SCRIPT_DIR/lib/common.sh"
 # Configuration
 # -----------------------------------------------------------------------------
 
-MODELS_CONF="$SCRIPT_DIR/models.conf"
-MODELS_DIR="$SCRIPT_DIR/models"
 OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
 OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
 
@@ -43,17 +41,32 @@ RESTORE_MODE=false
 RESTORE_LATEST=false
 RESET_AGENTS=false
 
-# Load .env for port config
+# Load .env (required)
 if [[ -f "$SCRIPT_DIR/.env" ]]; then
     set -a
     # shellcheck source=/dev/null
     source "$SCRIPT_DIR/.env"
     set +a
+else
+    echo "Error: .env file not found. Run ./setup.sh first." >&2
+    exit 1
 fi
 
-LLAMA_PORT="${LLAMA_PORT:-8080}"
+# Validate required .env variables
+missing_vars=()
+[[ -z "${MODELS_DIR:-}" ]] && missing_vars+=("MODELS_DIR")
+[[ -z "${LLAMA_PORT:-}" ]] && missing_vars+=("LLAMA_PORT")
 
-# Default limits
+if [[ ${#missing_vars[@]} -gt 0 ]]; then
+    echo "Error: Missing required variables in .env: ${missing_vars[*]}" >&2
+    echo "Run ./setup.sh to regenerate .env" >&2
+    exit 1
+fi
+
+# MODELS_CONF is not in .env (always relative to script)
+MODELS_CONF="$SCRIPT_DIR/models.conf"
+
+# Default limits (for models without explicit limits in models.conf)
 DEFAULT_CONTEXT=32768
 DEFAULT_OUTPUT=8192
 CODING_CONTEXT=65536

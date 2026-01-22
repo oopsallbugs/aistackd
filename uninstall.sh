@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =============================================================================
-# llama.cpp ROCm Uninstall Script
+# llama.cpp Uninstall Script
 # Clean removal with gum-based interactive selection
 # =============================================================================
 
@@ -19,10 +19,20 @@ trap cleanup_spinner EXIT INT TERM PIPE
 # Configuration
 # -----------------------------------------------------------------------------
 
-LLAMA_CPP_DIR="$SCRIPT_DIR/llama.cpp"
-MODELS_DIR="$SCRIPT_DIR/models"
 LOCAL_ENV="$SCRIPT_DIR/.env"
 OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
+
+# Load .env if present (for correct paths), fall back to defaults
+if [[ -f "$LOCAL_ENV" ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$LOCAL_ENV"
+    set +a
+fi
+
+# Use .env values if set, otherwise use defaults relative to script
+LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$SCRIPT_DIR/llama.cpp}"
+MODELS_DIR="${MODELS_DIR:-$SCRIPT_DIR/models}"
 
 # Parse command line arguments
 REMOVE_ALL=false
