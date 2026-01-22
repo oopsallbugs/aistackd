@@ -108,7 +108,7 @@ local-llm-rocm/
 ├── sync-opencode.sh          # Sync models and agents to OpenCode
 ├── uninstall.sh              # Clean removal
 ├── models.conf               # GGUF model definitions with context limits
-├── .env.example              # Configuration template
+├── .env.example              # Server configuration example
 │
 ├── agent/                    # OpenCode agent templates
 │   ├── AGENTS.md             # System prompt template (copied to ~/.config/opencode/)

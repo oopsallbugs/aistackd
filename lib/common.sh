@@ -592,66 +592,6 @@ generate_display_name() {
 }
 
 # -----------------------------------------------------------------------------
-# Hardware Status Functions
-# -----------------------------------------------------------------------------
-
-# Extract numeric GB value from size string (e.g., "4.5GB" -> "4")
-get_model_size_gb() {
-    local size_str="$1"
-    local size_num
-    size_num=$(echo "$size_str" | grep -oE '[0-9]+\.?[0-9]*' | head -1)
-    echo "${size_num%.*}"
-}
-
-# Determine if model fits in available memory/VRAM
-# Returns: "recommended", "may_struggle", "wont_fit", or empty
-get_model_hardware_status() {
-    local model_size_str="$1"
-    local vram="$2"
-    
-    if [[ "$vram" == "0" || -z "$vram" ]]; then
-        echo
-        return
-    fi
-    
-    local model_size
-    model_size=$(get_model_size_gb "$model_size_str")
-    [[ -z "$model_size" || "$model_size" == "0" ]] && model_size=1
-    
-    local threshold_recommended=$((vram * 80 / 100))
-    local threshold_struggle=$vram
-    
-    if (( model_size <= threshold_recommended )); then
-        echo "recommended"
-    elif (( model_size <= threshold_struggle )); then
-        echo "may_struggle"
-    else
-        echo "wont_fit"
-    fi
-}
-
-# Format hardware status as colored tag for display
-format_hardware_tag() {
-    local status="$1"
-    local vram="$2"
-    
-    case "$status" in
-        recommended)
-            echo -e "${GREEN}[fits ${vram}GB]${NC}"
-            ;;
-        may_struggle)
-            echo -e "${YELLOW}[tight fit]${NC}"
-            ;;
-        wont_fit)
-            echo -e "${RED}[too large]${NC}"
-            ;;
-        *)
-            echo
-            ;;
-    esac
-}
-
-# -----------------------------------------------------------------------------
 # GGUF Model Verification
 # -----------------------------------------------------------------------------
 
@@ -716,35 +656,6 @@ check_dependency() {
     
     if command -v "$cmd" &>/dev/null; then
         echo -e "  $CHECKMARK $padded_name installed"
-        return 0
-    else
-        echo -e "  $CROSSMARK $padded_name not installed"
-        if [[ "$required" == "true" ]]; then
-            return 1
-        fi
-        return 0
-    fi
-}
-
-# Check dependency with version display
-# Usage: check_dependency_version "name" "command" "version_cmd" [required]
-check_dependency_version() {
-    local name="$1"
-    local cmd="$2"
-    local version_cmd="$3"
-    local required="${4:-false}"
-    
-    local padded_name
-    padded_name=$(printf "%-18s" "$name")
-    
-    if command -v "$cmd" &>/dev/null; then
-        local version
-        version=$(eval "$version_cmd" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-        if [[ -n "$version" ]]; then
-            echo -e "  $CHECKMARK $padded_name installed ($version)"
-        else
-            echo -e "  $CHECKMARK $padded_name installed"
-        fi
         return 0
     else
         echo -e "  $CROSSMARK $padded_name not installed"
@@ -1343,19 +1254,6 @@ show_dependency_notice() {
         echo -e "${DIM}  # Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)\"${NC}"
     fi
     echo
-}
-
-# -----------------------------------------------------------------------------
-# Whitespace Trimming
-# -----------------------------------------------------------------------------
-
-# Trim leading and trailing whitespace from a variable
-# Usage: trimmed=$(trim "  hello world  ")
-trim() {
-    local var="$1"
-    var="${var#"${var%%[![:space:]]*}"}"
-    var="${var%"${var##*[![:space:]]}"}"
-    echo "$var"
 }
 
 # -----------------------------------------------------------------------------

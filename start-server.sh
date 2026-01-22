@@ -40,12 +40,6 @@ fi
 # MODELS_CONF is not in .env (always relative to script)
 MODELS_CONF="$SCRIPT_DIR/models.conf"
 
-# Escape special regex characters for use in grep/sed patterns
-# Usage: escape_regex "string"
-escape_regex() {
-    printf '%s' "$1" | sed 's/[.[\*^$()+?{|\\]/\\&/g'
-}
-
 # =============================================================================
 # Model Metadata Configuration
 # =============================================================================
@@ -62,8 +56,7 @@ get_model_context() {
         return
     fi
     
-    local context escaped_id category
-    escaped_id=$(escape_regex "$model_id")
+    local category
     
     # Parse models.conf to find the model entry
     while IFS='|' read -r cat mid _ _ _ _ ctx _ || [[ -n "$cat" ]]; do
@@ -701,68 +694,6 @@ get_vram_info() {
     else
         return 1
     fi
-}
-
-# Get detailed VRAM info (total and used in bytes)
-# Linux: from rocm-smi
-# macOS: from system memory (unified memory architecture)
-get_vram_details() {
-    local gpu_id="${1:-0}"
-    
-    if [[ "$IS_MACOS" == true ]]; then
-        # macOS uses unified memory - report system RAM
-        local total_bytes used_bytes avail_bytes
-        total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
-        
-        # Get memory pressure info from vm_stat
-        local page_size pages_free pages_inactive
-        page_size=$(vm_stat 2>/dev/null | grep "page size" | grep -oE '[0-9]+' || echo 4096)
-        pages_free=$(vm_stat 2>/dev/null | grep "Pages free" | grep -oE '[0-9]+' || echo 0)
-        pages_inactive=$(vm_stat 2>/dev/null | grep "Pages inactive" | grep -oE '[0-9]+' || echo 0)
-        
-        avail_bytes=$(( (pages_free + pages_inactive) * page_size ))
-        used_bytes=$((total_bytes - avail_bytes))
-        
-        local total_mb=$((total_bytes / 1024 / 1024))
-        local used_mb=$((used_bytes / 1024 / 1024))
-        local avail_mb=$((avail_bytes / 1024 / 1024))
-        
-        echo "$total_mb|$used_mb|$avail_mb"
-        return 0
-    fi
-    
-    # Linux: use rocm-smi
-    local rocm_smi=""
-    if command -v rocm-smi &>/dev/null; then
-        rocm_smi="rocm-smi"
-    elif [[ -x "/opt/rocm/bin/rocm-smi" ]]; then
-        rocm_smi="/opt/rocm/bin/rocm-smi"
-    else
-        return 1
-    fi
-    
-    local vram_output
-    vram_output=$($rocm_smi --showmeminfo vram 2>/dev/null)
-    
-    if [[ -z "$vram_output" ]]; then
-        return 1
-    fi
-    
-    # Parse total and used VRAM for the specified GPU
-    local total_bytes used_bytes
-    total_bytes=$(echo "$vram_output" | grep "GPU\[$gpu_id\]" | grep "Total Memory" | grep -oE '[0-9]+$')
-    used_bytes=$(echo "$vram_output" | grep "GPU\[$gpu_id\]" | grep "Used Memory" | grep -oE '[0-9]+$')
-    
-    if [[ -n "$total_bytes" && -n "$used_bytes" ]]; then
-        # Return as pipe-separated: total|used|available (all in MB)
-        local total_mb=$((total_bytes / 1024 / 1024))
-        local used_mb=$((used_bytes / 1024 / 1024))
-        local avail_mb=$((total_mb - used_mb))
-        echo "$total_mb|$used_mb|$avail_mb"
-        return 0
-    fi
-    
-    return 1
 }
 
 # Check VRAM availability
