@@ -58,6 +58,9 @@ opencode
 | **Linux** | ROCm only supports Linux |
 | **AMD GPU** | RDNA1, RDNA2, or RDNA3 (RX 5000/6000/7000 series) |
 | **ROCm/HIP** | `rocminfo` and `hipcc` must be available |
+| **Build tools** | `git`, `cmake`, `make` or `ninja` |
+| **gum** | Required for interactive mode ([install](https://github.com/charmbracelet/gum#installation)) |
+| **curl** | For model downloads (or `huggingface-cli`) |
 | **Disk space** | 20-100GB depending on model choices |
 | **GPU Memory (VRAM)** | 8GB minimum, 16-24GB recommended |
 
@@ -68,7 +71,10 @@ opencode
 | **macOS 11.0+** | Big Sur or later |
 | **Apple Silicon** | M1, M2, M3, M4 (any variant) |
 | **Xcode CLI Tools** | `xcode-select --install` |
-| **Homebrew** | For cmake and gum |
+| **Homebrew** | For installing dependencies |
+| **Build tools** | `git`, `cmake` (via Homebrew) |
+| **gum** | Required for interactive mode (`brew install gum`) |
+| **curl** | For model downloads (or `huggingface-cli`) |
 | **Disk space** | 20-100GB depending on model choices |
 | **Unified Memory** | 16GB minimum, 32GB+ recommended |
 
@@ -143,30 +149,6 @@ The llama.cpp server provides an OpenAI-compatible API at `http://localhost:8080
 | `sync-opencode.sh` | Both | Sync models and agents to OpenCode |
 | `uninstall.sh` | Both | Remove llama.cpp build, models, config |
 
-## Model Recommendations
-
-### By Memory
-
-| Memory | Recommended Models |
-|--------|-------------------|
-| 8GB | `qwen3-8b-q4km` (5GB), `qwen2.5-coder-3b-q4km` (2GB) |
-| 12GB | `qwen3-14b-q4km` (9GB), `qwen2.5-coder-14b-q4km` (9GB) |
-| 16GB | `qwen3-32b-q3km` (16GB), `deepseek-r1-14b-q4km` (9GB) |
-| 24GB+ | `qwen3-30b-q4km` (18GB), `qwen2.5-coder-32b-q4km` (20GB) |
-
-> **macOS note:** Apple Silicon uses unified memory shared between CPU and GPU. A 32GB Mac can run models that require ~24GB, leaving headroom for the OS.
-
-### By Use Case
-
-| Use Case | Recommended Model |
-|----------|------------------|
-| Fast code completion | `qwen2.5-coder-3b-q4km` |
-| General coding | `qwen3-30b-q4km` (MoE - fast for size) |
-| Maximum quality | `qwen2.5-coder-32b-q4km` |
-| Reasoning tasks | `deepseek-r1-32b-q4km` |
-| Limited memory | `qwen3-8b-q4km` |
-| Vision/image analysis | `qwen3vl-8b-q4km` |
-
 ## Vision Models
 
 Vision models (VLMs) can process images alongside text. These are useful for:
@@ -174,15 +156,6 @@ Vision models (VLMs) can process images alongside text. These are useful for:
 - **Frigate NVR** - AI-powered camera event descriptions
 - **Image analysis** - Describing, captioning, or analyzing images
 - **Document understanding** - Reading text from images
-
-### Available Vision Models
-
-| Model | Size | VRAM | Notes |
-|-------|------|------|-------|
-| `qwen3vl-8b-q8` | 8.7GB | 12-16GB | Best quality |
-| `qwen3vl-8b-q4km` | 5GB | 8-12GB | Balanced |
-| `qwen3vl-4b-q8` | 4.3GB | 8GB | Smaller, quality |
-| `qwen3vl-4b-q4km` | 2.5GB | 6-8GB | Smallest |
 
 ### Vision Model Setup
 
