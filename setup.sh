@@ -226,7 +226,7 @@ for arg in "$@"; do
             echo "Files:"
             echo "  models.conf         Edit to customize available GGUF models"
             echo "  .env                Local configuration"
-            echo "  .env.example        Template with all available settings"
+            echo "  .env.example        Server configuration example"
             echo
             echo "Examples:"
             echo "  ./setup.sh                      # Interactive setup"
