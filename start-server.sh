@@ -835,6 +835,7 @@ start_rag_services() {
     while [[ $waited -lt 30 ]]; do
         if curl -sf "http://127.0.0.1:$rag_port/health" &>/dev/null; then
             echo -e "${GREEN}✓${NC} (port $rag_port)"
+            RAG_STARTED_BY_US=true
             return 0
         fi
         sleep 1
@@ -847,6 +848,8 @@ start_rag_services() {
 
 # Determine if we should start RAG
 SHOULD_START_RAG=false
+RAG_STARTED_BY_US=false
+
 if [[ "$NO_RAG" != true ]]; then
     # Check AUTO_START_RAG_SERVER env var (default: true if not set)
     if [[ "${AUTO_START_RAG_SERVER:-true}" == "true" ]]; then
@@ -860,6 +863,25 @@ if [[ "$SHOULD_START_RAG" == true ]]; then
     start_rag_services
     echo
 fi
+
+# -----------------------------------------------------------------------------
+# Cleanup on Exit
+# -----------------------------------------------------------------------------
+
+# Stop RAG server if we started it (cleanup on Ctrl+C or exit)
+cleanup_on_exit() {
+    if [[ "$RAG_STARTED_BY_US" == true ]]; then
+        local rag_port="${RAG_PORT:-8081}"
+        local pid
+        pid=$(lsof -ti:"$rag_port" 2>/dev/null || true)
+        if [[ -n "$pid" ]]; then
+            kill "$pid" 2>/dev/null || true
+            echo -e "\n${DIM}RAG server stopped${NC}" >&2
+        fi
+    fi
+}
+
+trap cleanup_on_exit EXIT
 
 # Set up GPU selection for multi-GPU systems
 if [[ -n "$GPU_ID" ]]; then
@@ -1079,13 +1101,14 @@ else
     echo
     
     # Run server with optional logging
+    # Note: We don't use exec here so the EXIT trap can clean up the RAG server
     if [[ -n "$LOG_FILE" ]]; then
         echo -e "${DIM}Logging to: $LOG_FILE${NC}"
         echo
         # Run in foreground but tee to log file
-        exec "${CMD[@]}" 2>&1 | tee -a "$LOG_FILE"
+        "${CMD[@]}" 2>&1 | tee -a "$LOG_FILE"
     else
-        # Run server (exec replaces this process)
-        exec "${CMD[@]}"
+        # Run server in foreground (trap will fire on exit)
+        "${CMD[@]}"
     fi
 fi
