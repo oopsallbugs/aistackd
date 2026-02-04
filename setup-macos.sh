@@ -283,14 +283,14 @@ if [[ $RUN_UPDATE == true ]]; then
     print_status "Current version: $CURRENT_COMMIT"
     
     print_status "Checking for updates..."
-    if ! git fetch origin main --quiet 2>/dev/null; then
+    if ! git fetch origin master --quiet 2>/dev/null; then
         print_warning "Could not fetch from remote. Check network connection."
         cd "$SCRIPT_DIR"
         exit 0
     fi
     
     LOCAL_HEAD=$(git rev-parse HEAD 2>/dev/null)
-    REMOTE_HEAD=$(git rev-parse origin/main 2>/dev/null)
+    REMOTE_HEAD=$(git rev-parse origin/master 2>/dev/null)
     
     if [[ "$LOCAL_HEAD" == "$REMOTE_HEAD" ]]; then
         print_success "Already up to date!"
@@ -298,15 +298,15 @@ if [[ $RUN_UPDATE == true ]]; then
         exit 0
     fi
     
-    COMMITS_BEHIND=$(git rev-list HEAD..origin/main --count 2>/dev/null || echo "?")
+    COMMITS_BEHIND=$(git rev-list HEAD..origin/master --count 2>/dev/null || echo "?")
     print_status "Updates available: $COMMITS_BEHIND new commit(s)"
     echo
     echo -e "${DIM}Recent changes:${NC}"
-    git log HEAD..origin/main --oneline 2>/dev/null | head -5
+    git log HEAD..origin/master --oneline 2>/dev/null | head -5
     echo
     
     print_status "Pulling updates..."
-    if ! git pull origin main 2>/dev/null; then
+    if ! git pull origin master 2>/dev/null; then
         print_error "Failed to pull updates. You may have local changes."
         echo "Try: cd llama.cpp && git stash && git pull"
         cd "$SCRIPT_DIR"
@@ -555,6 +555,9 @@ print_success "All dependencies satisfied!"
 print_header "Setting Up llama.cpp Repository"
 
 clone_or_update_repo "https://github.com/ggerganov/llama.cpp" "$LLAMA_CPP_DIR" "$FORCE_REBUILD" || exit 1
+
+# Clear update check cache since we just updated
+rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/llama-cpp-setup/update-check" 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
 # Build llama.cpp with Metal

@@ -231,7 +231,7 @@ check_health() {
             if command -v jq &>/dev/null && echo "$props_response" | jq . &>/dev/null; then
                 local model_name
                 # Try different field names for model
-                model_name=$(echo "$props_response" | jq -r '.default_generation_settings.model // .model // empty' 2>/dev/null)
+                model_name=$(echo "$props_response" | jq -r '.model_path // .default_generation_settings.model // .model // empty' 2>/dev/null)
                 if [[ -n "$model_name" && "$model_name" != "null" ]]; then
                     echo -e "  ${BOLD}Model:${NC} $(basename "$model_name")"
                 fi
@@ -320,7 +320,7 @@ validate_models_conf() {
     fi
     
     while IFS= read -r line || [[ -n "$line" ]]; do
-        ((line_num++))
+        line_num=$((line_num + 1))
         
         # Skip empty lines and comments
         [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
@@ -336,7 +336,7 @@ validate_models_conf() {
         if [[ $pipe_count -ne 5 ]]; then
             print_warning "models.conf line $line_num: expected 5 pipes, found $pipe_count"
             echo -e "  ${DIM}$line${NC}"
-            ((errors++))
+            errors=$((errors + 1))
         fi
         
         # Check for commas in description (breaks gum menus)
@@ -346,7 +346,7 @@ validate_models_conf() {
             desc_field=$(echo "$line" | cut -d'|' -f6)
             if [[ "$desc_field" == *","* ]]; then
                 print_warning "models.conf line $line_num: comma in description may cause menu issues"
-                ((errors++))
+                errors=$((errors + 1))
             fi
         fi
     done < "$conf_file"
@@ -618,6 +618,9 @@ if [[ ! -f "$LLAMA_SERVER" ]]; then
     exit 1
 fi
 
+# Set library path for shared libraries (llama.cpp now uses .so files)
+export LD_LIBRARY_PATH="$LLAMA_CPP_DIR/build/bin:${LD_LIBRARY_PATH:-}"
+
 # Export GPU settings (Linux/ROCm only)
 # macOS Metal doesn't need HSA settings
 if [[ "$IS_LINUX" == true ]]; then
@@ -639,7 +642,8 @@ fi
 # Check for existing llama-server processes
 check_existing_processes() {
     local existing_pids
-    existing_pids=$(pgrep -f "llama-server" 2>/dev/null || true)
+    # Use pgrep -x for exact match on process name, avoiding self-match
+    existing_pids=$(pgrep -x "llama-server" 2>/dev/null || true)
     
     if [[ -n "$existing_pids" ]]; then
         echo
@@ -648,6 +652,12 @@ check_existing_processes() {
         echo
         echo "This may cause port conflicts or VRAM issues."
         echo
+        
+        # In non-interactive mode, exit rather than prompting
+        if [[ ! -t 0 ]]; then
+            echo "Cancelled. Use a different port with -p or stop existing servers manually."
+            exit 1
+        fi
         
         local choice=""
         if [[ "$HAS_GUM" == true ]]; then
@@ -727,54 +737,64 @@ check_vram() {
         if [[ -n "$llama_pids" ]]; then
             echo -e "Found llama-server processes: ${BOLD}$llama_pids${NC}"
             
-            local choice=""
-            if [[ "$HAS_GUM" == true ]]; then
-                if gum confirm "Kill these processes to free VRAM?"; then
-                    choice="y"
-                else
-                    choice="n"
-                fi
+            # In non-interactive mode, skip this prompt
+            if [[ ! -t 0 ]]; then
+                echo "Continuing anyway (non-interactive mode)..."
             else
-                read -p "Kill these processes to free VRAM? [Y/n]: " choice
-            fi
-            
-            case "$choice" in
-                [Nn]*)
-                    echo "Continuing anyway..."
-                    ;;
-                *)
-                    echo "Killing llama-server processes..."
-                    pkill -f "llama-server" 2>/dev/null || true
-                    sleep 2
-                    echo -e "${GREEN}Done${NC}"
-                    # Re-check
-                    local new_pct
-                    new_pct=$(get_vram_info 2>/dev/null) || true
-                    if [[ -n "$new_pct" ]]; then
-                        echo -e "VRAM usage now: ${GREEN}${new_pct}%${NC}"
+                local choice=""
+                if [[ "$HAS_GUM" == true ]]; then
+                    if gum confirm "Kill these processes to free VRAM?"; then
+                        choice="y"
+                    else
+                        choice="n"
                     fi
-                    ;;
-            esac
+                else
+                    read -p "Kill these processes to free VRAM? [Y/n]: " choice
+                fi
+                
+                case "$choice" in
+                    [Nn]*)
+                        echo "Continuing anyway..."
+                        ;;
+                    *)
+                        echo "Killing llama-server processes..."
+                        pkill -f "llama-server" 2>/dev/null || true
+                        sleep 2
+                        echo -e "${GREEN}Done${NC}"
+                        # Re-check
+                        local new_pct
+                        new_pct=$(get_vram_info 2>/dev/null) || true
+                        if [[ -n "$new_pct" ]]; then
+                            echo -e "VRAM usage now: ${GREEN}${new_pct}%${NC}"
+                        fi
+                        ;;
+                esac
+            fi
         else
             echo "No llama-server processes found. Other applications may be using VRAM."
             
-            local choice=""
-            if [[ "$HAS_GUM" == true ]]; then
-                if gum confirm "Continue anyway?"; then
-                    choice="y"
-                else
-                    choice="n"
-                fi
+            # In non-interactive mode, continue anyway
+            if [[ ! -t 0 ]]; then
+                echo "Continuing anyway (non-interactive mode)..."
             else
-                read -p "Continue anyway? [Y/n]: " choice
+                local choice=""
+                if [[ "$HAS_GUM" == true ]]; then
+                    if gum confirm "Continue anyway?"; then
+                        choice="y"
+                    else
+                        choice="n"
+                    fi
+                else
+                    read -p "Continue anyway? [Y/n]: " choice
+                fi
+                
+                case "$choice" in
+                    [Nn]*)
+                        echo "Cancelled. Free up VRAM and try again."
+                        exit 1
+                        ;;
+                esac
             fi
-            
-            case "$choice" in
-                [Nn]*)
-                    echo "Cancelled. Free up VRAM and try again."
-                    exit 1
-                    ;;
-            esac
         fi
         echo
     fi
@@ -808,6 +828,8 @@ start_rag_services() {
     if command -v docker &>/dev/null && docker info &>/dev/null; then
         if ! docker ps --format '{{.Names}}' | grep -q '^searxng$'; then
             echo -n "  Starting SearXNG... "
+            # Remove any stopped container with the same name
+            docker rm searxng &>/dev/null || true
             # Export UID/GID for docker-compose to run as current user
             export UID
             GID=$(id -g)
@@ -828,22 +850,25 @@ start_rag_services() {
     # Ensure data directory exists
     mkdir -p "$rag_dir/data"
     
-    nohup "$rag_dir/.venv/bin/python" -m uvicorn rag.server:app \
+    # Run from SCRIPT_DIR so 'import rag' works
+    # Use setsid to fully detach the process from this script
+    pushd "$SCRIPT_DIR" > /dev/null
+    setsid "$rag_dir/.venv/bin/python" -m uvicorn rag.server:app \
         --host 127.0.0.1 \
         --port "$rag_port" \
         --log-level warning \
         > "$rag_dir/data/server.log" 2>&1 &
+    popd > /dev/null
     
     # Wait for RAG server to be ready (up to 30s for model loading)
     local waited=0
     while [[ $waited -lt 30 ]]; do
         if curl -sf "http://127.0.0.1:$rag_port/health" &>/dev/null; then
             echo -e "${GREEN}✓${NC} (port $rag_port)"
-            RAG_STARTED_BY_US=true
             return 0
         fi
         sleep 1
-        ((waited++))
+        waited=$((waited + 1))
     done
     
     echo -e "${YELLOW}timeout${NC}"
@@ -852,7 +877,6 @@ start_rag_services() {
 
 # Determine if we should start RAG
 SHOULD_START_RAG=false
-RAG_STARTED_BY_US=false
 
 if [[ "$NO_RAG" != true ]]; then
     # Check AUTO_START_RAG_SERVER env var (default: true if not set)
@@ -872,20 +896,49 @@ fi
 # Cleanup on Exit
 # -----------------------------------------------------------------------------
 
-# Stop RAG server if we started it (cleanup on Ctrl+C or exit)
+# Track the llama-server PID for cleanup
+LLAMA_SERVER_PID=""
+
+# Stop all services on exit (Ctrl+C or crash)
 cleanup_on_exit() {
-    if [[ "$RAG_STARTED_BY_US" == true ]]; then
-        local rag_port="${RAG_PORT:-8081}"
-        local pid
-        pid=$(lsof -ti:"$rag_port" 2>/dev/null || true)
-        if [[ -n "$pid" ]]; then
-            kill "$pid" 2>/dev/null || true
-            echo -e "\n${DIM}RAG server stopped${NC}" >&2
-        fi
+    echo "" >&2  # Newline after ^C
+    
+    # Stop llama-server if we know its PID
+    if [[ -n "$LLAMA_SERVER_PID" ]]; then
+        kill "$LLAMA_SERVER_PID" 2>/dev/null || true
+        # Give it a moment to shut down gracefully
+        sleep 0.5
+        # Force kill if still running
+        kill -9 "$LLAMA_SERVER_PID" 2>/dev/null || true
+        echo -e "${DIM}llama-server stopped${NC}" >&2
+    fi
+    
+    # Also kill any llama-server on our port (fallback)
+    local llama_pid
+    llama_pid=$(lsof -ti:"${LLAMA_PORT:-8080}" 2>/dev/null || true)
+    if [[ -n "$llama_pid" ]]; then
+        kill "$llama_pid" 2>/dev/null || true
+        sleep 0.5
+        kill -9 "$llama_pid" 2>/dev/null || true
+    fi
+    
+    # Stop RAG server
+    local rag_port="${RAG_PORT:-8081}"
+    local pid
+    pid=$(lsof -ti:"$rag_port" 2>/dev/null || true)
+    if [[ -n "$pid" ]]; then
+        kill "$pid" 2>/dev/null || true
+        echo -e "${DIM}RAG server stopped${NC}" >&2
+    fi
+    
+    # Stop SearXNG container
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^searxng$'; then
+        docker stop searxng &>/dev/null || true
+        echo -e "${DIM}SearXNG stopped${NC}" >&2
     fi
 }
 
-trap cleanup_on_exit EXIT
+trap cleanup_on_exit EXIT INT TERM
 
 # Set up GPU selection for multi-GPU systems
 if [[ -n "$GPU_ID" ]]; then
@@ -927,7 +980,7 @@ run_benchmark() {
     echo -n "Waiting for server to be ready..."
     while ! curl -sf "$endpoint/health" &>/dev/null; do
         sleep 1
-        ((waited++))
+        waited=$((waited + 1))
         if [[ $waited -ge $max_wait ]]; then
             echo
             echo -e "${RED}Server didn't start within ${max_wait}s${NC}"
@@ -993,6 +1046,29 @@ if [[ "$SKIP_UPDATE_CHECK" != true ]]; then
     update_msg=$(check_llama_cpp_updates "$LLAMA_CPP_DIR" 2>/dev/null)
     if [[ -n "$update_msg" ]]; then
         show_update_notification "llama.cpp" "$update_msg" "./setup.sh --update"
+        
+        # Prompt user to update (only if running interactively)
+        if [[ -t 0 ]]; then
+            echo
+            if [[ "$HAS_GUM" == true ]]; then
+                if gum confirm "Update llama.cpp now?"; then
+                    exec ./setup.sh --update
+                fi
+            else
+                read -p "Update llama.cpp now? [y/N] " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    exec ./setup.sh --update
+                fi
+            fi
+            
+            # User declined - show warning
+            echo
+            print_warning "Continuing with outdated llama.cpp"
+            echo -e "  ${YELLOW}Note:${NC} This may cause silent failures or unexpected behavior."
+            echo -e "  ${YELLOW}      ${NC}If something breaks, try: ./setup.sh --update"
+            echo
+        fi
     fi
 fi
 
@@ -1084,7 +1160,7 @@ elif [[ "$WATCHDOG_MODE" == true ]]; then
         fi
         
         # Server crashed
-        ((RESTART_COUNT++))
+        RESTART_COUNT=$((RESTART_COUNT + 1))
         
         if [[ $RESTART_COUNT -ge $MAX_RESTARTS ]]; then
             echo
@@ -1104,15 +1180,16 @@ else
     echo -e "${YELLOW}Server ready when you see: \"server is listening\"${NC}"
     echo
     
-    # Run server with optional logging
-    # Note: We don't use exec here so the EXIT trap can clean up the RAG server
+    # Run server in background so we can catch signals and clean up
     if [[ -n "$LOG_FILE" ]]; then
         echo -e "${DIM}Logging to: $LOG_FILE${NC}"
         echo
-        # Run in foreground but tee to log file
-        "${CMD[@]}" 2>&1 | tee -a "$LOG_FILE"
+        "${CMD[@]}" 2>&1 | tee -a "$LOG_FILE" &
     else
-        # Run server in foreground (trap will fire on exit)
-        "${CMD[@]}"
+        "${CMD[@]}" &
     fi
+    LLAMA_SERVER_PID=$!
+    
+    # Wait for server to exit
+    wait $LLAMA_SERVER_PID
 fi

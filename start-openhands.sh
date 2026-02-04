@@ -253,7 +253,7 @@ MODEL_NAME="llama.cpp"
 query_url="${LLM_BASE_URL/host.docker.internal/127.0.0.1}/props"
 if command -v jq &>/dev/null; then
     if props_response=$(curl -sf --max-time 2 "$query_url" 2>/dev/null); then
-        detected=$(echo "$props_response" | jq -r '.default_generation_settings.model // .model // empty' 2>/dev/null)
+        detected=$(echo "$props_response" | jq -r '.model_path // .default_generation_settings.model // .model // empty' 2>/dev/null)
         if [[ -n "$detected" && "$detected" != "null" ]]; then
             MODEL_NAME=$(basename "$detected")
         fi
