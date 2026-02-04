@@ -122,6 +122,7 @@ show_help() {
     echo "  --gpu GPU_ID      Override GPU ID for multi-GPU systems"
     echo "  --watchdog        Auto-restart server on crash"
     echo "  --benchmark       Run quick benchmark after server starts"
+    echo "  --no-rag          Don't auto-start RAG server"
     echo "  --list            List available models"
     echo "  --health          Check if server is running and healthy"
     echo "  --cleanup         Kill existing llama processes and free VRAM"
@@ -278,7 +279,7 @@ get_model_info() {
     local model_category=""
     
     if [[ -f "$MODELS_CONF" ]]; then
-        while IFS='|' read -r category model_id hf_repo gguf_file size description || [[ -n "$category" ]]; do
+        while IFS='|' read -r category model_id hf_repo gguf_file size description ctx_limit out_limit || [[ -n "$category" ]]; do
             [[ "$category" =~ ^[[:space:]]*# ]] && continue
             [[ "$category" =~ ^ALIAS: ]] && continue
             [[ -z "$category" ]] && continue
@@ -359,6 +360,9 @@ EXTRA_ARGS=()
 RUN_BENCHMARK=false
 WATCHDOG_MODE=false
 SKIP_UPDATE_CHECK=false
+NO_RAG=false
+GPU_ID=""
+LOG_FILE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -372,6 +376,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-update-check)
             SKIP_UPDATE_CHECK=true
+            shift
+            ;;
+        --no-rag)
+            NO_RAG=true
             shift
             ;;
         --benchmark)
@@ -576,7 +584,7 @@ fi
 # =============================================================================
 
 # Auto-detect mmproj for vision models (if not manually specified)
-if [[ -z "$MMPROJ_PATH" ]] && is_vision_model "$GGUF_PATH"; then
+if [[ -z "${MMPROJ_PATH:-}" ]] && is_vision_model "$GGUF_PATH"; then
     detected_mmproj=$(detect_mmproj "$GGUF_PATH" "$MODELS_DIR")
     if [[ -n "$detected_mmproj" ]]; then
         MMPROJ_PATH="$detected_mmproj"
@@ -597,7 +605,7 @@ if [[ -z "$MMPROJ_PATH" ]] && is_vision_model "$GGUF_PATH"; then
 fi
 
 # Validate mmproj path if specified
-if [[ -n "$MMPROJ_PATH" && ! -f "$MMPROJ_PATH" ]]; then
+if [[ -n "${MMPROJ_PATH:-}" && ! -f "$MMPROJ_PATH" ]]; then
     print_error "mmproj file not found: $MMPROJ_PATH"
     exit 1
 fi
@@ -776,6 +784,83 @@ check_vram() {
 check_existing_processes
 check_vram
 
+# =============================================================================
+# RAG Server Auto-Start
+# =============================================================================
+
+start_rag_services() {
+    local rag_port="${RAG_PORT:-8081}"
+    local rag_dir="$SCRIPT_DIR/rag"
+    
+    # Check if RAG is set up
+    if [[ ! -d "$rag_dir/.venv" ]]; then
+        print_warning "RAG not set up. Run './setup-rag.sh' to enable RAG support."
+        return 0
+    fi
+    
+    # Check if RAG server is already running
+    if curl -sf "http://127.0.0.1:$rag_port/health" &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} RAG server already running on port $rag_port"
+        return 0
+    fi
+    
+    # Start SearXNG if Docker is available
+    if command -v docker &>/dev/null && docker info &>/dev/null; then
+        if ! docker ps --format '{{.Names}}' | grep -q '^searxng$'; then
+            echo -n "  Starting SearXNG... "
+            if docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d searxng &>/dev/null; then
+                echo -e "${GREEN}✓${NC}"
+            else
+                echo -e "${YELLOW}skipped${NC}"
+            fi
+        else
+            echo -e "  ${GREEN}✓${NC} SearXNG already running"
+        fi
+    fi
+    
+    # Start RAG server in background
+    echo -n "  Starting RAG server... "
+    
+    # Ensure data directory exists
+    mkdir -p "$rag_dir/data"
+    
+    nohup "$rag_dir/.venv/bin/python" -m uvicorn rag.server:app \
+        --host 127.0.0.1 \
+        --port "$rag_port" \
+        --log-level warning \
+        > "$rag_dir/data/server.log" 2>&1 &
+    
+    # Wait for RAG server to be ready (up to 30s for model loading)
+    local waited=0
+    while [[ $waited -lt 30 ]]; do
+        if curl -sf "http://127.0.0.1:$rag_port/health" &>/dev/null; then
+            echo -e "${GREEN}✓${NC} (port $rag_port)"
+            return 0
+        fi
+        sleep 1
+        ((waited++))
+    done
+    
+    echo -e "${YELLOW}timeout${NC}"
+    print_warning "RAG server didn't start in time. Check $rag_dir/data/server.log"
+}
+
+# Determine if we should start RAG
+SHOULD_START_RAG=false
+if [[ "$NO_RAG" != true ]]; then
+    # Check AUTO_START_RAG_SERVER env var (default: true if not set)
+    if [[ "${AUTO_START_RAG_SERVER:-true}" == "true" ]]; then
+        SHOULD_START_RAG=true
+    fi
+fi
+
+if [[ "$SHOULD_START_RAG" == true ]]; then
+    echo -e "${CYAN}${BOLD}Starting RAG Services${NC}"
+    echo
+    start_rag_services
+    echo
+fi
+
 # Set up GPU selection for multi-GPU systems
 if [[ -n "$GPU_ID" ]]; then
     if [[ "$IS_LINUX" == true ]]; then
@@ -794,7 +879,7 @@ CMD=(
     -ngl "$GPU_LAYERS"
 )
 
-if [[ -n "$MMPROJ_PATH" ]]; then
+if [[ -n "${MMPROJ_PATH:-}" ]]; then
     CMD+=(--mmproj "$MMPROJ_PATH")
 fi
 
@@ -902,9 +987,21 @@ echo -e "  ${BOLD}Context:${NC}  $LLAMA_CONTEXT tokens"
 echo -e "  ${BOLD}GPU:${NC}      $GPU_LAYERS layers"
 [[ -n "$GPU_ID" ]] && echo -e "  ${BOLD}GPU ID:${NC}   $GPU_ID"
 [[ "$IS_LINUX" == true && -n "${HSA_OVERRIDE_GFX_VERSION:-}" ]] && echo -e "  ${BOLD}HSA:${NC}      $HSA_OVERRIDE_GFX_VERSION"
-[[ -n "$MMPROJ_PATH" ]] && echo -e "  ${BOLD}mmproj:${NC}   $(basename "$MMPROJ_PATH")"
+[[ -n "${MMPROJ_PATH:-}" ]] && echo -e "  ${BOLD}mmproj:${NC}   $(basename "$MMPROJ_PATH")"
 [[ -n "$LOG_FILE" ]] && echo -e "  ${BOLD}Log:${NC}      $LOG_FILE"
 [[ "$WATCHDOG_MODE" == true ]] && echo -e "  ${BOLD}Watchdog:${NC} ${GREEN}enabled${NC}"
+
+# Show RAG status
+if [[ "$SHOULD_START_RAG" == true ]]; then
+    rag_port="${RAG_PORT:-8081}"
+    if curl -sf "http://127.0.0.1:$rag_port/health" &>/dev/null; then
+        echo -e "  ${BOLD}RAG:${NC}      ${GREEN}http://127.0.0.1:$rag_port${NC}"
+    else
+        echo -e "  ${BOLD}RAG:${NC}      ${YELLOW}not running${NC}"
+    fi
+else
+    echo -e "  ${BOLD}RAG:${NC}      ${DIM}disabled${NC}"
+fi
 echo
 
 if [[ "$RUN_BENCHMARK" == true ]]; then

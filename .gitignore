@@ -26,3 +26,13 @@ llama-cpp/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# RAG data (user-specific indexed content and logs)
+rag/data/

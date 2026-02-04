@@ -109,12 +109,29 @@ opencode
 local-llm-rocm/
 ├── setup.sh                  # llama.cpp setup (Linux/ROCm)
 ├── setup-macos.sh            # llama.cpp setup (macOS/Metal)
+├── setup-rag.sh              # RAG system setup
 ├── start-server.sh           # Start llama-server (cross-platform)
+├── start-rag.sh              # Start RAG server standalone
 ├── download-model.sh         # Download models from HuggingFace
 ├── sync-opencode.sh          # Sync models and agents to OpenCode
 ├── uninstall.sh              # Clean removal
+├── rag-index.sh              # Index documents to RAG collections
+├── rag-search.sh             # Search RAG collections
+├── rag-web.sh                # Web search via SearXNG
+├── docker-compose.yml        # SearXNG container definition
 ├── models.conf               # GGUF model definitions with context limits
 ├── .env.example              # Server configuration example
+│
+├── rag/                      # RAG subsystem
+│   ├── requirements.txt      # Python dependencies
+│   ├── collections.yml       # Collection definitions
+│   ├── config.py             # Configuration
+│   ├── embeddings.py         # Embedding model wrapper
+│   ├── indexer.py            # Document chunking and indexing
+│   ├── retriever.py          # Vector search
+│   ├── web_search.py         # SearXNG client
+│   ├── server.py             # FastAPI application
+│   └── searxng/              # SearXNG configuration
 │
 ├── agent/                    # OpenCode agent templates
 │   ├── AGENTS.md             # System prompt template (copied to ~/.config/opencode/)
@@ -144,9 +161,14 @@ The llama.cpp server provides an OpenAI-compatible API at `http://localhost:8080
 |--------|----------|-------------|
 | `setup.sh` | Linux | Build llama.cpp with ROCm, download models |
 | `setup-macos.sh` | macOS | Build llama.cpp with Metal, download models |
+| `setup-rag.sh` | Both | Set up RAG system (venv, embeddings, SearXNG) |
 | `start-server.sh` | Both | Start llama-server with a model |
+| `start-rag.sh` | Both | Start RAG server standalone |
 | `download-model.sh` | Both | Download individual GGUF models |
 | `sync-opencode.sh` | Both | Sync models and agents to OpenCode |
+| `rag-index.sh` | Both | Index files to RAG collections |
+| `rag-search.sh` | Both | Search RAG collections |
+| `rag-web.sh` | Both | Web search via SearXNG |
 | `uninstall.sh` | Both | Remove llama.cpp build, models, config |
 
 ## Vision Models
@@ -419,6 +441,88 @@ Or in `opencode.json`:
   }
 }
 ```
+
+## RAG Support
+
+The project includes an optional RAG (Retrieval-Augmented Generation) system for document search and web search capabilities.
+
+### RAG Features
+
+- **Document indexing** - Index code and documents into searchable collections
+- **Semantic search** - Find relevant documents using vector similarity
+- **Web search** - Search the web via SearXNG metasearch engine
+- **Auto-start** - RAG server starts automatically with llama.cpp (optional)
+
+### RAG Setup
+
+```bash
+# One-time setup (creates venv, downloads embedding model, starts SearXNG)
+./setup-rag.sh
+```
+
+### Using RAG
+
+```bash
+# Start llama.cpp with RAG (default behavior after setup)
+./start-server.sh qwen3
+
+# Start without RAG
+./start-server.sh --no-rag qwen3
+
+# Or disable in .env: AUTO_START_RAG_SERVER=false
+
+# Index documents to a collection
+./rag-index.sh --collection coding ~/projects/my-app/
+./rag-index.sh --collection notes ~/notes/
+
+# Search your documents
+./rag-search.sh --collection coding "how does authentication work"
+
+# Search the web
+./rag-web.sh "python chromadb tutorial"
+
+# List collections
+./rag-search.sh --list
+```
+
+### RAG Architecture
+
+| Component | Port | Description |
+|-----------|------|-------------|
+| RAG Server | 8081 | FastAPI server for indexing and search |
+| SearXNG | 8888 | Metasearch engine for web search (Docker) |
+| ChromaDB | - | Vector database (embedded) |
+| nomic-embed-text | - | Embedding model (CPU, ~500MB RAM) |
+
+### Collections
+
+Documents are organized into collections. Default collections:
+
+- **coding** - Code and technical documentation (`.py`, `.js`, `.ts`, `.md`, etc.)
+- **notes** - General notes (`.md`, `.txt`, `.org`)
+
+Add custom collections in `rag/collections.yml`:
+
+```yaml
+collections:
+  work:
+    description: "Work projects"
+    file_types: [".py", ".md", ".txt"]
+```
+
+### RAG API Endpoints
+
+The RAG server exposes a REST API at `http://127.0.0.1:8081`:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/collections` | GET | List collections with stats |
+| `/collections/{name}` | DELETE | Clear a collection |
+| `/index` | POST | Index files to a collection |
+| `/search` | POST | Search a collection |
+| `/search/all` | POST | Search all collections |
+| `/web` | POST | Web search via SearXNG |
 
 ## Links
 

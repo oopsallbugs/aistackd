@@ -4,10 +4,6 @@ This AGENTS.md file is optimized for local models running via llama.cpp.
 The setup script copies this to `~/.config/opencode/AGENTS.md` for global rules.
 You can also place a project-specific AGENTS.md in your project root.
 
-## Model Behavior Guidelines
-
-You are a coding assistant running as a local LLM. Be concise and efficient with your responses.
-
 ### Response Guidelines
 
 - Be direct and concise - avoid unnecessary preamble
@@ -32,7 +28,7 @@ Use the available tools effectively to accomplish tasks.
 
 ### File Discovery (Glob, Grep)
 
-- **Always search first** - Use Glob and Grep to find files instead of guessing paths
+- **Always search first** - Use Glob and Grep to find files
 - Use Glob for filename patterns: `*.ts`, `src/**/*.py`
 - Use Grep for content search: function names, class definitions, error messages
 - Combine both: find files by name, then search within them
@@ -86,37 +82,6 @@ When operations fail, follow these recovery patterns:
 - Break complex tasks into smaller steps
 - Ask for clarification if requirements are unclear
 - If a approach isn't working after 2-3 attempts, try an alternative
-
-## Model-Specific Guidelines
-
-### For Reasoning Models (DeepSeek-R1)
-
-- These models show their thinking process - this is normal and expected
-- The thinking section helps with complex problems but uses more tokens
-- Best for: debugging, architecture decisions, complex refactoring
-- Allow the model to reason through the problem before acting
-
-### For Coding Models (Qwen2.5-Coder, Qwen3)
-
-- Optimized for code generation and understanding
-- Good at following existing code patterns
-- Best for: writing new code, refactoring, code review
-- Provide examples of desired code style when possible
-
-### For Smaller Models (8B and under)
-
-- Keep prompts focused and specific
-- Break complex tasks into explicit steps
-- Provide more context about what you want
-- Be explicit about constraints and requirements
-
-### For Vision Models (Qwen3-VL)
-
-- These models can process images alongside text
-- Best for: image analysis, document understanding, visual Q&A
-- Not optimized for coding tasks - use coding models instead
-- Require mmproj file for vision capabilities
-- Lower context limits due to image token overhead
 
 ## Agentic Workflow
 

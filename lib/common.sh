@@ -99,6 +99,16 @@ print_banner() {
 SPINNER_CHARS='⣾⣽⣻⢿⡿⣟⣯⣷'
 SPINNER_PID=""
 
+# Hide cursor for cleaner spinner animation (no flickering)
+hide_cursor() {
+    [[ -t 1 ]] && tput civis 2>/dev/null || true
+}
+
+# Show cursor (must be called on cleanup/exit to restore terminal)
+show_cursor() {
+    [[ -t 1 ]] && tput cnorm 2>/dev/null || true
+}
+
 cleanup_spinner() {
     if [[ -n "$SPINNER_PID" ]] && kill -0 "$SPINNER_PID" 2>/dev/null; then
         kill "$SPINNER_PID" 2>/dev/null || true
@@ -106,17 +116,21 @@ cleanup_spinner() {
     fi
     SPINNER_PID=""
     printf "\r\033[K"
+    show_cursor
 }
 
 start_spinner() {
     local message="$1"
     local start_time=$SECONDS
+    
+    hide_cursor
+    
     (
         local i=0
         local spin_len=${#SPINNER_CHARS}
         while true; do
             local elapsed=$((SECONDS - start_time))
-            printf "\r  ${CYAN}%s${NC} %s ${DIM}(%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$elapsed"
+            printf "\r  ${CYAN}%s${NC} %s ${DIM}(%ds)${NC}\033[K" "${SPINNER_CHARS:i:1}" "$message" "$elapsed"
             i=$(( (i + 1) % spin_len ))
             sleep 0.1
         done
@@ -135,6 +149,7 @@ stop_spinner() {
         SPINNER_PID=""
     fi
     printf "\r\033[K"
+    show_cursor
     
     if [[ -n "$message" ]]; then
         if [[ "$success" == true ]]; then
@@ -151,6 +166,9 @@ start_download_spinner() {
     local output_file="$2"
     local expected_size="$3"  # Optional expected size in bytes
     local start_time=$SECONDS
+    
+    hide_cursor
+    
     (
         local i=0
         local spin_len=${#SPINNER_CHARS}
@@ -180,11 +198,11 @@ start_download_spinner() {
             # Show progress with optional percentage
             if [[ -n "$expected_size" && "$expected_size" -gt 0 && $current_size -gt 0 ]]; then
                 local pct=$(( current_size * 100 / expected_size ))
-                printf "\r  ${CYAN}%s${NC} %s ${DIM}[%s] %d%% (%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$size_str" "$pct" "$elapsed"
+                printf "\r  ${CYAN}%s${NC} %s ${DIM}[%s] %d%% (%ds)${NC}\033[K" "${SPINNER_CHARS:i:1}" "$message" "$size_str" "$pct" "$elapsed"
             elif [[ -n "$size_str" ]]; then
-                printf "\r  ${CYAN}%s${NC} %s ${DIM}[%s] (%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$size_str" "$elapsed"
+                printf "\r  ${CYAN}%s${NC} %s ${DIM}[%s] (%ds)${NC}\033[K" "${SPINNER_CHARS:i:1}" "$message" "$size_str" "$elapsed"
             else
-                printf "\r  ${CYAN}%s${NC} %s ${DIM}(%ds)${NC}  " "${SPINNER_CHARS:i:1}" "$message" "$elapsed"
+                printf "\r  ${CYAN}%s${NC} %s ${DIM}(%ds)${NC}\033[K" "${SPINNER_CHARS:i:1}" "$message" "$elapsed"
             fi
             
             i=$(( (i + 1) % spin_len ))

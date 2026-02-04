@@ -1,0 +1,36 @@
+# SearXNG settings for local-llm-rocm RAG
+# See https://docs.searxng.org/admin/settings/index.html
+
+use_default_settings: true
+
+general:
+  instance_name: "local-llm-rocm"
+  privacypolicy_url: false
+  donation_url: false
+  contact_url: false
+  enable_metrics: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "changeme-generate-a-real-key"
+  limiter: false
+  image_proxy: false
+  http_protocol_version: "1.1"
+
+ui:
+  static_use_hash: true
+  default_theme: simple
+  theme_args:
+    simple_style: dark
+
+# Enable JSON output for API access
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
