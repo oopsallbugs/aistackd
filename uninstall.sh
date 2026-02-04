@@ -40,6 +40,7 @@ REMOVE_BUILD=false
 REMOVE_MODELS=false
 REMOVE_CONFIG=false
 REMOVE_OPENCODE=false
+REMOVE_OPENHANDS=false
 DRY_RUN=false
 NON_INTERACTIVE=false
 
@@ -51,11 +52,13 @@ for arg in "$@"; do
             REMOVE_MODELS=true
             REMOVE_CONFIG=true
             REMOVE_OPENCODE=true
+            REMOVE_OPENHANDS=true
             ;;
         --build) REMOVE_BUILD=true ;;
         --models) REMOVE_MODELS=true ;;
         --config) REMOVE_CONFIG=true ;;
         --opencode) REMOVE_OPENCODE=true ;;
+        --openhands) REMOVE_OPENHANDS=true ;;
         --dry-run) DRY_RUN=true ;;
         --non-interactive) NON_INTERACTIVE=true ;;
         --help|-h)
@@ -66,11 +69,12 @@ for arg in "$@"; do
             echo "Remove llama.cpp installation and related files."
             echo
             echo "Options:"
-            echo "  --all               Remove everything (build, models, config, opencode)"
+            echo "  --all               Remove everything (build, models, config, opencode, openhands)"
             echo "  --build             Remove llama.cpp build directory"
             echo "  --models            Remove downloaded GGUF models"
             echo "  --config            Remove local .env configuration"
             echo "  --opencode          Remove llama.cpp from OpenCode config"
+            echo "  --openhands         Remove OpenHands container and Docker images"
             echo "  --dry-run           Show what would be removed without doing it"
             echo "  --non-interactive   Don't ask for confirmation"
             echo "  --help, -h          Show this help message"
@@ -103,6 +107,7 @@ MODEL_COUNT=0
 MODELS_SIZE="0"
 CONFIG_EXISTS=false
 OPENCODE_HAS_LLAMA=false
+OPENHANDS_EXISTS=false
 
 check_inventory() {
     # Check build directory
@@ -131,6 +136,14 @@ check_inventory() {
     if [[ -f "$OPENCODE_CONFIG" ]] && command -v jq &>/dev/null; then
         if jq -e '.provider["llama.cpp"]' "$OPENCODE_CONFIG" &>/dev/null; then
             OPENCODE_HAS_LLAMA=true
+        fi
+    fi
+    
+    # Check OpenHands
+    if command -v docker &>/dev/null; then
+        if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^openhands-app$' || \
+           docker images --format '{{.Repository}}' 2>/dev/null | grep -q 'openhands'; then
+            OPENHANDS_EXISTS=true
         fi
     fi
 }
@@ -164,6 +177,11 @@ gum_selection() {
     if [[ "$OPENCODE_HAS_LLAMA" == true ]]; then
         options+=("OpenCode llama.cpp provider config")
         option_map+=("opencode")
+    fi
+    
+    if [[ "$OPENHANDS_EXISTS" == true ]]; then
+        options+=("OpenHands container and Docker images")
+        option_map+=("openhands")
     fi
     
     if [[ ${#options[@]} -eq 0 ]]; then
@@ -202,6 +220,8 @@ gum_selection() {
             REMOVE_CONFIG=true
         elif [[ "$line" == *"OpenCode"* ]]; then
             REMOVE_OPENCODE=true
+        elif [[ "$line" == *"OpenHands"* ]]; then
+            REMOVE_OPENHANDS=true
         fi
     done <<< "$selections"
 }
@@ -240,6 +260,12 @@ fallback_selection() {
         ((++idx))
     fi
     
+    if [[ "$OPENHANDS_EXISTS" == true ]]; then
+        echo -e "  ${BOLD}$idx)${NC} OpenHands container and Docker images"
+        option_map+=("openhands")
+        ((++idx))
+    fi
+    
     if [[ ${#option_map[@]} -eq 0 ]]; then
         print_success "Nothing to remove - llama.cpp is not installed"
         exit 0
@@ -261,6 +287,7 @@ fallback_selection() {
         REMOVE_MODELS=$MODELS_EXIST
         REMOVE_CONFIG=$CONFIG_EXISTS
         REMOVE_OPENCODE=$OPENCODE_HAS_LLAMA
+        REMOVE_OPENHANDS=$OPENHANDS_EXISTS
     else
         for num in $selection; do
             local adjusted_idx=$((num - 1))
@@ -270,6 +297,7 @@ fallback_selection() {
                     models) REMOVE_MODELS=true ;;
                     config) REMOVE_CONFIG=true ;;
                     opencode) REMOVE_OPENCODE=true ;;
+                    openhands) REMOVE_OPENHANDS=true ;;
                 esac
             else
                 print_warning "Invalid selection: $num"
@@ -288,6 +316,7 @@ confirm_removal() {
     [[ "$REMOVE_MODELS" == true ]] && items+=("$MODEL_COUNT model files ($MODELS_SIZE)")
     [[ "$REMOVE_CONFIG" == true ]] && items+=("local .env config")
     [[ "$REMOVE_OPENCODE" == true ]] && items+=("OpenCode llama.cpp provider config")
+    [[ "$REMOVE_OPENHANDS" == true ]] && items+=("OpenHands container and Docker images")
     
     if [[ ${#items[@]} -eq 0 ]]; then
         print_warning "Nothing selected to remove"
@@ -416,6 +445,57 @@ remove_opencode_provider() {
     print_success "Removed llama.cpp provider config from OpenCode"
 }
 
+remove_openhands() {
+    if ! command -v docker &>/dev/null; then
+        print_status "Docker not installed, skipping OpenHands cleanup"
+        return
+    fi
+    
+    local container_exists=false
+    local images_exist=false
+    
+    # Check for container
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^openhands-app$'; then
+        container_exists=true
+    fi
+    
+    # Check for images
+    local images
+    images=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep 'openhands' || true)
+    if [[ -n "$images" ]]; then
+        images_exist=true
+    fi
+    
+    if [[ "$container_exists" == false && "$images_exist" == false ]]; then
+        print_status "No OpenHands container or images found"
+        return
+    fi
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        if [[ "$container_exists" == true ]]; then
+            print_status "[DRY-RUN] Would stop and remove openhands-app container"
+        fi
+        if [[ "$images_exist" == true ]]; then
+            print_status "[DRY-RUN] Would remove OpenHands Docker images:"
+            echo "$images" | sed 's/^/  /'
+        fi
+        return
+    fi
+    
+    # Stop and remove container
+    if [[ "$container_exists" == true ]]; then
+        docker stop openhands-app 2>/dev/null || true
+        docker rm openhands-app 2>/dev/null || true
+        print_success "Removed openhands-app container"
+    fi
+    
+    # Remove images
+    if [[ "$images_exist" == true ]]; then
+        echo "$images" | xargs -r docker rmi 2>/dev/null || true
+        print_success "Removed OpenHands Docker images"
+    fi
+}
+
 # -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
@@ -458,7 +538,7 @@ show_summary() {
 check_inventory
 
 # If no specific options given, run interactive mode
-if [[ "$REMOVE_ALL" == false && "$REMOVE_BUILD" == false && "$REMOVE_MODELS" == false && "$REMOVE_CONFIG" == false && "$REMOVE_OPENCODE" == false ]]; then
+if [[ "$REMOVE_ALL" == false && "$REMOVE_BUILD" == false && "$REMOVE_MODELS" == false && "$REMOVE_CONFIG" == false && "$REMOVE_OPENCODE" == false && "$REMOVE_OPENHANDS" == false ]]; then
     if [[ "$HAS_GUM" == true ]]; then
         gum_selection
     else
@@ -475,6 +555,7 @@ echo
 [[ "$REMOVE_MODELS" == true ]] && remove_models
 [[ "$REMOVE_CONFIG" == true ]] && remove_config
 [[ "$REMOVE_OPENCODE" == true ]] && remove_opencode_provider
+[[ "$REMOVE_OPENHANDS" == true ]] && remove_openhands
 
 # Show summary
 show_summary

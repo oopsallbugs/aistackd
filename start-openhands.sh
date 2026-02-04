@@ -20,7 +20,6 @@ for arg in "$@"; do
         echo "Options:"
         echo "  --workspace PATH   Set the workspace directory (default: current dir)"
         echo "  --llm-url URL      Override the LLM server URL"
-        echo "  --model MODEL      Model name to use (default: auto-detect)"
         echo "  --stop             Stop running OpenHands container"
         echo "  --status           Show OpenHands container status"
         echo "  --logs             Show OpenHands logs"
@@ -89,7 +88,6 @@ fi
 ACTION="start"
 WORKSPACE_OVERRIDE=""
 LLM_URL_OVERRIDE=""
-MODEL_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -99,10 +97,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --llm-url)
             LLM_URL_OVERRIDE="$2"
-            shift 2
-            ;;
-        --model)
-            MODEL_OVERRIDE="$2"
             shift 2
             ;;
         --stop)
@@ -235,21 +229,15 @@ if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$
     docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
 fi
 
-# Check if LLM server is reachable (if local)
-if [[ "$LLM_BASE_URL" == *"host.docker.internal"* ]]; then
-    LOCAL_URL="${LLM_BASE_URL/host.docker.internal/127.0.0.1}"
-    if ! curl -sf "${LOCAL_URL}/health" &>/dev/null; then
-        print_warning "LLM server not responding at ${LOCAL_URL}"
-        echo
-        echo "Start the LLM server first:"
-        echo "  ./start-server.sh <model-id>"
-        echo
-        read -p "Continue anyway? [y/N] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    fi
+# Check if LLM server is reachable
+check_url="${LLM_BASE_URL/host.docker.internal/127.0.0.1}"
+if ! curl -sf --max-time 5 "${check_url}/health" &>/dev/null; then
+    print_error "LLM server not responding at ${check_url}"
+    echo
+    echo "Start the LLM server first:"
+    echo "  ./start-server.sh <model-id>"
+    echo
+    exit 1
 fi
 
 print_status "Starting OpenHands..."
@@ -260,25 +248,15 @@ echo -e "  ${BOLD}LLM URL:${NC}    $LLM_BASE_URL"
 echo -e "  ${BOLD}Web UI:${NC}     http://localhost:${OPENHANDS_PORT}"
 echo
 
-# Determine model name
-if [[ -n "$MODEL_OVERRIDE" ]]; then
-    MODEL_NAME="$MODEL_OVERRIDE"
-else
-    # Try to auto-detect from downloaded models
-    MODEL_NAME=""
-    if [[ -f "$MODELS_CONF" ]]; then
-        load_models_conf
-        for model in "${MODEL_ORDER[@]}"; do
-            IFS='|' read -r _ _ gguf_file _ _ <<< "${MODEL_INFO[$model]}"
-            if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
-                MODEL_NAME="$model"
-                break
-            fi
-        done
-    fi
-    
-    if [[ -z "$MODEL_NAME" ]]; then
-        MODEL_NAME="llama.cpp"
+# Get model name from server
+MODEL_NAME="llama.cpp"
+query_url="${LLM_BASE_URL/host.docker.internal/127.0.0.1}/props"
+if command -v jq &>/dev/null; then
+    if props_response=$(curl -sf --max-time 2 "$query_url" 2>/dev/null); then
+        detected=$(echo "$props_response" | jq -r '.default_generation_settings.model // .model // empty' 2>/dev/null)
+        if [[ -n "$detected" && "$detected" != "null" ]]; then
+            MODEL_NAME=$(basename "$detected")
+        fi
     fi
 fi
 
