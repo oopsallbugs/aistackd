@@ -29,7 +29,7 @@ show_help() {
     echo "  -h, --help         Show this help"
     echo
     echo "Examples:"
-    echo "  $0 \"python chromadb tutorial\""
+    echo "  $0 \"python async await tutorial\""
     echo "  $0 -k 10 \"llama.cpp ROCm setup\""
     echo
 }

@@ -81,7 +81,7 @@ When operations fail, follow these recovery patterns:
 - If stuck, re-read relevant files to refresh context
 - Break complex tasks into smaller steps
 - Ask for clarification if requirements are unclear
-- If a approach isn't working after 2-3 attempts, try an alternative
+- If an approach isn't working after 2-3 attempts, try an alternative
 
 ## Agentic Workflow
 

@@ -1,5 +1,5 @@
 """
-RAG (Retrieval-Augmented Generation) subsystem for local-llm-rocm.
+RAG (Retrieval-Augmented Generation) subsystem for llama-cpp-setup.
 
 Components:
 - embeddings: Text embedding using nomic-embed-text

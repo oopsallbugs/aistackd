@@ -808,6 +808,8 @@ start_rag_services() {
     if command -v docker &>/dev/null && docker info &>/dev/null; then
         if ! docker ps --format '{{.Names}}' | grep -q '^searxng$'; then
             echo -n "  Starting SearXNG... "
+            # Export UID/GID for docker-compose to run as current user
+            export UID GID=$(id -g)
             if docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d searxng &>/dev/null; then
                 echo -e "${GREEN}✓${NC}"
             else

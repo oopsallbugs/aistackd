@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # =============================================================================
-# llama.cpp ROCm/HIP Setup Script
-# Linux-only setup for AMD GPUs with automatic system detection
+# llama.cpp GPU Setup Script
+# Linux setup with automatic GPU detection (AMD ROCm/HIP or NVIDIA CUDA)
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -14,13 +14,14 @@ for arg in "$@"; do
     if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
         echo "Usage: ./setup.sh [OPTIONS]"
         echo
-        echo "Linux setup for llama.cpp with AMD GPUs (ROCm/HIP backend)."
+        echo "Linux setup for llama.cpp with GPU acceleration."
+        echo "Automatically detects AMD (ROCm/HIP) or NVIDIA (CUDA) GPUs."
         echo "For macOS, use ./setup-macos.sh instead."
         echo
         echo "Commands:"
         echo "  --status            Show current llama.cpp status"
         echo "  --update            Update llama.cpp to latest version and rebuild"
-        echo "  --fix-permissions   Fix GPU access permissions (add user to groups)"
+        echo "  --fix-permissions   Fix GPU access permissions (AMD only)"
         echo "  --verify[=model]    Verify model file integrity (all or specific)"
         echo "  --reset-agents      Reset agent files to defaults"
         echo
@@ -43,7 +44,7 @@ for arg in "$@"; do
         echo "  ./setup.sh                      # Interactive setup"
         echo "  ./setup.sh --status             # Check current status"
         echo "  ./setup.sh --update             # Update llama.cpp"
-        echo "  ./setup.sh --fix-permissions    # Fix GPU permissions"
+        echo "  ./setup.sh --fix-permissions    # Fix GPU permissions (AMD)"
         echo "  ./setup.sh --verify             # Verify all downloaded models"
         echo "  ./setup.sh --non-interactive    # Automated setup with defaults"
         exit 0
@@ -51,14 +52,12 @@ for arg in "$@"; do
 done
 
 # -----------------------------------------------------------------------------
-# OS Check - This script is Linux-only (ROCm/HIP)
+# OS Check - This script is Linux-only
 # -----------------------------------------------------------------------------
 
 if [[ "$(uname -s)" != "Linux" ]]; then
     echo
     echo "ERROR: This setup script is for Linux only."
-    echo
-    echo "ROCm/HIP (AMD's GPU compute platform) is Linux-only."
     echo
     if [[ "$(uname -s)" == "Darwin" ]]; then
         echo "For macOS, use setup-macos.sh instead (Metal backend)."
@@ -93,7 +92,7 @@ init_paths "$SCRIPT_DIR"
 setup_signal_handlers
 
 # -----------------------------------------------------------------------------
-# Error Handling (ROCm-specific messages)
+# Error Handling (GPU-vendor-aware messages)
 # -----------------------------------------------------------------------------
 
 handle_error() {
@@ -108,13 +107,29 @@ handle_error() {
     echo
     print_error "Something went wrong during setup."
     echo
+    
+    local vendor
+    vendor=$(detect_gpu_vendor)
+    
     echo "Common solutions:"
-    echo "  1. Make sure ROCm is installed:"
-    echo "     rocminfo"
-    echo
-    echo "  2. Check HIP is available:"
-    echo "     hipconfig --version"
-    echo
+    if [[ "$vendor" == "nvidia" ]]; then
+        echo "  1. Make sure CUDA toolkit is installed:"
+        echo "     nvcc --version"
+        echo
+        echo "  2. Verify NVIDIA driver is working:"
+        echo "     nvidia-smi"
+        echo
+    elif [[ "$vendor" == "amd" ]]; then
+        echo "  1. Make sure ROCm is installed:"
+        echo "     rocminfo"
+        echo
+        echo "  2. Check HIP is available:"
+        echo "     hipconfig --version"
+        echo
+    else
+        echo "  1. No GPU detected - building CPU-only version"
+        echo
+    fi
     echo "  3. Ensure you have build tools:"
     echo "     cmake --version && make --version"
     echo
@@ -125,10 +140,10 @@ handle_error() {
 trap 'handle_error $? $LINENO' ERR
 
 # -----------------------------------------------------------------------------
-# GPU Detection (ROCm-specific)
+# GPU Detection (AMD-specific helpers)
 # -----------------------------------------------------------------------------
 
-# Get HSA override version based on GPU architecture
+# Get HSA override version based on GPU architecture (AMD only)
 get_hsa_version() {
     local gpu_target="$1"
     case "$gpu_target" in
@@ -175,7 +190,7 @@ detect_amd_gpu() {
 }
 
 # -----------------------------------------------------------------------------
-# VRAM Detection (ROCm-specific)
+# VRAM Detection (vendor-aware)
 # -----------------------------------------------------------------------------
 
 DETECTED_VRAM_GB=""
@@ -186,9 +201,18 @@ get_vram_gb() {
         return
     fi
     
+    local vendor
+    vendor=$(detect_gpu_vendor)
+    
+    if [[ "$vendor" == "nvidia" ]]; then
+        DETECTED_VRAM_GB=$(get_nvidia_vram_gb)
+        echo "$DETECTED_VRAM_GB"
+        return
+    fi
+    
+    # AMD detection via rocm-smi
     local vram_mb=""
     
-    # Try rocm-smi first (most reliable for AMD GPUs)
     if command -v rocm-smi &>/dev/null; then
         vram_mb=$(rocm-smi --showmeminfo vram 2>/dev/null | grep -i "total" | head -1 | grep -oE '[0-9]+' | head -1)
     fi
@@ -295,7 +319,7 @@ if [[ $RUN_STATUS == true ]]; then
             fname=$(basename "$gguf")
             fsize=$(du -h "$gguf" | cut -f1)
             echo -e "    - $fname ($fsize)"
-            ((model_count++))
+            ((model_count++)) || true
         done
         if [[ $model_count -eq 0 ]]; then
             echo -e "    ${DIM}No models downloaded${NC}"
@@ -304,17 +328,30 @@ if [[ $RUN_STATUS == true ]]; then
         echo -e "    ${DIM}Models directory not found${NC}"
     fi
     
-    # GPU
+    # GPU (vendor-aware)
     echo
     echo -e "  ${BOLD}GPU:${NC}"
-    IFS='|' read -r _GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
-    echo -e "    $CHECKMARK Detected: ${GREEN}$GPU_NAME${NC}"
-    echo -e "    $CHECKMARK Target: $GPU_TARGET"
+    GPU_VENDOR=$(detect_gpu_vendor)
+    GPU_VENDOR_DISPLAY=$(get_gpu_vendor_display_name "$GPU_VENDOR")
     
-    # VRAM
-    vram_gb=$(get_vram_gb)
-    if [[ "$vram_gb" -gt 0 ]]; then
-        echo -e "    $CHECKMARK VRAM: ${GREEN}${vram_gb}GB${NC}"
+    if [[ "$GPU_VENDOR" == "nvidia" ]]; then
+        IFS='|' read -r GPU_NAME vram_gb <<< "$(detect_nvidia_gpu)"
+        echo -e "    $CHECKMARK Vendor: ${GREEN}$GPU_VENDOR_DISPLAY${NC}"
+        echo -e "    $CHECKMARK GPU: ${GREEN}$GPU_NAME${NC}"
+        if [[ "$vram_gb" -gt 0 ]]; then
+            echo -e "    $CHECKMARK VRAM: ${GREEN}${vram_gb}GB${NC}"
+        fi
+    elif [[ "$GPU_VENDOR" == "amd" ]]; then
+        IFS='|' read -r _GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
+        echo -e "    $CHECKMARK Vendor: ${GREEN}$GPU_VENDOR_DISPLAY${NC}"
+        echo -e "    $CHECKMARK GPU: ${GREEN}$GPU_NAME${NC}"
+        echo -e "    $CHECKMARK Target: $GPU_TARGET"
+        vram_gb=$(get_vram_gb)
+        if [[ "$vram_gb" -gt 0 ]]; then
+            echo -e "    $CHECKMARK VRAM: ${GREEN}${vram_gb}GB${NC}"
+        fi
+    else
+        echo -e "    $WARNMARK No GPU detected (CPU-only mode)"
     fi
     
     echo
@@ -322,11 +359,33 @@ if [[ $RUN_STATUS == true ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Fix Permissions Mode
+# Fix Permissions Mode (AMD ROCm only)
 # -----------------------------------------------------------------------------
 
 if [[ $FIX_PERMISSIONS == true ]]; then
-    print_header "Fixing GPU Access Permissions"
+    GPU_VENDOR=$(detect_gpu_vendor)
+    
+    if [[ "$GPU_VENDOR" == "nvidia" ]]; then
+        print_header "GPU Permissions Check"
+        echo
+        print_status "NVIDIA GPUs typically don't require special permission fixes."
+        echo
+        echo "If you're having issues, check:"
+        echo "  1. NVIDIA driver is installed: nvidia-smi"
+        echo "  2. CUDA toolkit is installed: nvcc --version"
+        echo "  3. User is in 'video' group (some distros): groups \$USER"
+        echo
+        exit 0
+    elif [[ "$GPU_VENDOR" == "cpu" ]]; then
+        print_header "GPU Permissions Check"
+        echo
+        print_warning "No GPU detected. Nothing to fix."
+        echo
+        exit 0
+    fi
+    
+    # AMD ROCm permission fixes
+    print_header "Fixing AMD GPU Access Permissions"
     echo
     
     CURRENT_USER=$(whoami)
@@ -475,24 +534,37 @@ if [[ $RUN_UPDATE == true ]]; then
     # Rebuild
     print_header "Rebuilding llama.cpp"
     
-    # Detect GPU for build
-    IFS='|' read -r _GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
-    print_status "Building for: $GPU_NAME ($GPU_TARGET)"
+    # Detect GPU vendor and get appropriate build flags
+    GPU_VENDOR=$(detect_gpu_vendor)
+    GPU_VENDOR_DISPLAY=$(get_gpu_vendor_display_name "$GPU_VENDOR")
     
-    # Set up HIP environment
-    HIPCXX="$(hipconfig -l)/clang"
-    export HIPCXX
-    HIP_PATH="$(hipconfig -R)"
-    export HIP_PATH
+    if [[ "$GPU_VENDOR" == "nvidia" ]]; then
+        IFS='|' read -r GPU_NAME _vram <<< "$(detect_nvidia_gpu)"
+        print_status "Building for: $GPU_NAME (CUDA)"
+        CMAKE_GPU_FLAGS=$(get_cmake_gpu_flags "$GPU_VENDOR")
+    elif [[ "$GPU_VENDOR" == "amd" ]]; then
+        IFS='|' read -r _GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
+        print_status "Building for: $GPU_NAME ($GPU_TARGET)"
+        CMAKE_GPU_FLAGS=$(get_cmake_gpu_flags "$GPU_VENDOR" "$GPU_TARGET")
+        
+        # Set up HIP environment for AMD
+        HIPCXX="$(hipconfig -l)/clang"
+        export HIPCXX
+        HIP_PATH="$(hipconfig -R)"
+        export HIP_PATH
+    else
+        print_status "Building CPU-only version"
+        CMAKE_GPU_FLAGS=""
+    fi
     
     # Clean and rebuild
     print_status "Cleaning previous build..."
     rm -rf build
     
     print_status "Configuring CMake..."
+    # shellcheck disable=SC2086  # Word splitting is intentional for cmake flags
     cmake -S . -B build \
-        -DGGML_HIP=ON \
-        -DGPU_TARGETS="$GPU_TARGET" \
+        $CMAKE_GPU_FLAGS \
         -DCMAKE_BUILD_TYPE=Release
     
     print_status "Building (this may take 10-20 minutes)..."
@@ -585,18 +657,36 @@ if [[ $RUN_VERIFY == true ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Banner
+# Banner and Initial GPU Detection
 # -----------------------------------------------------------------------------
 
-print_banner "llama.cpp ROCm/HIP Setup"
+# Detect GPU vendor first
+GPU_VENDOR=$(detect_gpu_vendor)
+GPU_VENDOR_DISPLAY=$(get_gpu_vendor_display_name "$GPU_VENDOR")
+
+# Show appropriate banner based on GPU vendor
+if [[ "$GPU_VENDOR" == "nvidia" ]]; then
+    print_banner "llama.cpp CUDA Setup"
+elif [[ "$GPU_VENDOR" == "amd" ]]; then
+    print_banner "llama.cpp ROCm/HIP Setup"
+else
+    print_banner "llama.cpp CPU Setup"
+fi
 
 # -----------------------------------------------------------------------------
 # Load Configuration
 # -----------------------------------------------------------------------------
 
-# Detect GPU
-IFS='|' read -r _GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
-print_status "Detected GPU: $GPU_NAME ($GPU_TARGET)"
+# Detect and display GPU info based on vendor
+if [[ "$GPU_VENDOR" == "nvidia" ]]; then
+    IFS='|' read -r GPU_NAME GPU_VRAM_GB <<< "$(detect_nvidia_gpu)"
+    print_status "Detected GPU: $GPU_NAME (${GPU_VRAM_GB}GB VRAM)"
+elif [[ "$GPU_VENDOR" == "amd" ]]; then
+    IFS='|' read -r _GPU_CHIP GPU_NAME GPU_TARGET <<< "$(detect_amd_gpu)"
+    print_status "Detected GPU: $GPU_NAME ($GPU_TARGET)"
+else
+    print_warning "No GPU detected - will build CPU-only version"
+fi
 
 # -----------------------------------------------------------------------------
 # Dependency Check
@@ -634,21 +724,55 @@ else
     MISSING_REQUIRED+=("make")
 fi
 
-# HIP/ROCm
-if command -v hipconfig &>/dev/null; then
-    HIP_VERSION=$(hipconfig --version 2>/dev/null || echo "unknown")
-    echo -e "  $CHECKMARK hipconfig            installed ($HIP_VERSION)"
+# GPU-specific dependencies
+if [[ "$GPU_VENDOR" == "nvidia" ]]; then
+    # NVIDIA: Check for CUDA toolkit
+    NVCC_PATH=$(detect_nvcc || echo "")
+    if [[ -n "$NVCC_PATH" ]]; then
+        CUDA_VERSION=$("$NVCC_PATH" --version 2>/dev/null | grep "release" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        echo -e "  $CHECKMARK nvcc                 installed ($CUDA_VERSION)"
+    else
+        echo -e "  $CROSSMARK nvcc                 not installed"
+        MISSING_REQUIRED+=("cuda")
+    fi
+    
+    # Check nvidia-smi (driver)
+    if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
+        DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
+        echo -e "  $CHECKMARK nvidia-smi           driver $DRIVER_VERSION"
+    else
+        echo -e "  $CROSSMARK nvidia-smi           driver not working"
+        MISSING_REQUIRED+=("nvidia-driver")
+    fi
+    
+elif [[ "$GPU_VENDOR" == "amd" ]]; then
+    # AMD: Check HIP/ROCm
+    if command -v hipconfig &>/dev/null; then
+        HIP_VERSION=$(hipconfig --version 2>/dev/null || echo "unknown")
+        echo -e "  $CHECKMARK hipconfig            installed ($HIP_VERSION)"
+    else
+        echo -e "  $CROSSMARK hipconfig            not installed"
+        MISSING_REQUIRED+=("rocm")
+    fi
+    
+    # Check for HIP compiler
+    if command -v hipcc &>/dev/null; then
+        echo -e "  $CHECKMARK hipcc                installed"
+    else
+        echo -e "  $CROSSMARK hipcc                not installed"
+        MISSING_REQUIRED+=("hipcc")
+    fi
+    
+    # AMD GPU device
+    if [[ -e /dev/kfd ]]; then
+        echo -e "  $CHECKMARK AMD GPU (/dev/kfd)   detected"
+    else
+        echo -e "  $CROSSMARK AMD GPU (/dev/kfd)   not found"
+        MISSING_REQUIRED+=("amd-gpu")
+    fi
 else
-    echo -e "  $CROSSMARK hipconfig            not installed"
-    MISSING_REQUIRED+=("rocm")
-fi
-
-# Check for HIP compiler
-if command -v hipcc &>/dev/null; then
-    echo -e "  $CHECKMARK hipcc                installed"
-else
-    echo -e "  $CROSSMARK hipcc                not installed"
-    MISSING_REQUIRED+=("hipcc")
+    # CPU-only: Just note it
+    echo -e "  $WARNMARK GPU                   none detected (CPU-only build)"
 fi
 
 # curl or huggingface-cli for downloads
@@ -671,51 +795,46 @@ if [[ $NON_INTERACTIVE == false ]]; then
     fi
 fi
 
-# AMD GPU device
-if [[ -e /dev/kfd ]]; then
-    echo -e "  $CHECKMARK AMD GPU (/dev/kfd)   detected"
-else
-    echo -e "  $CROSSMARK AMD GPU (/dev/kfd)   not found"
-    MISSING_REQUIRED+=("amd-gpu")
-fi
-
-# User groups - these are warnings, not hard requirements
-IN_VIDEO_GROUP=false
-IN_RENDER_GROUP=false
-if groups | grep -q '\bvideo\b'; then
-    IN_VIDEO_GROUP=true
-fi
-if groups | grep -q '\brender\b'; then
-    IN_RENDER_GROUP=true
-fi
-
-if [[ $IN_VIDEO_GROUP == true && $IN_RENDER_GROUP == true ]]; then
-    echo -e "  $CHECKMARK User groups          video, render"
-else
-    MISSING_GROUPS=""
-    [[ $IN_VIDEO_GROUP == false ]] && MISSING_GROUPS+="video "
-    [[ $IN_RENDER_GROUP == false ]] && MISSING_GROUPS+="render"
-    echo -e "  $WARNMARK User groups          missing: ${MISSING_GROUPS}(may cause GPU issues)"
-    PERMISSION_WARNINGS+=("user-groups")
-fi
-
-# Check /dev/kfd permissions
-if [[ -e /dev/kfd ]]; then
-    if [[ -r /dev/kfd && -w /dev/kfd ]]; then
-        echo -e "  $CHECKMARK /dev/kfd access      read/write OK"
-    else
-        echo -e "  $WARNMARK /dev/kfd access      no read/write permission"
-        PERMISSION_WARNINGS+=("kfd-permissions")
+# AMD-specific permission checks
+if [[ "$GPU_VENDOR" == "amd" ]]; then
+    # User groups - these are warnings, not hard requirements
+    IN_VIDEO_GROUP=false
+    IN_RENDER_GROUP=false
+    if groups | grep -q '\bvideo\b'; then
+        IN_VIDEO_GROUP=true
     fi
-fi
-
-# Check /dev/dri permissions
-if [[ -d /dev/dri ]]; then
-    if [[ -r /dev/dri/renderD128 ]]; then
-        echo -e "  $CHECKMARK /dev/dri access      OK"
+    if groups | grep -q '\brender\b'; then
+        IN_RENDER_GROUP=true
+    fi
+    
+    if [[ $IN_VIDEO_GROUP == true && $IN_RENDER_GROUP == true ]]; then
+        echo -e "  $CHECKMARK User groups          video, render"
     else
-        echo -e "  $WARNMARK /dev/dri access      limited permissions"
-        PERMISSION_WARNINGS+=("dri-permissions")
+        MISSING_GROUPS=""
+        [[ $IN_VIDEO_GROUP == false ]] && MISSING_GROUPS+="video "
+        [[ $IN_RENDER_GROUP == false ]] && MISSING_GROUPS+="render"
+        echo -e "  $WARNMARK User groups          missing: ${MISSING_GROUPS}(may cause GPU issues)"
+        PERMISSION_WARNINGS+=("user-groups")
+    fi
+    
+    # Check /dev/kfd permissions
+    if [[ -e /dev/kfd ]]; then
+        if [[ -r /dev/kfd && -w /dev/kfd ]]; then
+            echo -e "  $CHECKMARK /dev/kfd access      read/write OK"
+        else
+            echo -e "  $WARNMARK /dev/kfd access      no read/write permission"
+            PERMISSION_WARNINGS+=("kfd-permissions")
+        fi
+    fi
+    
+    # Check /dev/dri permissions
+    if [[ -d /dev/dri ]]; then
+        if [[ -r /dev/dri/renderD128 ]]; then
+            echo -e "  $CHECKMARK /dev/dri access      OK"
+        else
+            echo -e "  $WARNMARK /dev/dri access      limited permissions"
+            PERMISSION_WARNINGS+=("dri-permissions")
+        fi
     fi
 fi
 
@@ -743,6 +862,20 @@ if [[ ${#MISSING_REQUIRED[@]} -gt 0 ]]; then
                 echo -e "  ${BOLD}make (or ninja):${NC}"
                 echo "    Arch Linux:  sudo pacman -S make ninja"
                 echo "    Ubuntu:      sudo apt install build-essential ninja-build"
+                echo
+                ;;
+            cuda)
+                echo -e "  ${BOLD}CUDA Toolkit:${NC}"
+                echo "    See: https://developer.nvidia.com/cuda-downloads"
+                echo "    Arch Linux:  sudo pacman -S cuda"
+                echo "    Ubuntu:      sudo apt install nvidia-cuda-toolkit"
+                echo
+                ;;
+            nvidia-driver)
+                echo -e "  ${BOLD}NVIDIA Driver:${NC}"
+                echo "    Arch Linux:  sudo pacman -S nvidia"
+                echo "    Ubuntu:      sudo apt install nvidia-driver-XXX"
+                echo "    Or use:      ubuntu-drivers autoinstall"
                 echo
                 ;;
             rocm|hipcc)
@@ -859,11 +992,17 @@ print_header "Setting Up llama.cpp Repository"
 clone_or_update_repo "https://github.com/ggerganov/llama.cpp" "$LLAMA_CPP_DIR" "$FORCE_REBUILD" || exit 1
 
 # -----------------------------------------------------------------------------
-# Build llama.cpp with HIP
+# Build llama.cpp (vendor-aware)
 # -----------------------------------------------------------------------------
 
 if [[ "$SKIP_BUILD" == false ]]; then
-    print_header "Building llama.cpp with HIP/ROCm"
+    if [[ "$GPU_VENDOR" == "nvidia" ]]; then
+        print_header "Building llama.cpp with CUDA"
+    elif [[ "$GPU_VENDOR" == "amd" ]]; then
+        print_header "Building llama.cpp with HIP/ROCm"
+    else
+        print_header "Building llama.cpp (CPU-only)"
+    fi
     
     cd "$LLAMA_CPP_DIR"
     
@@ -871,18 +1010,28 @@ if [[ "$SKIP_BUILD" == false ]]; then
     if [[ -f "build/bin/llama-server" && "$FORCE_REBUILD" != true ]]; then
         print_status "llama-server already built (use --force-rebuild to rebuild)"
     else
-        print_status "Configuring CMake with HIP for $GPU_TARGET..."
-        
-        # Set up HIP environment
-        HIPCXX="$(hipconfig -l)/clang"
-        export HIPCXX
-        HIP_PATH="$(hipconfig -R)"
-        export HIP_PATH
+        # Get CMake GPU flags based on vendor
+        if [[ "$GPU_VENDOR" == "nvidia" ]]; then
+            CMAKE_GPU_FLAGS=$(get_cmake_gpu_flags "$GPU_VENDOR")
+            print_status "Configuring CMake with CUDA..."
+        elif [[ "$GPU_VENDOR" == "amd" ]]; then
+            CMAKE_GPU_FLAGS=$(get_cmake_gpu_flags "$GPU_VENDOR" "$GPU_TARGET")
+            print_status "Configuring CMake with HIP for $GPU_TARGET..."
+            
+            # Set up HIP environment for AMD
+            HIPCXX="$(hipconfig -l)/clang"
+            export HIPCXX
+            HIP_PATH="$(hipconfig -R)"
+            export HIP_PATH
+        else
+            CMAKE_GPU_FLAGS=""
+            print_status "Configuring CMake for CPU-only build..."
+        fi
         
         # Configure with CMake
+        # shellcheck disable=SC2086  # Word splitting is intentional for cmake flags
         cmake -S . -B build \
-            -DGGML_HIP=ON \
-            -DGPU_TARGETS="$GPU_TARGET" \
+            $CMAKE_GPU_FLAGS \
             -DCMAKE_BUILD_TYPE=Release
         
         print_status "Building (this may take 10-20 minutes)..."
@@ -971,13 +1120,10 @@ if [[ -d "$MODELS_DIR" ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Create local .env
+# Create local .env (vendor-aware)
 # -----------------------------------------------------------------------------
 
 print_header "Creating Local Configuration"
-
-# Get appropriate HSA version for detected GPU
-DETECTED_HSA_VERSION=$(get_hsa_version "$GPU_TARGET")
 
 if [[ -f "$LOCAL_ENV" && "$FORCE_ENV" != "true" ]]; then
     print_status ".env already exists, keeping current configuration"
@@ -987,11 +1133,34 @@ else
         print_status "Regenerating .env (--force-env)"
     fi
     
-    cat > "$LOCAL_ENV" << EOF
+    # Generate vendor-specific .env content
+    if [[ "$GPU_VENDOR" == "nvidia" ]]; then
+        cat > "$LOCAL_ENV" << EOF
 # llama.cpp Configuration
 # Generated by setup.sh on $(date)
 
 # GPU Configuration (detected: $GPU_NAME)
+GPU_VENDOR=nvidia
+GPU_LAYERS=99
+
+# Server settings
+LLAMA_PORT=$DEFAULT_PORT
+LLAMA_HOST=127.0.0.1
+
+# Paths
+LLAMA_CPP_DIR=$LLAMA_CPP_DIR
+MODELS_DIR=$MODELS_DIR
+EOF
+    elif [[ "$GPU_VENDOR" == "amd" ]]; then
+        # Get appropriate HSA version for detected GPU
+        DETECTED_HSA_VERSION=$(get_hsa_version "$GPU_TARGET")
+        
+        cat > "$LOCAL_ENV" << EOF
+# llama.cpp Configuration
+# Generated by setup.sh on $(date)
+
+# GPU Configuration (detected: $GPU_NAME)
+GPU_VENDOR=amd
 GPU_TARGET=$GPU_TARGET
 HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-$DETECTED_HSA_VERSION}
 GPU_LAYERS=99
@@ -1004,6 +1173,24 @@ LLAMA_HOST=127.0.0.1
 LLAMA_CPP_DIR=$LLAMA_CPP_DIR
 MODELS_DIR=$MODELS_DIR
 EOF
+    else
+        cat > "$LOCAL_ENV" << EOF
+# llama.cpp Configuration
+# Generated by setup.sh on $(date)
+
+# GPU Configuration (CPU-only mode)
+GPU_VENDOR=cpu
+GPU_LAYERS=0
+
+# Server settings
+LLAMA_PORT=$DEFAULT_PORT
+LLAMA_HOST=127.0.0.1
+
+# Paths
+LLAMA_CPP_DIR=$LLAMA_CPP_DIR
+MODELS_DIR=$MODELS_DIR
+EOF
+    fi
 
     print_success "Created .env"
 fi
@@ -1016,7 +1203,13 @@ print_header "Setup Complete!"
 
 echo
 echo -e "${BOLD}Configuration:${NC}"
-echo "  GPU:              $GPU_NAME ($GPU_TARGET)"
+if [[ "$GPU_VENDOR" == "nvidia" ]]; then
+    echo "  GPU:              $GPU_NAME (CUDA)"
+elif [[ "$GPU_VENDOR" == "amd" ]]; then
+    echo "  GPU:              $GPU_NAME ($GPU_TARGET)"
+else
+    echo "  GPU:              CPU-only"
+fi
 echo "  llama.cpp:        $LLAMA_CPP_DIR"
 echo "  Models:           $MODELS_DIR"
 echo "  Server port:      $DEFAULT_PORT"
@@ -1046,9 +1239,13 @@ if [[ -n "$TEST_MODEL" ]]; then
     IFS='|' read -r _ _ test_gguf_file test_size _ <<< "${MODEL_INFO[$TEST_MODEL]}"
     test_size_mb=$(parse_size_mb "$test_size")
     
-    # Get HSA environment for ROCm
-    DETECTED_HSA_VERSION=$(get_hsa_version "$GPU_TARGET")
-    HSA_ENV="HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-$DETECTED_HSA_VERSION}"
+    # Get environment variables for GPU vendor
+    if [[ "$GPU_VENDOR" == "amd" ]]; then
+        DETECTED_HSA_VERSION=$(get_hsa_version "$GPU_TARGET")
+        GPU_ENV="HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-$DETECTED_HSA_VERSION}"
+    else
+        GPU_ENV=""
+    fi
     
     if [[ "$NON_INTERACTIVE" == false ]]; then
         echo
@@ -1138,15 +1335,15 @@ if [[ -n "$TEST_MODEL" ]]; then
                 if [[ -n "$selected_model" ]]; then
                     IFS='|' read -r _ _ sel_gguf_file sel_size _ <<< "${MODEL_INFO[$selected_model]}"
                     sel_size_mb=$(parse_size_mb "$sel_size")
-                    run_inference_test "$selected_model" "$sel_gguf_file" "$sel_size_mb" "$HSA_ENV" || true
+                    run_inference_test "$selected_model" "$sel_gguf_file" "$sel_size_mb" "$GPU_ENV" || true
                 fi
                 ;;
             *)
-                run_inference_test "$TEST_MODEL" "$test_gguf_file" "$test_size_mb" "$HSA_ENV" || true
+                run_inference_test "$TEST_MODEL" "$test_gguf_file" "$test_size_mb" "$GPU_ENV" || true
                 ;;
         esac
     else
-        run_inference_test "$TEST_MODEL" "$test_gguf_file" "$test_size_mb" "$HSA_ENV" || true
+        run_inference_test "$TEST_MODEL" "$test_gguf_file" "$test_size_mb" "$GPU_ENV" || true
     fi
 fi
 

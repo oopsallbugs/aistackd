@@ -1,10 +1,10 @@
-# SearXNG settings for local-llm-rocm RAG
+# SearXNG settings for llama-cpp-setup RAG
 # See https://docs.searxng.org/admin/settings/index.html
 
 use_default_settings: true
 
 general:
-  instance_name: "local-llm-rocm"
+  instance_name: "llama-cpp-setup"
   privacypolicy_url: false
   donation_url: false
   contact_url: false

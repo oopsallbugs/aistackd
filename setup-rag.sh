@@ -144,6 +144,8 @@ if [[ "$HAS_DOCKER" == true ]]; then
         stop_spinner true "SearXNG image ready"
         
         print_status "Starting SearXNG container..."
+        # Export UID/GID for docker-compose to run as current user (prevents permission issues)
+        export UID GID=$(id -g)
         if docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d searxng 2>/dev/null; then
             print_success "SearXNG started on port 8888"
         else
@@ -160,7 +162,7 @@ fi
 # Create Data Directory
 # -----------------------------------------------------------------------------
 
-mkdir -p "$RAG_DIR/data/chroma"
+mkdir -p "$RAG_DIR/data/lancedb"
 
 # -----------------------------------------------------------------------------
 # Summary
@@ -173,7 +175,7 @@ echo -e "${GREEN}${BOLD}RAG system is ready!${NC}"
 echo
 echo -e "  ${BOLD}Python venv:${NC}     $RAG_VENV"
 echo -e "  ${BOLD}Embedding model:${NC} nomic-ai/nomic-embed-text-v1.5"
-echo -e "  ${BOLD}Vector store:${NC}    $RAG_DIR/data/chroma"
+echo -e "  ${BOLD}Vector store:${NC}    $RAG_DIR/data/lancedb"
 
 if [[ "$HAS_DOCKER" == true ]]; then
     echo -e "  ${BOLD}Web search:${NC}      http://127.0.0.1:8888 (SearXNG)"

@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="RAG Server",
-    description="Document indexing, retrieval, and web search for local-llm-rocm",
+    description="Document indexing, retrieval, and web search for llama-cpp-setup",
     version="1.0.0",
     lifespan=lifespan,
 )

@@ -1225,6 +1225,144 @@ detect_platform() {
 detect_platform
 
 # -----------------------------------------------------------------------------
+# GPU Vendor Detection (Linux)
+# -----------------------------------------------------------------------------
+
+# Detected GPU vendor (cached after first call)
+DETECTED_GPU_VENDOR=""
+
+# Detect GPU vendor on Linux
+# Returns: nvidia, amd, or cpu
+# Usage: vendor=$(detect_gpu_vendor)
+detect_gpu_vendor() {
+    # Return cached value if already detected
+    if [[ -n "$DETECTED_GPU_VENDOR" ]]; then
+        echo "$DETECTED_GPU_VENDOR"
+        return 0
+    fi
+    
+    if [[ "$IS_LINUX" != true ]]; then
+        DETECTED_GPU_VENDOR="cpu"
+        echo "$DETECTED_GPU_VENDOR"
+        return 0
+    fi
+    
+    # Check for NVIDIA first (nvidia-smi is installed with drivers)
+    if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
+        DETECTED_GPU_VENDOR="nvidia"
+    # Check for AMD (ROCm/HIP)
+    elif [[ -e /dev/kfd ]] && command -v hipconfig &>/dev/null; then
+        DETECTED_GPU_VENDOR="amd"
+    # Fallback to CPU-only
+    else
+        DETECTED_GPU_VENDOR="cpu"
+    fi
+    
+    echo "$DETECTED_GPU_VENDOR"
+}
+
+# Find nvcc compiler (CUDA toolkit)
+# Returns: path to nvcc, or empty string if not found
+# Usage: nvcc_path=$(detect_nvcc)
+detect_nvcc() {
+    # Check PATH first (covers most distros when properly installed)
+    if command -v nvcc &>/dev/null; then
+        command -v nvcc
+        return 0
+    fi
+    
+    # Check common install locations
+    local cuda_paths=(
+        "/usr/local/cuda/bin/nvcc"
+        "/opt/cuda/bin/nvcc"
+        "/usr/bin/nvcc"
+    )
+    
+    for path in "${cuda_paths[@]}"; do
+        if [[ -x "$path" ]]; then
+            echo "$path"
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# Get NVIDIA GPU info via nvidia-smi
+# Returns: gpu_name|vram_gb
+# Usage: IFS='|' read -r gpu_name vram_gb <<< "$(detect_nvidia_gpu)"
+detect_nvidia_gpu() {
+    if ! command -v nvidia-smi &>/dev/null; then
+        echo "Unknown NVIDIA GPU|0"
+        return 1
+    fi
+    
+    local gpu_name vram_mb vram_gb
+    gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | xargs)
+    vram_mb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | xargs)
+    
+    if [[ -n "$vram_mb" && "$vram_mb" =~ ^[0-9]+$ ]]; then
+        vram_gb=$((vram_mb / 1024))
+    else
+        vram_gb=0
+    fi
+    
+    echo "${gpu_name:-Unknown NVIDIA GPU}|${vram_gb}"
+}
+
+# Get NVIDIA VRAM in GB
+# Usage: vram=$(get_nvidia_vram_gb)
+get_nvidia_vram_gb() {
+    local vram_mb
+    vram_mb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | xargs)
+    
+    if [[ -n "$vram_mb" && "$vram_mb" =~ ^[0-9]+$ ]]; then
+        echo $((vram_mb / 1024))
+    else
+        echo "0"
+    fi
+}
+
+# Get CMake GPU flags for building llama.cpp
+# Usage: cmake_flags=$(get_cmake_gpu_flags "$vendor" "$gpu_target")
+# Arguments:
+#   vendor: nvidia, amd, or cpu
+#   gpu_target: AMD GPU target (e.g., gfx1100) - only used for AMD
+get_cmake_gpu_flags() {
+    local vendor="$1"
+    local gpu_target="${2:-}"
+    
+    case "$vendor" in
+        nvidia)
+            echo "-DGGML_CUDA=ON"
+            ;;
+        amd)
+            if [[ -n "$gpu_target" ]]; then
+                echo "-DGGML_HIP=ON -DGPU_TARGETS=$gpu_target"
+            else
+                echo "-DGGML_HIP=ON"
+            fi
+            ;;
+        *)
+            # CPU-only build, no special flags
+            echo ""
+            ;;
+    esac
+}
+
+# Get GPU vendor display name
+# Usage: name=$(get_gpu_vendor_display_name "$vendor")
+get_gpu_vendor_display_name() {
+    local vendor="$1"
+    case "$vendor" in
+        nvidia) echo "NVIDIA (CUDA)" ;;
+        amd)    echo "AMD (ROCm/HIP)" ;;
+        cpu)    echo "CPU-only" ;;
+        *)      echo "Unknown" ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
 # Dependency Notice for Uninstall Scripts
 # -----------------------------------------------------------------------------
 
@@ -1871,7 +2009,7 @@ parse_size_bytes() {
 # =============================================================================
 
 # Cache location and settings
-UPDATE_CHECK_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/local-llm-rocm/update-check"
+UPDATE_CHECK_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/llama-cpp-setup/update-check"
 UPDATE_CHECK_MAX_AGE=86400  # 24 hours in seconds
 
 # -----------------------------------------------------------------------------

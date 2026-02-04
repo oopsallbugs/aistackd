@@ -1,4 +1,4 @@
-# Local LLM Setup
+# llama-cpp-setup
 
 Run local LLMs with GPU acceleration using llama.cpp.
 
@@ -6,19 +6,20 @@ Run local LLMs with GPU acceleration using llama.cpp.
 
 | Platform | GPU | Backend |
 |----------|-----|---------|
+| **Linux** | NVIDIA (CUDA) | llama.cpp (CUDA) |
 | **Linux** | AMD (ROCm) | llama.cpp (ROCm/HIP) |
 | **macOS** | Apple Silicon (Metal) | llama.cpp (Metal) |
 
 ## Quick Start
 
-### Linux (AMD GPU)
+### Linux (NVIDIA or AMD GPU)
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/oopsallbugs/local-llm-rocm.git
-cd local-llm-rocm
+git clone https://github.com/oopsallbugs/llama-cpp-setup.git
+cd llama-cpp-setup
 
-# 2. Run setup (builds llama.cpp with ROCm, downloads models)
+# 2. Run setup (auto-detects GPU, builds llama.cpp, downloads models)
 ./setup.sh
 
 # 3. Start the server
@@ -34,8 +35,8 @@ opencode
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/oopsallbugs/local-llm-rocm.git
-cd local-llm-rocm
+git clone https://github.com/oopsallbugs/llama-cpp-setup.git
+cd llama-cpp-setup
 
 # 2. Run setup (builds llama.cpp with Metal, downloads models)
 ./setup-macos.sh
@@ -49,7 +50,34 @@ opencode
 # Use /models to select llama.cpp provider
 ```
 
+### OpenHands (Autonomous AI Agent)
+
+After setting up llama.cpp, you can also run [OpenHands](https://github.com/All-Hands-AI/OpenHands) for autonomous AI coding tasks:
+
+```bash
+# Start OpenHands (connects to your llama.cpp server)
+./start-openhands.sh
+
+# Open http://localhost:3000
+```
+
+See [docs/OPENHANDS.md](docs/OPENHANDS.md) for remote LLM server setup and more options.
+
 ## Requirements
+
+### Linux with NVIDIA GPU
+
+| Requirement | Notes |
+|-------------|-------|
+| **Linux** | Any modern distribution |
+| **NVIDIA GPU** | GTX 10xx, RTX 20xx/30xx/40xx/50xx series |
+| **NVIDIA Driver** | `nvidia-smi` must work |
+| **CUDA Toolkit** | `nvcc --version` must be available |
+| **Build tools** | `git`, `cmake`, `make` or `ninja` |
+| **gum** | Required for interactive mode ([install](https://github.com/charmbracelet/gum#installation)) |
+| **curl** | For model downloads (or `huggingface-cli`) |
+| **Disk space** | 20-100GB depending on model choices |
+| **GPU Memory (VRAM)** | 8GB minimum, 16-24GB+ recommended |
 
 ### Linux with AMD GPU
 
@@ -82,6 +110,17 @@ opencode
 
 ### Supported GPUs
 
+#### NVIDIA (Linux)
+
+| GPU Family | Examples | Notes |
+|------------|----------|-------|
+| RTX 50xx | RTX 5090, 5080, 5070 Ti | Blackwell, newest |
+| RTX 40xx | RTX 4090, 4080, 4070 Ti | Ada Lovelace |
+| RTX 30xx | RTX 3090, 3080, 3070 | Ampere |
+| RTX 20xx | RTX 2080 Ti, 2080, 2070 | Turing |
+| GTX 16xx | GTX 1660 Ti, 1650 | Turing (no RT cores) |
+| GTX 10xx | GTX 1080 Ti, 1080, 1070 | Pascal |
+
 #### AMD (Linux)
 
 | GPU | Architecture | Target |
@@ -106,11 +145,12 @@ opencode
 ## Project Structure
 
 ```text
-local-llm-rocm/
-├── setup.sh                  # llama.cpp setup (Linux/ROCm)
+llama-cpp-setup/
+├── setup.sh                  # llama.cpp setup (Linux - auto-detects NVIDIA/AMD)
 ├── setup-macos.sh            # llama.cpp setup (macOS/Metal)
 ├── setup-rag.sh              # RAG system setup
 ├── start-server.sh           # Start llama-server (cross-platform)
+├── start-openhands.sh        # Start OpenHands AI assistant
 ├── start-rag.sh              # Start RAG server standalone
 ├── download-model.sh         # Download models from HuggingFace
 ├── sync-opencode.sh          # Sync models and agents to OpenCode
@@ -121,6 +161,9 @@ local-llm-rocm/
 ├── docker-compose.yml        # SearXNG container definition
 ├── models.conf               # GGUF model definitions with context limits
 ├── .env.example              # Server configuration example
+│
+├── openhands/                # OpenHands integration
+│   └── docker-compose.yml    # OpenHands container definition
 │
 ├── rag/                      # RAG subsystem
 │   ├── requirements.txt      # Python dependencies
@@ -138,6 +181,9 @@ local-llm-rocm/
 │   ├── plan.md               # Read-only planning agent
 │   ├── review.md             # Code review agent
 │   └── debug.md              # Debugging agent
+│
+├── docs/                     # Documentation
+│   └── OPENHANDS.md          # OpenHands integration guide
 │
 ├── lib/
 │   └── common.sh             # Shared functions for setup scripts
@@ -159,10 +205,11 @@ The llama.cpp server provides an OpenAI-compatible API at `http://localhost:8080
 
 | Script | Platform | Description |
 |--------|----------|-------------|
-| `setup.sh` | Linux | Build llama.cpp with ROCm, download models |
+| `setup.sh` | Linux | Build llama.cpp (auto-detects NVIDIA/AMD), download models |
 | `setup-macos.sh` | macOS | Build llama.cpp with Metal, download models |
 | `setup-rag.sh` | Both | Set up RAG system (venv, embeddings, SearXNG) |
 | `start-server.sh` | Both | Start llama-server with a model |
+| `start-openhands.sh` | Both | Start OpenHands AI assistant (Docker) |
 | `start-rag.sh` | Both | Start RAG server standalone |
 | `download-model.sh` | Both | Download individual GGUF models |
 | `sync-opencode.sh` | Both | Sync models and agents to OpenCode |
@@ -287,14 +334,28 @@ genai:
 
 ## Troubleshooting
 
-### Linux: GPU Permission Denied
+### Linux: NVIDIA Issues
+
+```bash
+# Check NVIDIA driver
+nvidia-smi
+
+# Check CUDA installation
+nvcc --version
+
+# If nvcc not found, install CUDA toolkit:
+# Arch: sudo pacman -S cuda
+# Ubuntu: sudo apt install nvidia-cuda-toolkit
+```
+
+### Linux: AMD GPU Permission Denied
 
 ```bash
 ./setup.sh --fix-permissions
 # Then log out and back in
 ```
 
-### Linux: ROCm Issues
+### Linux: AMD ROCm Issues
 
 ```bash
 # Check ROCm installation
@@ -479,7 +540,7 @@ The project includes an optional RAG (Retrieval-Augmented Generation) system for
 ./rag-search.sh --collection coding "how does authentication work"
 
 # Search the web
-./rag-web.sh "python chromadb tutorial"
+./rag-web.sh "python async await tutorial"
 
 # List collections
 ./rag-search.sh --list
@@ -491,7 +552,7 @@ The project includes an optional RAG (Retrieval-Augmented Generation) system for
 |-----------|------|-------------|
 | RAG Server | 8081 | FastAPI server for indexing and search |
 | SearXNG | 8888 | Metasearch engine for web search (Docker) |
-| ChromaDB | - | Vector database (embedded) |
+| LanceDB | - | Vector database (embedded) |
 | nomic-embed-text | - | Embedding model (CPU, ~500MB RAM) |
 
 ### Collections
@@ -528,7 +589,9 @@ The RAG server exposes a REST API at `http://127.0.0.1:8081`:
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp)
 - [OpenCode](https://opencode.ai)
+- [OpenHands](https://github.com/All-Hands-AI/OpenHands)
 - [HuggingFace GGUF Models](https://huggingface.co/models?sort=trending&search=gguf)
+- [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads)
 - [ROCm Documentation](https://rocm.docs.amd.com)
 - [Metal Performance Shaders](https://developer.apple.com/metal/)
 
