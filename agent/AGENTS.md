@@ -4,7 +4,7 @@ This AGENTS.md file is optimized for local models running via llama.cpp.
 The setup script copies this to `~/.config/opencode/AGENTS.md` for global rules.
 You can also place a project-specific AGENTS.md in your project root.
 
-### Response Guidelines
+## Response Guidelines
 
 - Be direct and concise - avoid unnecessary preamble
 - Focus on code and technical solutions
@@ -12,7 +12,7 @@ You can also place a project-specific AGENTS.md in your project root.
 - Use markdown code blocks with language tags
 - Prefer showing diffs or specific line changes over full file contents
 
-### Context Efficiency
+## Context Efficiency
 
 Local models have limited context windows. To work effectively:
 

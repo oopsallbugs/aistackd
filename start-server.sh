@@ -279,7 +279,7 @@ get_model_info() {
     local model_category=""
     
     if [[ -f "$MODELS_CONF" ]]; then
-        while IFS='|' read -r category model_id hf_repo gguf_file size description ctx_limit out_limit || [[ -n "$category" ]]; do
+        while IFS='|' read -r category model_id hf_repo gguf_file size description _ _ || [[ -n "$category" ]]; do
             [[ "$category" =~ ^[[:space:]]*# ]] && continue
             [[ "$category" =~ ^ALIAS: ]] && continue
             [[ -z "$category" ]] && continue
@@ -809,7 +809,9 @@ start_rag_services() {
         if ! docker ps --format '{{.Names}}' | grep -q '^searxng$'; then
             echo -n "  Starting SearXNG... "
             # Export UID/GID for docker-compose to run as current user
-            export UID GID=$(id -g)
+            export UID
+            GID=$(id -g)
+            export GID
             if docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d searxng &>/dev/null; then
                 echo -e "${GREEN}✓${NC}"
             else

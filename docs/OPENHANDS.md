@@ -7,16 +7,18 @@ This guide covers integrating OpenHands with your local llama.cpp server.
 ## Quick Start
 
 1. **Start the LLM server** (if running locally):
+
    ```bash
    ./start-server.sh qwen2.5-coder:32b
    ```
 
 2. **Start OpenHands**:
+
    ```bash
    ./start-openhands.sh
    ```
 
-3. **Open the web UI** at http://localhost:3000
+3. **Open the web UI** at <http://localhost:3000>
 
 ## Architecture Options
 
@@ -24,7 +26,7 @@ This guide covers integrating OpenHands with your local llama.cpp server.
 
 Run both llama.cpp and OpenHands on the same machine:
 
-```
+```text
 ┌─────────────────────────────────────────────┐
 │              Your Machine                    │
 │                                              │
@@ -42,7 +44,7 @@ This is the default configuration. Just run `./start-openhands.sh`.
 
 Run llama.cpp on a powerful GPU server, OpenHands on your local machine:
 
-```
+```text
 ┌─────────────────┐          ┌─────────────────┐
 │  Local Machine  │          │   GPU Server    │
 │                 │   HTTP   │                 │
@@ -110,11 +112,13 @@ OpenHands works best with coding-focused models.
 ### OpenHands can't connect to LLM
 
 1. **Check if llama.cpp is running**:
+
    ```bash
    curl http://localhost:8080/health
    ```
 
 2. **Check if it's accessible from Docker**:
+
    ```bash
    docker run --rm --add-host host.docker.internal:host-gateway \
      curlimages/curl curl -s http://host.docker.internal:8080/health
@@ -172,6 +176,7 @@ docker-compose down
 - **LLM access**: If using a remote LLM, ensure the connection is secured (HTTPS) in production
 
 For sensitive projects, consider:
+
 - Using a dedicated workspace directory
 - Running OpenHands in an isolated network
 - Using HTTPS for remote LLM connections

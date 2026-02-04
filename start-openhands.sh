@@ -269,7 +269,7 @@ else
     if [[ -f "$MODELS_CONF" ]]; then
         load_models_conf
         for model in "${MODEL_ORDER[@]}"; do
-            IFS='|' read -r category _ gguf_file _ _ <<< "${MODEL_INFO[$model]}"
+            IFS='|' read -r _ _ gguf_file _ _ <<< "${MODEL_INFO[$model]}"
             if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
                 MODEL_NAME="$model"
                 break

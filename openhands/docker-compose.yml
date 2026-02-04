@@ -1,3 +1,4 @@
+---
 # OpenHands Docker Compose Configuration
 # Alternative to start-openhands.sh for docker-compose users
 #
@@ -22,16 +23,13 @@ services:
     environment:
       # Sandbox runtime image (should match openhands version)
       - SANDBOX_RUNTIME_CONTAINER_IMAGE=docker.all-hands.dev/all-hands-ai/runtime:${OPENHANDS_VERSION:-1.3.0}
-      
       # LLM Configuration
       # For local llama.cpp server:
       - LLM_BASE_URL=${LLM_BASE_URL:-http://host.docker.internal:8080/v1}
       # For remote LLM server, set REMOTE_LLM_URL in .env:
       # - LLM_BASE_URL=${REMOTE_LLM_URL}/v1
-      
       # Model name (use your downloaded model ID)
       - LLM_MODEL=openai/${LLM_MODEL:-llama.cpp}
-      
       # API key (not needed for llama.cpp)
       - LLM_API_KEY=not-needed
     extra_hosts:

@@ -1,5 +1,6 @@
+---
 # RAG Collection Definitions
-# 
+#
 # Collections keep different document types separate.
 # When searching, specify which collection to query.
 #
@@ -37,7 +38,7 @@ collections:
       - ".yml"
       - ".json"
       - ".toml"
-  
+
   notes:
     description: "General notes and documents"
     file_types:
