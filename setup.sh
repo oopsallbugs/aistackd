@@ -301,9 +301,9 @@ if [[ $RUN_STATUS == true ]]; then
     # Server status
     echo
     echo -e "  ${BOLD}Server:${NC}"
-    if curl -sf "http://127.0.0.1:$DEFAULT_PORT/health" &>/dev/null; then
+    if curl -sf "http://$LLAMA_HOST:$LLAMA_PORT/health" &>/dev/null; then
         echo -e "    $CHECKMARK Status: ${GREEN}running${NC}"
-        echo -e "    $CHECKMARK Endpoint: http://127.0.0.1:$DEFAULT_PORT"
+        echo -e "    $CHECKMARK Endpoint: http://$LLAMA_HOST:$LLAMA_PORT"
     else
         echo -e "    $CROSSMARK Status: ${RED}not running${NC}"
         echo -e "    ${DIM}Start with: ./start-server.sh <model>${NC}"
@@ -1147,8 +1147,8 @@ GPU_VENDOR=nvidia
 GPU_LAYERS=99
 
 # Server settings
-LLAMA_PORT=$DEFAULT_PORT
-LLAMA_HOST=127.0.0.1
+LLAMA_PORT=$LLAMA_PORT
+LLAMA_HOST=$LLAMA_HOST  # Use 127.0.0.1 to restrict to local-only (breaks Docker/OpenHands)
 
 # Paths
 LLAMA_CPP_DIR=$LLAMA_CPP_DIR
@@ -1169,8 +1169,8 @@ HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-$DETECTED_HSA_VERSION}
 GPU_LAYERS=99
 
 # Server settings
-LLAMA_PORT=$DEFAULT_PORT
-LLAMA_HOST=127.0.0.1
+LLAMA_PORT=$LLAMA_PORT
+LLAMA_HOST=$LLAMA_HOST  # Use 127.0.0.1 to restrict to local-only (breaks Docker/OpenHands)
 
 # Paths
 LLAMA_CPP_DIR=$LLAMA_CPP_DIR
@@ -1186,8 +1186,8 @@ GPU_VENDOR=cpu
 GPU_LAYERS=0
 
 # Server settings
-LLAMA_PORT=$DEFAULT_PORT
-LLAMA_HOST=127.0.0.1
+LLAMA_PORT=$LLAMA_PORT
+LLAMA_HOST=$LLAMA_HOST  # Use 127.0.0.1 to restrict to local-only (breaks Docker/OpenHands)
 
 # Paths
 LLAMA_CPP_DIR=$LLAMA_CPP_DIR
@@ -1215,7 +1215,8 @@ else
 fi
 echo "  llama.cpp:        $LLAMA_CPP_DIR"
 echo "  Models:           $MODELS_DIR"
-echo "  Server port:      $DEFAULT_PORT"
+echo "  Server host:      $LLAMA_HOST"
+echo "  Server port:      $LLAMA_PORT"
 echo
 echo -e "${BOLD}Quick commands:${NC}"
 echo "  Start server:     ./start-server.sh <model-id>"

@@ -27,14 +27,14 @@ fi
 
 # Colors - only use if terminal supports them
 if [[ -t 1 ]] && [[ "${TERM:-dumb}" != "dumb" ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    CYAN='\033[0;36m'
-    BOLD='\033[1m'
-    DIM='\033[2m'
-    NC='\033[0m'
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[1;33m'
+    BLUE=$'\033[0;34m'
+    CYAN=$'\033[0;36m'
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    NC=$'\033[0m'
     CHECKMARK="${GREEN}✓${NC}"
     CROSSMARK="${RED}✗${NC}"
     WARNMARK="${YELLOW}!${NC}"
@@ -72,21 +72,40 @@ print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 print_header() { echo -e "\n${CYAN}${BOLD}$1${NC}"; }
 
-# Print main banner with gum style (falls back to plain text if gum unavailable)
-# Usage: print_banner "Script Title"
+# Print banner with gum style (falls back to plain text if gum unavailable)
+# Usage:
+#   print_banner ARGS: title | color | border_color | text
+#   print_banner "Title" 42   # optional color
 print_banner() {
     local title="$1"
+    local color="${2:-15}"           # text color
+    local border_color="${3:-212}"   # border color
+    local text="${4:-}"              # optional text
+
     echo
     if [[ "$HAS_GUM" == true ]]; then
-        gum style \
-            --border rounded \
-            --border-foreground 212 \
-            --padding "0 2" \
-            --margin "0" \
-            "$title"
+        if [[ -n "$text" ]]; then
+            gum style \
+                --border rounded \
+                --border-foreground "$border_color" \
+                --foreground "$color" \
+                --padding "0 2" \
+                --margin "0" \
+                "$title
+$text"
+        else
+            gum style \
+                --border rounded \
+                --border-foreground "$border_color" \
+                --foreground "$color" \
+                --padding "0 2" \
+                --margin "0" \
+                "$title"
+        fi
     else
         echo -e "${CYAN}${BOLD}============================================${NC}"
         echo -e "${CYAN}${BOLD}  $title${NC}"
+        [[ -n "$text" ]] && echo -e "${CYAN}  $text${NC}"
         echo -e "${CYAN}${BOLD}============================================${NC}"
     fi
     echo
@@ -266,7 +285,7 @@ has_help_arg() {
 }
 
 # -----------------------------------------------------------------------------
-# Configuration Paths
+# .env Configuration
 # -----------------------------------------------------------------------------
 
 # These can be overridden by the sourcing script before calling init_paths
@@ -279,10 +298,16 @@ init_paths() {
     LOCAL_ENV="${LOCAL_ENV:-$script_dir/.env}"
     OPENCODE_CONFIG="${OPENCODE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json}"
     
-    # Default values
+    # Default / fallback values 
+    GPU_LAYERS=${GPU_LAYERS:-99} # Default to all layers on GPU
+    AUTO_START_RAG_SERVER=${AUTO_START_RAG_SERVER:-true} # Default to auto-start RAG server
+    LLAMA_PORT=${LLAMA_PORT:-8080} #  For LLaMA server
+    LLAMA_HOST=${LLAMA_HOST:-0.0.0.0} #  For LLaMA server (all interfaces by default. Use 127.0.0.1 for localhost only breaks Docker/OpenHands)
+
+    # These will be overwritten by values from models.conf if metadata for that particular model is available
     DEFAULT_CONTEXT=${DEFAULT_CONTEXT:-32768}
     DEFAULT_OUTPUT=${DEFAULT_OUTPUT:-8192}
-    DEFAULT_PORT=${DEFAULT_PORT:-8080}
+
 }
 
 # -----------------------------------------------------------------------------
@@ -372,8 +397,7 @@ load_models_conf() {
     MODEL_SELECTED=()
     MODEL_INFO=()
     
-    local first_in_category=""
-    declare -A CATEGORY_SEEN
+    local CODING_MODEL_SELECTED=""
     
     while IFS='|' read -r category model_id hf_repo gguf_file size description || [[ -n "$category" ]]; do
         # Skip comments and empty lines
@@ -391,10 +415,10 @@ load_models_conf() {
         MODEL_ORDER+=("$model_id")
         MODEL_INFO["$model_id"]="$category|$hf_repo|$gguf_file|$size|$description"
         
-        # Select first model in each category by default
-        if [[ -z "${CATEGORY_SEEN[$category]:-}" ]]; then
+        # Only pre-select the first coding model
+        if [[ "$category" == "coding" && -z "${CODING_MODEL_SELECTED:-}" ]]; then
             MODEL_SELECTED["$model_id"]=1
-            CATEGORY_SEEN["$category"]=1
+            CODING_MODEL_SELECTED=1
         else
             MODEL_SELECTED["$model_id"]=0
         fi
@@ -766,7 +790,7 @@ generate_opencode_config() {
       "npm": "@ai-sdk/openai-compatible",
       "name": "llama.cpp (local)",
       "options": {
-        "baseURL": "http://127.0.0.1:'"$DEFAULT_PORT"'/v1"
+        "baseURL": "http://$LLAMA_HOST:$LLAMA_PORT/v1"
       },
       "models": {'
     
@@ -964,16 +988,16 @@ run_inference_test() {
         # shellcheck disable=SC2086  # Word splitting is intentional for env vars
         env $extra_env "$server_binary" \
             -m "$model_path" \
-            --host 127.0.0.1 \
-            --port "$test_port" \
+            --host "$LLAMA_HOST" \
+            --port "$LLAMA_PORT" \
             -c 2048 \
             -ngl 99 \
             > "$server_log" 2>&1 &
     else
         "$server_binary" \
             -m "$model_path" \
-            --host 127.0.0.1 \
-            --port "$test_port" \
+            --host "$LLAMA_HOST" \
+            --port "$LLAMA_PORT" \
             -c 2048 \
             -ngl 99 \
             > "$server_log" 2>&1 &
@@ -993,7 +1017,7 @@ run_inference_test() {
             return 1
         fi
         
-        if curl -sf "http://127.0.0.1:$test_port/health" &>/dev/null; then
+        if curl -sf "http://$LLAMA_HOST:$LLAMA_PORT/health" &>/dev/null; then
             ready=true
             break
         fi
@@ -1021,7 +1045,7 @@ run_inference_test() {
     
     local response
     local curl_exit
-    response=$(curl -s --max-time "$inference_timeout" "http://127.0.0.1:$test_port/v1/chat/completions" \
+    response=$(curl -s --max-time "$inference_timeout" "http://$LLAMA_HOST:$LLAMA_PORT/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -d '{
             "model": "test",

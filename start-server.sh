@@ -177,17 +177,17 @@ list_models() {
         size="${size%"${size##*[![:space:]]}"}"
         description="${description#"${description%%[![:space:]]*}"}"
         description="${description%"${description##*[![:space:]]}"}"
-        
-        if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
-            echo -e "  ${GREEN}✓${NC} $model_id ($size) - $description"
-        else
-            echo -e "  ${RED}✗${NC} $model_id ($size) - $description ${YELLOW}(not downloaded)${NC}"
-        fi
+
+    if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
+        print_banner "$model_id" 15 69 "($size) - $description
+    
+Use this model:
+    ${GREEN}${BOLD} ▶ ./start-server.sh $model_id${NC}"
+    fi
     done < "$SCRIPT_DIR/models.conf"
     
     echo
     echo "Downloaded models are in: $MODELS_DIR"
-    echo "Run './download-model.sh <model-id>' to download a model"
     echo
 }
 
@@ -805,7 +805,7 @@ check_existing_processes
 check_vram
 
 # =============================================================================
-# RAG Server Auto-Start
+# RAG Server
 # =============================================================================
 
 start_rag_services() {
@@ -818,16 +818,11 @@ start_rag_services() {
         return 0
     fi
     
-    # Check if RAG server is already running
-    if curl -sf "http://127.0.0.1:$rag_port/health" &>/dev/null; then
-        echo -e "  ${GREEN}✓${NC} RAG server already running on port $rag_port"
-        return 0
-    fi
-    
-    # Start SearXNG if Docker is available
+    # Always check SearXNG first (whether RAG server is running or not)
+    # Start SearXNG if Docker is available and container isn't running
     if command -v docker &>/dev/null && docker info &>/dev/null; then
         if ! docker ps --format '{{.Names}}' | grep -q '^searxng$'; then
-            echo -n "  Starting SearXNG... "
+            start_spinner "  Starting SearXNG Docker container... "
             # Remove any stopped container with the same name
             docker rm searxng &>/dev/null || true
             # Export UID/GID for docker-compose to run as current user
@@ -835,20 +830,29 @@ start_rag_services() {
             GID=$(id -g)
             export GID
             if docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d searxng &>/dev/null; then
-                echo -e "${GREEN}✓${NC}"
+                stop_spinner true "SearXNG Docker container started."
             else
-                echo -e "${YELLOW}skipped${NC}"
+                stop_spinner true "SearXNG Docker container skipped. Web search not available."
             fi
         else
             echo -e "  ${GREEN}✓${NC} SearXNG already running"
         fi
     fi
     
-    # Start RAG server in background
-    echo -n "  Starting RAG server... "
-    
+    # Check if RAG server is already running
+    if curl -sf "http://127.0.0.1:$rag_port/health" &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} RAG server already running on port $rag_port"
+        return 0
+    fi
     # Ensure data directory exists
     mkdir -p "$rag_dir/data"
+
+    # Set HuggingFace cache to persist models
+    export TRANSFORMERS_CACHE="$rag_dir/data/huggingface_cache"
+    mkdir -p "$TRANSFORMERS_CACHE"
+
+    echo -e "  ${CYAN}Starting RAG server...${NC}"
+    echo -e "  ${DIM}Embedding model cache: $TRANSFORMERS_CACHE${NC}"
     
     # Run from SCRIPT_DIR so 'import rag' works
     # Use setsid to fully detach the process from this script
@@ -860,23 +864,36 @@ start_rag_services() {
         > "$rag_dir/data/server.log" 2>&1 &
     popd > /dev/null
     
-    # Wait for RAG server to be ready (up to 30s for model loading)
+    # Wait for RAG server to be ready (up to 60s for model downloading on first run and startup)
+    start_spinner "Waiting for RAG server to be ready (http://127.0.0.1:$rag_port)..."
     local waited=0
-    while [[ $waited -lt 30 ]]; do
+    local max_wait=60
+
+    while [[ $waited -lt $max_wait ]]; do
         if curl -sf "http://127.0.0.1:$rag_port/health" &>/dev/null; then
-            echo -e "${GREEN}✓${NC} (port $rag_port)"
+            stop_spinner true "RAG server started on port: $rag_port."
             return 0
         fi
         sleep 1
         waited=$((waited + 1))
     done
     
-    echo -e "${YELLOW}timeout${NC}"
-    print_warning "RAG server didn't start in time. Check $rag_dir/data/server.log"
+    stop_spinner false "RAG server failed to start within ${max_wait}s. Check $rag_dir/data/server.log"
+    echo -e "${DIM}Check logs: ${yellow}$rag_dir/data/server.log${NC}"
+    echo -e "${DIM}View with: ${yellow}tail -f $rag_dir/data/server.log${NC}"
+    echo -e "${DIM}Common issues: model download taking time, port $rag_port already in use, missing dependencies${NC}"
+    
+    # Show last few lines of log for debugging
+    if [[ -f "$rag_dir/data/server.log" ]]; then
+        echo -e "\n${YELLOW}Last 5 lines of RAG server log:${NC}"
+        tail -5 "$rag_dir/data/server.log"
+    fi
+    
+    return 1
 }
 
-# Determine if we should start RAG
-SHOULD_START_RAG=false
+# Determine if we should start RAG check
+SHOULD_START_RAG=false 
 
 if [[ "$NO_RAG" != true ]]; then
     # Check AUTO_START_RAG_SERVER env var (default: true if not set)
@@ -886,10 +903,8 @@ if [[ "$NO_RAG" != true ]]; then
 fi
 
 if [[ "$SHOULD_START_RAG" == true ]]; then
-    echo -e "${CYAN}${BOLD}Starting RAG Services${NC}"
-    echo
+    print_banner "Starting RAG Services"
     start_rag_services
-    echo
 fi
 
 # -----------------------------------------------------------------------------
@@ -898,47 +913,79 @@ fi
 
 # Track the llama-server PID for cleanup
 LLAMA_SERVER_PID=""
+# Track if cleanup has been done
+cleanup_done=false
 
-# Stop all services on exit (Ctrl+C or crash)
 cleanup_on_exit() {
-    echo "" >&2  # Newline after ^C
-    
-    # Stop llama-server if we know its PID
-    if [[ -n "$LLAMA_SERVER_PID" ]]; then
-        kill "$LLAMA_SERVER_PID" 2>/dev/null || true
-        # Give it a moment to shut down gracefully
-        sleep 0.5
-        # Force kill if still running
-        kill -9 "$LLAMA_SERVER_PID" 2>/dev/null || true
-        echo -e "${DIM}llama-server stopped${NC}" >&2
+    if $cleanup_done; then
+        return
     fi
-    
+    cleanup_done=true
+
+    echo "" >&2  # newline after ^C
+    print_banner "Cleaning up llama-server processes"
+
+    # If we have the main server PID, kill it immediately
+    if [[ -n "$LLAMA_SERVER_PID" ]]; then
+        start_spinner "Stopping llama-server (PID: $LLAMA_SERVER_PID)..."
+        
+        # Send SIGTERM first (graceful shutdown)
+        kill "$LLAMA_SERVER_PID" 2>/dev/null || true
+        
+        # Wait up to 3 seconds for graceful exit
+        local timeout=3
+        while kill -0 "$LLAMA_SERVER_PID" 2>/dev/null && (( timeout > 0 )); do
+            sleep 0.5
+            ((timeout--))
+        done
+        
+        # If still running, force kill
+        if kill -0 "$LLAMA_SERVER_PID" 2>/dev/null; then
+            kill -9 "$LLAMA_SERVER_PID" 2>/dev/null || true
+            sleep 0.5
+        fi
+        
+        stop_spinner true "llama-server stopped."
+    fi
+
     # Also kill any llama-server on our port (fallback)
     local llama_pid
     llama_pid=$(lsof -ti:"${LLAMA_PORT:-8080}" 2>/dev/null || true)
     if [[ -n "$llama_pid" ]]; then
+        start_spinner "Stopping llama-server (fallback)..."
         kill "$llama_pid" 2>/dev/null || true
         sleep 0.5
         kill -9 "$llama_pid" 2>/dev/null || true
+        stop_spinner true "llama-server (fallback) stopped."
     fi
-    
+
     # Stop RAG server
     local rag_port="${RAG_PORT:-8081}"
-    local pid
-    pid=$(lsof -ti:"$rag_port" 2>/dev/null || true)
-    if [[ -n "$pid" ]]; then
-        kill "$pid" 2>/dev/null || true
-        echo -e "${DIM}RAG server stopped${NC}" >&2
+    local rag_pid
+    rag_pid=$(lsof -ti:"$rag_port" 2>/dev/null || true)
+    if [[ -n "$rag_pid" ]]; then
+        start_spinner "Stopping RAG server..."
+        kill "$rag_pid" 2>/dev/null || true
+        stop_spinner true "RAG server stopped."
     fi
-    
+
     # Stop SearXNG container
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^searxng$'; then
+        start_spinner "Stopping SearXNG..."
         docker stop searxng &>/dev/null || true
-        echo -e "${DIM}SearXNG stopped${NC}" >&2
+        stop_spinner true "SearXNG stopped."
     fi
+    
+    # Clean up temporary log file if it exists
+    if [[ -n "${TEMP_LOG:-}" && -f "$TEMP_LOG" ]]; then
+        rm -f "$TEMP_LOG"
+    fi
+    
+    # Exit the script
+    exit 0
 }
 
-trap cleanup_on_exit EXIT INT TERM
+trap cleanup_on_exit INT TERM
 
 # Set up GPU selection for multi-GPU systems
 if [[ -n "$GPU_ID" ]]; then
@@ -969,27 +1016,75 @@ fi
 # Benchmark function
 run_benchmark() {
     local endpoint="http://$LLAMA_HOST:$LLAMA_PORT"
+    local server_pid="${1:-}"
     
-    echo
     echo -e "${CYAN}${BOLD}Running Quick Benchmark...${NC}"
     echo
     
     # Wait for server to be ready
-    local max_wait=60
+    local max_wait=60  
     local waited=0
-    echo -n "Waiting for server to be ready..."
-    while ! curl -sf "$endpoint/health" &>/dev/null; do
-        sleep 1
-        waited=$((waited + 1))
-        if [[ $waited -ge $max_wait ]]; then
+    local health_checked=false
+    
+    echo -n "Waiting for server to be ready"
+    
+    while [[ $waited -lt $max_wait ]]; do
+        # Try to connect to health endpoint
+        if curl -sf --max-time 2 "$endpoint/health" &>/dev/null; then
+            health_checked=true
+            echo -e " ${GREEN}Ready!${NC}"
             echo
-            echo -e "${RED}Server didn't start within ${max_wait}s${NC}"
+            break
+        fi
+        
+        # Also check if the process is still running
+        if [[ -n "$server_pid" ]] && ! kill -0 "$server_pid" 2>/dev/null; then
+            echo -e " ${RED}Server process died!${NC}"
+            echo "Check server logs for details."
             return 1
         fi
+        
+        # Show progress
+        if [[ $waited -eq 0 ]]; then
+            echo -n " (this can take up to ${max_wait}s)"
+        fi
+        
         echo -n "."
+        sleep 1
+        waited=$((waited + 1))
     done
-    echo -e " ${GREEN}Ready!${NC}"
-    echo
+    
+    if [[ "$health_checked" != true ]]; then
+        echo -e " ${RED}Server didn't respond within ${max_wait}s${NC}"
+        
+        # Check if process is still running
+        if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+            echo -e "${YELLOW}Server is running but not responding to health checks${NC}"
+            echo "This could mean:"
+            echo "  1. The server is still loading the model"
+            echo "  2. There's a configuration issue"
+            echo "  3. The health endpoint is not enabled"
+            echo
+            
+            # Try alternative endpoints
+            echo -e "${YELLOW}Trying alternative endpoints...${NC}"
+            if curl -sf --max-time 2 "$endpoint/" &>/dev/null; then
+                echo -e "${GREEN}✓ Root endpoint responds${NC}"
+            fi
+            
+            if curl -sf --max-time 2 "$endpoint/v1/models" &>/dev/null; then
+                echo -e "${GREEN}✓ Models endpoint responds${NC}"
+            fi
+
+            # Show log tail to help debug
+            if [[ -f "$BENCHMARK_LOG" ]]; then
+                echo -e "\n${YELLOW}Last 5 lines of server log:${NC}"
+                tail -5 "$BENCHMARK_LOG"
+            fi
+        fi
+        
+        return 1
+    fi
     
     # Simple generation benchmark
     local prompt="Write a short haiku about programming."
@@ -998,30 +1093,55 @@ run_benchmark() {
     echo "Prompt: \"$prompt\""
     echo
     
+    # Try multiple endpoints - some servers use different APIs
+    local response=""
+    local endpoint_to_try=""
+    
+    # Try different endpoints in order
+    for ep in "/v1/chat/completions" "/completion" "/api/generate"; do
+        if curl -sf --max-time 30 "$endpoint$ep" \
+            -H "Content-Type: application/json" \
+            -d '{
+                "model": "test",
+                "messages": [{"role": "user", "content": "'"$prompt"'"}],
+                "max_tokens": 100,
+                "temperature": 0.7
+            }' 2>/dev/null | head -c 10 &>/dev/null; then
+            endpoint_to_try="$ep"
+            break
+        fi
+    done
+    
+    if [[ -z "$endpoint_to_try" ]]; then
+        echo -e "${YELLOW}No known API endpoint responded. Trying root completion...${NC}"
+        endpoint_to_try="/completion"
+    fi
+    
     start_time=$(date +%s.%N)
     
-    local response
-    response=$(curl -sf "$endpoint/v1/chat/completions" \
+    response=$(curl -sS --max-time 30 "$endpoint$endpoint_to_try" \
         -H "Content-Type: application/json" \
+        -H "Accept: application/json" \
         -d '{
             "model": "test",
             "messages": [{"role": "user", "content": "'"$prompt"'"}],
             "max_tokens": 100,
             "temperature": 0.7
-        }' 2>/dev/null)
+        }' 2>/dev/null || echo "{}")
     
     end_time=$(date +%s.%N)
-    duration=$(echo "$end_time - $start_time" | bc)
+    duration=$(echo "$end_time - $start_time" | bc 2>/dev/null || echo "?")
     
-    if [[ -n "$response" ]]; then
+    # Try to parse response with jq if available
+    if command -v jq &>/dev/null; then
         local content
-        content=$(echo "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+        content=$(echo "$response" | jq -r '.choices[0].message.content // .content // .response // .text // empty' 2>/dev/null)
         local tokens
-        tokens=$(echo "$response" | jq -r '.usage.completion_tokens // 0' 2>/dev/null)
+        tokens=$(echo "$response" | jq -r '.usage.completion_tokens // .tokens_generated // .tokens // 0' 2>/dev/null)
         
-        if [[ -n "$content" ]]; then
+        if [[ -n "$content" && "$content" != "null" ]]; then
             echo -e "${GREEN}Response:${NC}"
-            echo "$content"
+            echo "$content" | fold -w 80
             echo
             echo -e "${CYAN}Stats:${NC}"
             echo "  Time: ${duration}s"
@@ -1031,14 +1151,27 @@ run_benchmark() {
                 echo "  Tokens: $tokens"
                 echo "  Speed: ~${tps} tokens/sec"
             fi
+            echo "  Endpoint: $endpoint_to_try"
         else
-            echo -e "${YELLOW}Got response but couldn't parse content${NC}"
+            echo -e "${YELLOW}Couldn't parse response content${NC}"
+            echo -e "${DIM}Raw response preview:${NC}"
+            echo "$response" | head -c 200
+            echo "..."
+            echo "  Time: ${duration}s"
         fi
     else
-        echo -e "${RED}Benchmark failed - no response${NC}"
+        # jq not available, show raw response
+        echo -e "${YELLOW}Note: jq not available for JSON parsing${NC}"
+        echo -e "${DIM}Raw response (first 500 chars):${NC}"
+        echo "$response" | head -c 500
+        echo "..."
+        echo
+        echo -e "${CYAN}Stats:${NC}"
+        echo "  Time: ${duration}s"
     fi
     
     echo
+    return 0
 }
 
 # Check for llama.cpp updates (uses cache, no network delay if checked recently)
@@ -1072,124 +1205,280 @@ if [[ "$SKIP_UPDATE_CHECK" != true ]]; then
     fi
 fi
 
-# Print startup info
-print_banner "llama-server"
-
-# Get and display model info
-MODEL_INFO=$(get_model_info "$GGUF_PATH")
-IFS='|' read -r MODEL_SIZE MODEL_DESC MODEL_CATEGORY <<< "$MODEL_INFO"
-
-echo -e "  ${BOLD}Model:${NC}    ${GREEN}$(basename "$GGUF_PATH")${NC}"
-[[ -n "$MODEL_SIZE" ]] && echo -e "  ${BOLD}Size:${NC}     $MODEL_SIZE"
-[[ -n "$MODEL_DESC" ]] && echo -e "  ${BOLD}Type:${NC}     $MODEL_DESC"
-[[ -n "$MODEL_CATEGORY" ]] && echo -e "  ${BOLD}Category:${NC} $MODEL_CATEGORY"
-echo
-echo -e "  ${BOLD}Endpoint:${NC} ${GREEN}http://$LLAMA_HOST:$LLAMA_PORT${NC}"
-echo -e "  ${BOLD}Context:${NC}  $LLAMA_CONTEXT tokens"
-echo -e "  ${BOLD}GPU:${NC}      $GPU_LAYERS layers"
-[[ -n "$GPU_ID" ]] && echo -e "  ${BOLD}GPU ID:${NC}   $GPU_ID"
-[[ "$IS_LINUX" == true && -n "${HSA_OVERRIDE_GFX_VERSION:-}" ]] && echo -e "  ${BOLD}HSA:${NC}      $HSA_OVERRIDE_GFX_VERSION"
-[[ -n "${MMPROJ_PATH:-}" ]] && echo -e "  ${BOLD}mmproj:${NC}   $(basename "$MMPROJ_PATH")"
-[[ -n "$LOG_FILE" ]] && echo -e "  ${BOLD}Log:${NC}      $LOG_FILE"
-[[ "$WATCHDOG_MODE" == true ]] && echo -e "  ${BOLD}Watchdog:${NC} ${GREEN}enabled${NC}"
-
 # Show RAG status
 if [[ "$SHOULD_START_RAG" == true ]]; then
     rag_port="${RAG_PORT:-8081}"
     if curl -sf "http://127.0.0.1:$rag_port/health" &>/dev/null; then
-        echo -e "  ${BOLD}RAG:${NC}      ${GREEN}http://127.0.0.1:$rag_port${NC}"
+        RAG_STATUS="${GREEN}http://127.0.0.1:$rag_port${NC}"
     else
-        echo -e "  ${BOLD}RAG:${NC}      ${YELLOW}not running${NC}"
+        RAG_STATUS="${YELLOW}not running${NC}"
     fi
 else
-    echo -e "  ${BOLD}RAG:${NC}      ${DIM}disabled${NC}"
+    RAG_STATUS="${DIM}disabled${NC}"
 fi
+
 echo
 
 if [[ "$RUN_BENCHMARK" == true ]]; then
-    # Run server in background, then benchmark
-    echo -e "${YELLOW}Starting server for benchmark...${NC}"
-    if [[ -n "$LOG_FILE" ]]; then
-        "${CMD[@]}" >> "$LOG_FILE" 2>&1 &
-    else
-        "${CMD[@]}" &
+    # Check if port is already in use BEFORE starting server
+    if lsof -ti:"$LLAMA_PORT" &>/dev/null; then
+        echo -e "${RED}Port $LLAMA_PORT is already in use!${NC}"
+        echo "This could be from a previous run. Please free the port or use a different one."
+        echo "You can use: ./start-server.sh --cleanup"
+        exit 1
     fi
+
+    # Create a log file for benchmark mode
+    BENCHMARK_LOG=$(mktemp /tmp/llama-server-benchmark-XXXXXX.log)
+
+    # Function to cleanup benchmark server
+    cleanup_benchmark_server() {
+        # If we have a server PID, kill it
+        if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo -e "${YELLOW}Killing benchmark server (PID: $SERVER_PID)...${NC}"
+            kill "$SERVER_PID" 2>/dev/null || true
+            sleep 1
+            kill -9 "$SERVER_PID" 2>/dev/null || true
+        fi
+        
+        # Also call the main cleanup for RAG and SearXNG
+        if [[ "$cleanup_done" != true ]]; then
+            cleanup_on_exit
+        fi
+    }
+    
+    # Trap for cleanup on script exit
+    trap cleanup_benchmark_server EXIT
+
+    # Run server in background, redirecting output to BENCHMARK_LOG file
+    start_spinner "Starting llama-server in benchmark mode... "
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting server for benchmark" >> "$BENCHMARK_LOG"
+    "${CMD[@]}" >> "$BENCHMARK_LOG" 2>&1 &
     SERVER_PID=$!
+    LLAMA_SERVER_PID=$SERVER_PID  # Set for main cleanup function
     
     # Give server time to initialize
     sleep 3
+    if kill -0 $SERVER_PID 2>/dev/null; then
+        stop_spinner true "llama-server started (PID: $SERVER_PID)"
+    else
+        stop_spinner false "llama-server failed to start"
+        echo "Last 10 lines of log:"
+        tail -10 "$BENCHMARK_LOG"
+        echo
+        echo -e "${YELLOW}Full log at: $BENCHMARK_LOG${NC}"
+        cleanup_benchmark_server
+        exit 1
+    fi
+
+    # Show model info after server starts
+    print_banner "llama-server (benchmark mode)"
     
+    # Get and display model info
+    MODEL_INFO=$(get_model_info "$GGUF_PATH")
+    IFS='|' read -r MODEL_SIZE MODEL_DESC MODEL_CATEGORY <<< "$MODEL_INFO"
+    
+    echo -e "  ${BOLD}Model:${NC}    ${GREEN}$(basename "$GGUF_PATH")${NC}"
+    [[ -n "$MODEL_SIZE" ]] && echo -e "  ${BOLD}Size:${NC}    ~$MODEL_SIZE"
+    [[ -n "$MODEL_DESC" ]] && echo -e "  ${BOLD}Desc:${NC}     $MODEL_DESC"
+    [[ -n "$MODEL_CATEGORY" ]] && echo -e "  ${BOLD}Category:${NC} $MODEL_CATEGORY"
+    echo
+    echo -e "  ${BOLD}Context:${NC}  $LLAMA_CONTEXT tokens"
+    echo -e "  ${BOLD}GPU:${NC}      $GPU_LAYERS layers"
+    [[ -n "$GPU_ID" ]] && echo -e "  ${BOLD}GPU ID:${NC}   $GPU_ID"
+    [[ "$IS_LINUX" == true && -n "${HSA_OVERRIDE_GFX_VERSION:-}" ]] && echo -e "  ${BOLD}HSA:${NC}      $HSA_OVERRIDE_GFX_VERSION"
+    [[ -n "${MMPROJ_PATH:-}" ]] && echo -e "  ${BOLD}mmproj:${NC}   $(basename "$MMPROJ_PATH")"
+    echo -e "  ${BOLD}RAG:${NC}      $RAG_STATUS"
+    echo -e "  ${BOLD}Endpoint:${NC} ${GREEN}http://$LLAMA_HOST:$LLAMA_PORT${NC}"
+    echo
+
     # Run benchmark
-    run_benchmark
+    if [[ "$SHOULD_START_RAG" == true ]]; then
+        # Wait a bit longer for RAG if it was just started
+        echo -e "${CYAN}Waiting for RAG server to stabilize...${NC}"
+        sleep 5
+    fi
+
+    if run_benchmark "$SERVER_PID"; then
+        echo -e "${GREEN}✓ Benchmark completed successfully${NC}"
+    else
+        echo -e "${RED}✗ Benchmark failed${NC}"
+        # Cleanup before exiting to ensure server & services are stopped
+        cleanup_benchmark_server
+        exit 1
+    fi
     
+    echo
+    echo -e "${DIM}Server logs available at: ${YELLOW}$BENCHMARK_LOG${NC}"
+    echo -e "${DIM}View with: ${YELLOW}tail -f \"$BENCHMARK_LOG\"${NC}"
+    echo
     echo -e "${YELLOW}Benchmark complete. Server running (PID: $SERVER_PID)${NC}"
     echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
     echo
-    
+
     # Wait for server
     wait $SERVER_PID
+
+    # Clean up after normal exit
+    cleanup_benchmark_server
+    exit 0
 elif [[ "$WATCHDOG_MODE" == true ]]; then
-    # Watchdog mode - auto-restart on crash
-    echo -e "${YELLOW}Watchdog mode enabled - server will auto-restart on crash${NC}"
-    echo -e "${YELLOW}Press Ctrl+C to stop${NC}"
-    echo
+    # Create a log file for watchdog mode
+    WATCHDOG_LOG=$(mktemp /tmp/llama-server-watchdog-XXXXXX.log)
     
     RESTART_COUNT=0
     MAX_RESTARTS=10
     RESTART_DELAY=5
-    
+
     while true; do
-        # Start server
-        if [[ -n "$LOG_FILE" ]]; then
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting server (restart #$RESTART_COUNT)" >> "$LOG_FILE"
-            "${CMD[@]}" >> "$LOG_FILE" 2>&1 &
-        else
-            "${CMD[@]}" &
-        fi
+        # Start server with output to watchdog log file
+        start_spinner "Starting llama-server in watchdog mode... "
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting server (restart #$RESTART_COUNT)" >> "$WATCHDOG_LOG"
+        "${CMD[@]}" >> "$WATCHDOG_LOG" 2>&1 &
         SERVER_PID=$!
         
-        # Wait for server to exit
-        wait $SERVER_PID
-        EXIT_CODE=$?
-        
-        # Check if it was a normal exit (user Ctrl+C)
-        if [[ $EXIT_CODE -eq 0 || $EXIT_CODE -eq 130 ]]; then
+        # Wait a bit to see if server starts successfully
+        sleep 5
+
+        if kill -0 $SERVER_PID 2>/dev/null; then
+            stop_spinner true "llama-server started (PID: $SERVER_PID)"
+            
+            # Show model info after server starts
+            print_banner "llama-server (watchdog mode)"
+            
+            # Get and display model info
+            MODEL_INFO=$(get_model_info "$GGUF_PATH")
+            IFS='|' read -r MODEL_SIZE MODEL_DESC MODEL_CATEGORY <<< "$MODEL_INFO"
+            
+            echo -e "  ${BOLD}Model:${NC}    ${GREEN}$(basename "$GGUF_PATH")${NC}"
+            [[ -n "$MODEL_SIZE" ]] && echo -e "  ${BOLD}Size:${NC}    ~$MODEL_SIZE"
+            [[ -n "$MODEL_DESC" ]] && echo -e "  ${BOLD}Desc:${NC}     $MODEL_DESC"
+            [[ -n "$MODEL_CATEGORY" ]] && echo -e "  ${BOLD}Category:${NC} $MODEL_CATEGORY"
             echo
-            print_status "Server stopped normally"
-            break
+            echo -e "  ${BOLD}Context:${NC}  $LLAMA_CONTEXT tokens"
+            echo -e "  ${BOLD}GPU:${NC}      $GPU_LAYERS layers"
+            [[ -n "$GPU_ID" ]] && echo -e "  ${BOLD}GPU ID:${NC}   $GPU_ID"
+            [[ "$IS_LINUX" == true && -n "${HSA_OVERRIDE_GFX_VERSION:-}" ]] && echo -e "  ${BOLD}HSA:${NC}      $HSA_OVERRIDE_GFX_VERSION"
+            [[ -n "${MMPROJ_PATH:-}" ]] && echo -e "  ${BOLD}mmproj:${NC}   $(basename "$MMPROJ_PATH")"
+            echo -e "  ${BOLD}RAG:${NC}      $RAG_STATUS"
+            echo -e "  ${BOLD}Endpoint:${NC} ${GREEN}http://$LLAMA_HOST:$LLAMA_PORT${NC}"
+            echo
+            # Show log location
+            echo -e "${DIM}Server logs: ${YELLOW}$WATCHDOG_LOG${NC}"
+            echo -e "${DIM}View with: ${YELLOW}tail -f \"$WATCHDOG_LOG\"${NC}"
+            echo
+            # Watchdog mode - auto-restart on crash
+            echo -e "${YELLOW}Watchdog mode enabled - server will auto-restart on crash${NC}"
+            echo -e "${YELLOW}Press Ctrl+C to stop${NC}"
+            echo
+
+            # Wait for server to exit
+            wait $SERVER_PID
+            EXIT_CODE=$?
+        else
+                stop_spinner false "llama-server failed to start"
+                # Show last few lines of log
+                echo -e "${DIM}Last 10 lines of log:${NC}"
+                tail -10 "$WATCHDOG_LOG"
+                EXIT_CODE=1
         fi
         
         # Server crashed
         RESTART_COUNT=$((RESTART_COUNT + 1))
         
+       # When max restarts reached
         if [[ $RESTART_COUNT -ge $MAX_RESTARTS ]]; then
             echo
             print_error "Server crashed $RESTART_COUNT times. Giving up."
-            [[ -n "$LOG_FILE" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] Giving up after $RESTART_COUNT crashes" >> "$LOG_FILE"
-            exit 1
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Giving up after $RESTART_COUNT crashes" >> "$WATCHDOG_LOG"
+            echo -e "${YELLOW}Debug log preserved: $WATCHDOG_LOG${NC}"
+            echo -e "${YELLOW}Check for error patterns: grep -i error \"$WATCHDOG_LOG\"${NC}"
+            echo
+        exit 1
         fi
         
         echo
         print_warning "Server crashed (exit code: $EXIT_CODE). Restarting in ${RESTART_DELAY}s... (attempt $RESTART_COUNT/$MAX_RESTARTS)"
-        [[ -n "$LOG_FILE" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] Server crashed with exit code $EXIT_CODE" >> "$LOG_FILE"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Server crashed with exit code $EXIT_CODE" >> "$WATCHDOG_LOG"
         
         sleep $RESTART_DELAY
     done
 else
+    # Final check for port availability before starting server
+    if lsof -ti:"$LLAMA_PORT" &>/dev/null; then
+        echo -e "${RED}Port $LLAMA_PORT is already in use!${NC}"
+        echo "This could be from a previous run. Please free the port or use a different one."
+        echo "You can use: ./start-server.sh --cleanup"
+        exit 1
+    fi
+
+    print_banner "Starting llama-server"
+    # Create a temporary log file 
+    if [[ -z "$LOG_FILE" ]]; then
+        TEMP_LOG="/tmp/llama-server-$(date +%s).log"
+    fi
+    
+    # Run server in background, capture PID, and check if it started successfully
+    start_spinner "Starting llama-server... "
+    if [[ -n "$LOG_FILE" ]]; then
+        # Start the process and capture its PID directly
+        exec 3>&1  # Save stdout
+        "${CMD[@]}" > "$LOG_FILE" 2>&1 &
+        LLAMA_SERVER_PID=$!
+        exec 3>&-  # Close the file descriptor
+    else
+        "${CMD[@]}" > "$TEMP_LOG" 2>&1 &
+        LLAMA_SERVER_PID=$!
+    fi
+
+    # Give it a moment to start, then check if it's running
+    sleep 2
+
+    if kill -0 $LLAMA_SERVER_PID 2>/dev/null; then
+        stop_spinner true "llama-server started (PID: $LLAMA_SERVER_PID)"
+        echo -e "${DIM}Server output in: ${YELLOW}${LOG_FILE:-$TEMP_LOG}${NC}"
+        echo -e "${DIM}View with: ${YELLOW}tail -f \"${LOG_FILE:-$TEMP_LOG}\"${NC}"
+        echo
+        
+        print_banner "llama-server info"
+        
+        # Get and display model info
+        MODEL_INFO=$(get_model_info "$GGUF_PATH")
+        IFS='|' read -r MODEL_SIZE MODEL_DESC MODEL_CATEGORY <<< "$MODEL_INFO"
+        
+        echo -e "  ${BOLD}Model:${NC}    ${GREEN}$(basename "$GGUF_PATH")${NC}"
+        [[ -n "$MODEL_SIZE" ]] && echo -e "  ${BOLD}Size:${NC}    ~$MODEL_SIZE"
+        [[ -n "$MODEL_DESC" ]] && echo -e "  ${BOLD}Desc:${NC}     $MODEL_DESC"
+        [[ -n "$MODEL_CATEGORY" ]] && echo -e "  ${BOLD}Category:${NC} $MODEL_CATEGORY"
+        echo
+        echo -e "  ${BOLD}Context:${NC}  $LLAMA_CONTEXT tokens"
+        echo -e "  ${BOLD}GPU:${NC}      $GPU_LAYERS layers"
+        [[ -n "$GPU_ID" ]] && echo -e "  ${BOLD}GPU ID:${NC}   $GPU_ID"
+        [[ "$IS_LINUX" == true && -n "${HSA_OVERRIDE_GFX_VERSION:-}" ]] && echo -e "  ${BOLD}HSA:${NC}      $HSA_OVERRIDE_GFX_VERSION"
+        [[ -n "${MMPROJ_PATH:-}" ]] && echo -e "  ${BOLD}mmproj:${NC}   $(basename "$MMPROJ_PATH")"
+        echo -e "  ${BOLD}RAG:${NC}      $RAG_STATUS"
+        echo -e "  ${BOLD}Endpoint:${NC} ${GREEN}http://$LLAMA_HOST:$LLAMA_PORT${NC}"
+        echo
+    else
+        stop_spinner false "llama-server failed to start"
+        # Show the log to help debug
+        if [[ -f "${LOG_FILE:-$TEMP_LOG}" ]]; then
+            echo "Last 10 lines of log:"
+            tail -10 "${LOG_FILE:-$TEMP_LOG}"
+            echo
+            echo -e "${YELLOW}Full log at: ${LOG_FILE:-$TEMP_LOG}${NC}"
+        fi
+        exit 1
+    fi
+
+      
     echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
-    echo -e "${YELLOW}Server ready when you see: \"server is listening\"${NC}"
+    echo -e "${YELLOW}Server is listening on http://$LLAMA_HOST:$LLAMA_PORT${NC}"
     echo
     
-    # Run server in background so we can catch signals and clean up
-    if [[ -n "$LOG_FILE" ]]; then
-        echo -e "${DIM}Logging to: $LOG_FILE${NC}"
-        echo
-        "${CMD[@]}" 2>&1 | tee -a "$LOG_FILE" &
-    else
-        "${CMD[@]}" &
-    fi
-    LLAMA_SERVER_PID=$!
-    
     # Wait for server to exit
-    wait $LLAMA_SERVER_PID
+    while kill -0 $LLAMA_SERVER_PID 2>/dev/null; do
+        wait $LLAMA_SERVER_PID 2>/dev/null || true
+        sleep 1
+    done
 fi
