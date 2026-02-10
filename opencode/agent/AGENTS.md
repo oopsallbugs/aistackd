@@ -117,3 +117,18 @@ When appropriate, delegate to specialized subagents using @mention:
 - **@debug** - Debugging agent. Use for systematic investigation of bugs, analyzing error messages, tracing issues through code, and proposing fixes.
 
 Use the Tab key to switch to **Plan mode** for read-only analysis and planning without making changes.
+
+## Custom tools
+
+## Web Search Guidelines
+
+When you need current information not in your training data, use the `websearch` tool:
+
+1. **Current Events**: News, weather, stock prices, recent developments
+2. **Latest Versions**: Software releases, library updates, API changes
+3. **Documentation**: Official docs, changelogs, community discussions
+4. **Fact-Checking**: Verify claims, statistics, or technical details
+
+**Example usage**: "What's the latest Python release? Use websearch to find current information."
+
+**Format**: Return concise summaries with sources when available.
