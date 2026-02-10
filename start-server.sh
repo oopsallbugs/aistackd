@@ -1104,7 +1104,7 @@ run_benchmark() {
             -d '{
                 "model": "test",
                 "messages": [{"role": "user", "content": "'"$prompt"'"}],
-                "max_tokens": 100,
+                "max_tokens": 4096,
                 "temperature": 0.7
             }' 2>/dev/null | head -c 10 &>/dev/null; then
             endpoint_to_try="$ep"
@@ -1125,7 +1125,7 @@ run_benchmark() {
         -d '{
             "model": "test",
             "messages": [{"role": "user", "content": "'"$prompt"'"}],
-            "max_tokens": 100,
+            "max_tokens": 4096,
             "temperature": 0.7
         }' 2>/dev/null || echo "{}")
     
@@ -1312,7 +1312,7 @@ if [[ "$RUN_BENCHMARK" == true ]]; then
     echo -e "${DIM}Server logs available at: ${YELLOW}$BENCHMARK_LOG${NC}"
     echo -e "${DIM}View with: ${YELLOW}tail -f \"$BENCHMARK_LOG\"${NC}"
     echo
-    echo -e "${YELLOW}Benchmark complete. Server running (PID: $SERVER_PID)${NC}"
+    echo -e "${YELLOW}Benchmark complete. Server listening on http://$LLAMA_HOST:$LLAMA_PORT${NC}"
     echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
     echo
 
@@ -1369,6 +1369,7 @@ elif [[ "$WATCHDOG_MODE" == true ]]; then
             echo
             # Watchdog mode - auto-restart on crash
             echo -e "${YELLOW}Watchdog mode enabled - server will auto-restart on crash${NC}"
+            echo -e "${YELLOW}Server is listening on http://$LLAMA_HOST:$LLAMA_PORT${NC}"
             echo -e "${YELLOW}Press Ctrl+C to stop${NC}"
             echo
 
@@ -1471,7 +1472,9 @@ else
         exit 1
     fi
 
-      
+    echo -e "${DIM}llama-server logs: ${YELLOW}${LOG_FILE:-$TEMP_LOG}${NC}"
+    echo -e "${DIM}View with: ${YELLOW}tail -f \"${LOG_FILE:-$TEMP_LOG}\"${NC}"
+    echo  
     echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
     echo -e "${YELLOW}Server is listening on http://$LLAMA_HOST:$LLAMA_PORT${NC}"
     echo

@@ -248,8 +248,11 @@ RUN_VERIFY=false
 VERIFY_MODEL=""
 GPU_TARGET=""
 FORCE_ENV=false
-RESET_AGENTS=false
 SKIP_UPDATE_CHECK=false
+SYNC_AGENTS=false
+SYNC_TOOLS=false
+SYNC_MODELS=false 
+
 
 for arg in "$@"; do
     case $arg in
@@ -264,21 +267,25 @@ for arg in "$@"; do
         --fix-permissions) FIX_PERMISSIONS=true ;;
         --verify) RUN_VERIFY=true ;;
         --verify=*) RUN_VERIFY=true; VERIFY_MODEL="${arg#*=}" ;;
-        --reset-agents) RESET_AGENTS=true ;;
         --no-update-check) SKIP_UPDATE_CHECK=true ;;
+        --sync-agents) 
+            OPENCODE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+            sync_agents "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "false" "true"
+            exit 0
+            ;;
+        --sync-tools)
+            OPENCODE_TOOLS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/tools"
+            sync_tools "$SCRIPT_DIR" "$OPENCODE_TOOLS_DIR" "false" "true"
+            exit 0
+            ;;
+        --sync-models)
+            OPENCODE_MODELS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/models"
+            sync_models "$SCRIPT_DIR" "$OPENCODE_MODELS_DIR" "false" "true"
+            exit 0
+            ;;
         # --help is handled early (before OS check)
     esac
 done
-
-# -----------------------------------------------------------------------------
-# Reset Agents Mode
-# -----------------------------------------------------------------------------
-
-if [[ $RESET_AGENTS == true ]]; then
-    OPENCODE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-    sync_agents "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "false" "true"
-    exit 0
-fi
 
 # -----------------------------------------------------------------------------
 # Status Mode
@@ -1057,7 +1064,7 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Model Selection & Download
+# Model Selection & Download 
 # -----------------------------------------------------------------------------
 
 if [[ "$SKIP_MODELS" == false ]]; then
@@ -1084,42 +1091,6 @@ if [[ "$SKIP_MODELS" == false ]]; then
     fi
 else
     print_status "Skipping model selection (--skip-models)"
-fi
-
-# -----------------------------------------------------------------------------
-# Generate OpenCode Config
-# -----------------------------------------------------------------------------
-
-print_header "OpenCode Configuration"
-
-# Get list of downloaded models
-DOWNLOADED_MODELS=()
-load_models_conf
-for model in "${MODEL_ORDER[@]}"; do
-    IFS='|' read -r _category _hf_repo gguf_file size _description <<< "${MODEL_INFO[$model]}"
-    if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
-        DOWNLOADED_MODELS+=("$model")
-    fi
-done
-
-if [[ ${#DOWNLOADED_MODELS[@]} -gt 0 ]]; then
-    # Callback function for config generation
-    _generate_config() { generate_opencode_config "${DOWNLOADED_MODELS[@]}"; }
-    handle_opencode_config "$OPENCODE_CONFIG" "$SCRIPT_DIR/sync-opencode.sh" "$NON_INTERACTIVE" _generate_config
-else
-    print_warning "No models downloaded, skipping OpenCode config"
-fi
-
-# Sync agent files (AGENTS.md, plan.md, review.md, debug.md)
-OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
-sync_agents "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "$NON_INTERACTIVE" "false"
-
-# -----------------------------------------------------------------------------
-# Orphan Model Cleanup
-# -----------------------------------------------------------------------------
-
-if [[ -d "$MODELS_DIR" ]]; then
-    check_orphan_models "$SCRIPT_DIR" "$NON_INTERACTIVE"
 fi
 
 # -----------------------------------------------------------------------------
@@ -1196,6 +1167,14 @@ EOF
     fi
 
     print_success "Created .env"
+fi
+
+# -----------------------------------------------------------------------------
+# Orphan Model Cleanup
+# -----------------------------------------------------------------------------
+
+if [[ -d "$MODELS_DIR" ]]; then
+    check_orphan_models "$SCRIPT_DIR" "$NON_INTERACTIVE"
 fi
 
 # -----------------------------------------------------------------------------
@@ -1375,3 +1354,5 @@ fi
 echo
 echo -e "${GREEN}${BOLD}Happy coding!${NC}"
 echo
+
+exit 0

@@ -5,12 +5,13 @@ set -euo pipefail
 # Sync OpenCode Configuration
 # =============================================================================
 #
-# Syncs downloaded models and agent files to OpenCode configuration.
+# Syncs downloaded models, agent files, and tools to OpenCode configuration.
 #
 # Usage:
-#   ./sync-opencode.sh                  # Sync both models and agents
+#   ./sync-opencode.sh                  # Sync all (models, agents, tools)
 #   ./sync-opencode.sh --models         # Sync only model config (opencode.json)
 #   ./sync-opencode.sh --agents         # Sync only agent files
+#   ./sync-opencode.sh --tools          # Sync only tool files (black/whitelist opencode-tools.yaml)     
 #   ./sync-opencode.sh --restore        # Restore config from backup
 #   ./sync-opencode.sh --dry-run        # Show what would be synced
 #   ./sync-opencode.sh --help           # Show help
@@ -31,10 +32,13 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
 OPENCODE_CONFIG_DIR="$(dirname "$OPENCODE_CONFIG")"
+GLOBAL_TOOLS_DIR="$OPENCODE_CONFIG_DIR/tools"
+TOOLS_CONFIG_FILE="$SCRIPT_DIR/opencode-tools.yaml"
 
 # Modes
 SYNC_MODELS=false
 SYNC_AGENTS=false
+SYNC_TOOLS=false
 DRY_RUN=false
 MERGE_MODE=false
 RESTORE_MODE=false
@@ -85,6 +89,9 @@ for arg in "$@"; do
             ;;
         --agents)
             SYNC_AGENTS=true
+            ;;
+        --tools)
+            SYNC_TOOLS=true
             ;;
         --reset-agents)
             SYNC_AGENTS=true
@@ -138,10 +145,11 @@ for arg in "$@"; do
     esac
 done
 
-# Default: sync both if neither specified
-if [[ "$SYNC_MODELS" == false && "$SYNC_AGENTS" == false && "$RESTORE_MODE" == false ]]; then
+# Default: sync all if no flags specified
+if [[ "$SYNC_MODELS" == false && "$SYNC_AGENTS" == false && "$SYNC_TOOLS" == false && "$RESTORE_MODE" == false ]]; then
     SYNC_MODELS=true
     SYNC_AGENTS=true
+    SYNC_TOOLS=true
 fi
 
 # -----------------------------------------------------------------------------
@@ -446,6 +454,171 @@ sync_agents_config() {
         echo
         sync_agents "$SCRIPT_DIR" "$OPENCODE_CONFIG_DIR" "false" "false"
     fi
+    echo
+}
+
+# -----------------------------------------------------------------------------
+# Sync Tools
+# -----------------------------------------------------------------------------
+
+sync_tools_config() {
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${CYAN}${BOLD}[dry-run] Would sync tools${NC}"
+        echo
+        print_status "Source: $SCRIPT_DIR/tools/"
+        print_status "Target: $GLOBAL_TOOLS_DIR/"
+        
+        if [[ -f "$TOOLS_CONFIG_FILE" ]]; then
+            print_status "Using config: $TOOLS_CONFIG_FILE"
+        else
+            print_status "No config file - would sync all tools"
+        fi
+        echo
+        return 0
+    fi
+    
+    echo -e "${CYAN}${BOLD}Syncing OpenCode tools (global)${NC}"
+    echo
+    
+    # Create tools directory if it doesn't exist
+    mkdir -p "$SCRIPT_DIR/tools"
+    
+    # Check if we have any tools
+    if [[ ! -d "$SCRIPT_DIR/tools" ]] || [[ -z "$(ls -A "$SCRIPT_DIR/tools"/*.ts 2>/dev/null)" ]]; then
+        print_warning "No custom tools found in: $SCRIPT_DIR/tools/"
+        echo
+        echo "Create tools in $SCRIPT_DIR/tools/ with .ts extension"
+        echo "Example: tools/websearch.ts for SearXNG integration"
+        return 1
+    fi
+    
+    # Clean target directory
+    rm -rf "$GLOBAL_TOOLS_DIR"
+    mkdir -p "$GLOBAL_TOOLS_DIR"
+    
+    local TOOLS_SOURCE="$SCRIPT_DIR/tools"
+    local copied_count=0
+    local skipped_count=0
+    
+    # Check for config file
+    if [[ -f "$TOOLS_CONFIG_FILE" ]]; then
+        print_status "Using configuration: $TOOLS_CONFIG_FILE"
+        echo
+        
+        # Parse YAML for exclude list (simple approach)
+        local exclude_list=()
+        if grep -q "^exclude:" "$TOOLS_CONFIG_FILE"; then
+            exclude_list=($(awk '/^exclude:/{flag=1; next} /^[^[:space:]]/{flag=0} flag && /^[[:space:]]*-[[:space:]]*/ {gsub(/^[[:space:]]*-[[:space:]]*|\"/, "", $0); print $0}' "$TOOLS_CONFIG_FILE"))
+        fi
+        
+        # Parse include list if present (overrides exclude)
+        local include_list=()
+        if grep -q "^include:" "$TOOLS_CONFIG_FILE"; then
+            include_list=($(awk '/^include:/{flag=1; next} /^[^[:space:]]/{flag=0} flag && /^[[:space:]]*-[[:space:]]*/ {gsub(/^[[:space:]]*-[[:space:]]*|\"/, "", $0); print $0}' "$TOOLS_CONFIG_FILE"))
+        fi
+        
+        # Sync based on config
+        if [[ ${#include_list[@]} -gt 0 ]]; then
+            # WHITELIST mode: Only copy included tools
+            print_status "Using include list (whitelist mode)"
+            echo
+            
+            for tool_name in "${include_list[@]}"; do
+                tool_name=$(echo "$tool_name" | xargs)  # Trim whitespace
+                local tool_file="$TOOLS_SOURCE/$tool_name"
+                
+                # Ensure .ts extension
+                [[ "$tool_file" != *.ts ]] && tool_file="${tool_file}.ts"
+                
+                if [[ -f "$tool_file" ]]; then
+                    cp "$tool_file" "$GLOBAL_TOOLS_DIR/"
+                    ((copied_count++))
+                    echo -e "  ${GREEN}✓ $tool_name${NC}"
+                else
+                    echo -e "  ${RED}⚠ Not found: $tool_name${NC}"
+                fi
+            done
+            
+        else
+            # BLACKLIST mode: Copy all except excluded
+            if [[ ${#exclude_list[@]} -gt 0 ]]; then
+                print_status "Using exclude list (blacklist mode)"
+                echo -e "  Excluding: ${YELLOW}${exclude_list[*]}${NC}"
+                echo
+            else
+                print_status "No exclude list - copying all tools"
+                echo
+            fi
+            
+            # Copy all .ts files except excluded ones
+            for tool_file in "$TOOLS_SOURCE"/*.ts; do
+                [[ -f "$tool_file" ]] || continue
+                local filename=$(basename "$tool_file")
+                local filename_no_ext="${filename%.ts}"
+                
+                local should_copy=true
+                for pattern in "${exclude_list[@]}"; do
+                    pattern=$(echo "$pattern" | xargs)
+                    # Handle wildcard patterns
+                    if [[ "$pattern" == *"*" ]]; then
+                        local prefix="${pattern%\*}"
+                        if [[ "$filename_no_ext" == "$prefix"* ]]; then
+                            should_copy=false
+                            break
+                        fi
+                    elif [[ "$filename_no_ext" == "$pattern" ]]; then
+                        should_copy=false
+                        break
+                    fi
+                done
+                
+                if [[ "$should_copy" == true ]]; then
+                    cp "$tool_file" "$GLOBAL_TOOLS_DIR/"
+                    ((copied_count++))
+                    echo -e "  ${GREEN}✓ $filename${NC}"
+                else
+                    ((skipped_count++))
+                    echo -e "  ${YELLOW}✗ Skipping (excluded): $filename${NC}"
+                fi
+            done
+        fi
+        
+    else
+        # No config file - sync all tools
+        print_status "No config file - syncing all tools"
+        echo
+        
+        cp -r "$TOOLS_SOURCE/"*.ts "$GLOBAL_TOOLS_DIR/" 2>/dev/null || true
+        copied_count=$(ls -1 "$GLOBAL_TOOLS_DIR"/*.ts 2>/dev/null | wc -l)
+        
+        for tool_file in "$TOOLS_SOURCE"/*.ts; do
+            [[ -f "$tool_file" ]] || continue
+            echo -e "  ${GREEN}✓ $(basename "$tool_file")${NC}"
+        done
+    fi
+    
+    echo
+    if [[ $copied_count -gt 0 ]]; then
+        print_success "Tools synced: $copied_count tool(s) copied to $GLOBAL_TOOLS_DIR"
+        
+        # Show usage instructions
+        echo
+        echo -e "${DIM}Usage in OpenCode:${NC}"
+        echo -e "  ${DIM}\"Search the web for current news. Use websearch tool.\"${NC}"
+        
+        # List available tools
+        if [[ $copied_count -le 10 ]]; then
+            echo -e "${DIM}Available tools:${NC}"
+            for tool in "$GLOBAL_TOOLS_DIR"/*.ts; do
+                [[ -f "$tool" ]] || continue
+                tool_name=$(basename "$tool" .ts)
+                echo -e "  ${DIM}- $tool_name${NC}"
+            done
+        fi
+    else
+        print_warning "No tools were synced"
+    fi
+    
     echo
 }
 

@@ -1050,7 +1050,7 @@ run_inference_test() {
         -d '{
             "model": "test",
             "messages": [{"role": "user", "content": "'"$prompt"'"}],
-            "max_tokens": 50,
+            "max_tokens": 4096,
             "temperature": 0.1
         }' 2>&1)
     curl_exit=$?
@@ -1710,12 +1710,12 @@ handle_config_restore() {
 # -----------------------------------------------------------------------------
 
 # Sync agent directory to OpenCode config
-# Usage: sync_agents <script_dir> <target_dir> <non_interactive> [reset_mode]
+# Usage: sync_agents <script_dir> <target_dir> <non_interactive> [sync_agents]
 #
 # script_dir: Directory containing the source agent/ folder
 # target_dir: OpenCode config directory (usually ~/.config/opencode)
 # non_interactive: "true" to skip prompts, "false" for interactive mode
-# reset_mode: "true" to force reset to default (used with --reset-agents flag)
+# sync_agents: "true" to regenerate and sync agent files (used with --sync-agents flag)
 #
 # Syncs:
 #   agent/AGENTS.md -> ~/.config/opencode/AGENTS.md
@@ -1724,11 +1724,12 @@ handle_config_restore() {
 #   agent/debug.md  -> ~/.config/opencode/agent/debug.md
 #
 # Returns: 0 if files were created/updated, 1 if skipped
+
 sync_agents() {
     local script_dir="$1"
     local target_dir="$2"
     local non_interactive="$3"
-    local reset_mode="${4:-false}"
+    local sync_agents="${4:-false}"
     
     local source_dir="$script_dir/agent"
     local agent_target_dir="$target_dir/agent"
@@ -1743,8 +1744,8 @@ sync_agents() {
     local -a main_files=("AGENTS.md")
     local -a agent_files=("plan.md" "review.md" "debug.md")
     
-    # Reset mode - copy all with backups
-    if [[ "$reset_mode" == "true" ]]; then
+    # Sync agents - copy all with backups
+    if [[ "$sync_agents" == "true" ]]; then
         local backup_timestamp
         backup_timestamp="$(date +%Y%m%d_%H%M%S)"
         
@@ -1913,7 +1914,291 @@ sync_agents() {
     fi
 }
 
+# -----------------------------------------------------------------------------
+# Tools Directory Managment
+# -----------------------------------------------------------------------------
 
+# Sync custom tools to OpenCode global tools directory
+# Usage: sync_tools <script_dir> <opencode_tools_dir> <non_interactive> [sync_tools]
+
+# script_dir: Directory containing the source tools/ folder and optional opencode-tools.yaml
+# opencode_tools_dir: OpenCode global tools directory (usually ~/.config/opencode/tools/)
+# non_interactive: "true" to skip prompts, "false" for interactive mode
+# sync_tools: "true" to regenerate and sync /tools to opencode (used with --sync-tools flag)
+
+# Syncs: tools/*.ts -> ~/.config/opencode/tools/
+
+# It also supports an optional opencode-tools.yaml config for more granular control.
+# The opencode-tools.yaml can specify:
+#   exclude: [tool1, tool2*]  # Exclude specific tools (supports wildcards)
+#   include: [tool1, tool2*]  # Only include specific tools (overrides exclude if present)  
+# returns 0 if sync completed (even if no tools), 1 if no tools to sync or error
+
+# Check if tools directory exists and has .ts files
+has_tools() {
+    local tools_dir="$1"
+    local files=("$tools_dir"/*.ts)
+    [[ -f "${files[0]}" ]] && return 0 || return 1
+}
+
+# Sync tools to OpenCode global tools directory
+sync_tools() {
+    # Enable nullglob for this function
+    local old_nullglob
+    shopt -q nullglob && old_nullglob=set || old_nullglob=unset
+    shopt -s nullglob
+
+    local script_dir="$1"
+    local opencode_tools_dir="$2"
+    local non_interactive="$3"
+    local sync_tools="$4"
+    
+    print_header "Syncing Custom Tools to OpenCode"
+    echo
+    
+    local tools_source="$script_dir/tools"
+    local global_tools_dir="$opencode_tools_dir"
+    local tools_config="$script_dir/opencode-tools.yaml"
+    
+    # Check if we have tools to sync
+    if ! has_tools "$tools_source"; then
+        print_status "No custom tools found in: $tools_source/"
+        echo "  ${DIM}Create tools in $tools_source/ with .ts extension${NC}"
+        echo "  ${DIM}Example: tools/websearch.ts for SearXNG integration${NC}"
+        
+        # If user explicitly requested tools sync but none exist, show help
+        if [[ "$sync_tools" == "true" ]]; then
+            echo
+            print_status "Example tool template:"
+            cat << 'EOF'
+// tools/websearch.ts
+import { tool } from "@opencode-ai/plugin"
+import { $ } from 'bun'
+
+export default tool({
+  description: "Search the web for current information",
+  args: {
+    query: tool.schema.string().describe("Search query"),
+  },
+  async execute(args) {
+    try {
+      // Call your rag-web.sh script or similar
+      const result = await $`./rag-web.sh "${args.query}"`.text()
+      return result
+    } catch (error) {
+      return `Web search error: ${error.message}`
+    }
+  },
+})
+EOF
+        fi
+        return 1
+    fi
+    
+    # Create source tools directory if it doesn't exist (empty)
+    mkdir -p "$tools_source"
+    
+    # Clean target directory
+    rm -rf "$global_tools_dir"
+    mkdir -p "$global_tools_dir"
+    
+    local TOOLS_SOURCE="$tools_source"
+    local copied_count=0
+    local skipped_count=0
+    
+    # Check for config file
+    if [[ -f "$tools_config" ]]; then
+        print_status "Using configuration: $tools_config"
+        
+        # Parse YAML for exclude list (simple approach)
+        local exclude_list=()
+       
+        if grep -q "^exclude:" "$tools_config" 2>/dev/null || true; then
+            exclude_list=($(awk '/^exclude:/{flag=1; next} /^[^[:space:]]/{flag=0} flag && /^[[:space:]]*-[[:space:]]*/ {gsub(/^[[:space:]]*-[[:space:]]*|"/, "", $0); print $0}' "$tools_config" 2>/dev/null))
+        fi
+        
+        # Parse include list if present (overrides exclude)
+        local include_list=()
+        if grep -q "^include:" "$tools_config" 2>/dev/null || true; then
+            include_list=($(awk '/^include:/{flag=1; next} /^[^[:space:]]/{flag=0} flag && /^[[:space:]]*-[[:space:]]*/ {gsub(/^[[:space:]]*-[[:space:]]*|"/, "", $0); print $0}' "$tools_config" 2>/dev/null))
+        fi
+
+        # Sync based on config
+        if [[ ${#include_list[@]} -gt 0 ]]; then
+            # WHITELIST mode: Only copy included tools
+            print_status "Using include list (whitelist mode)"
+            echo
+            
+            for tool_name in "${include_list[@]}"; do
+                tool_name=$(echo "$tool_name" | xargs)  # Trim whitespace
+                local tool_file="$TOOLS_SOURCE/$tool_name"
+                
+                # Ensure .ts extension
+                [[ "$tool_file" != *.ts ]] && tool_file="${tool_file}.ts"
+                
+                if [[ -f "$tool_file" ]]; then
+                    cp "$tool_file" "$global_tools_dir/"
+                    ((copied_count++))
+                    echo -e "  ${GREEN}✓ $tool_name${NC}"
+                else
+                    echo -e "  ${RED}⚠ Not found: $tool_name${NC}"
+                fi
+            done
+            
+        else
+            # BLACKLIST mode: Copy all except excluded
+            if [[ ${#exclude_list[@]} -gt 0 ]]; then
+                print_status "Using exclude list (blacklist mode)"
+                echo -e "  Excluding: ${YELLOW}${exclude_list[*]}${NC}"
+                echo
+            else
+                print_status "No exclude list - copying all tools"
+                echo
+            fi
+            
+            # Copy all .ts files except excluded ones
+            local tool_files=("$TOOLS_SOURCE"/*.ts)
+            
+            for tool_file in "${tool_files[@]}"; do
+                [[ -f "$tool_file" ]] || { echo "DEBUG: Not a file, skipping"; continue; }
+                local filename=$(basename "$tool_file")
+                local filename_no_ext="${filename%.ts}"
+                
+                local should_copy=true
+                for pattern in "${exclude_list[@]}"; do
+                    pattern=$(echo "$pattern" | xargs)
+                    # Handle wildcard patterns
+                    if [[ "$pattern" == *"*" ]]; then
+                        local prefix="${pattern%\*}"
+                        if [[ "$filename_no_ext" == "$prefix"* ]]; then
+                            should_copy=false
+                            break
+                        fi
+                    elif [[ "$filename_no_ext" == "$pattern" ]]; then
+                        should_copy=false
+                        break
+                    fi
+                done
+                
+                if [[ "$should_copy" == true ]]; then
+                    cp "$tool_file" "$global_tools_dir/"
+                    cp_exit=$?
+                    copied_count=$((copied_count + 1))
+                    echo -e "  ${GREEN}✓ $filename${NC}"
+                else
+                    ((skipped_count++))
+                    echo -e "  ${YELLOW}✗ Skipping (excluded): $filename${NC}"
+                fi
+            done
+        fi
+        
+    else
+        # No config file - sync all tools
+        print_status "No config file - syncing all tools"
+        echo
+        
+        cp -r "$TOOLS_SOURCE/"*.ts "$global_tools_dir/" 2>/dev/null || true
+        copied_count=$(ls -1 "$global_tools_dir"/*.ts 2>/dev/null | wc -l)
+        
+        for tool_file in "$TOOLS_SOURCE"/*.ts; do
+            [[ -f "$tool_file" ]] || continue
+            echo -e "  ${GREEN}✓ $(basename "$tool_file")${NC}"
+        done
+    fi
+    
+    echo
+    if [[ $copied_count -gt 0 ]]; then
+        print_success "Tools synced: $copied_count tool(s) copied to $global_tools_dir"
+        
+        # Show usage instructions
+        echo
+        echo -e "${DIM}Usage in OpenCode:${NC}"
+        echo -e "  ${DIM}\"Search the web for current news. Use websearch tool.\"${NC}"
+        
+        # List available tools
+        if [[ $copied_count -le 10 ]]; then
+            echo -e "${DIM}Available tools:${NC}"
+            for tool in "$global_tools_dir"/*.ts; do
+                [[ -f "$tool" ]] || continue
+                tool_name=$(basename "$tool" .ts)
+                echo -e "  ${DIM}- $tool_name${NC}"
+            done
+        fi
+    else
+        print_warning "No tools were synced"
+    fi
+    
+    echo
+
+    if [[ "$old_nullglob" == "unset" ]]; then
+        shopt -u nullglob
+    fi
+
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# Models Sync Functions
+# -----------------------------------------------------------------------------
+
+# Sync model configuration to OpenCode config directory with backup after downloading models
+# Usage: sync_models <script_dir> <target_dir> <non_interactive> [sync_models]
+#
+# script_dir: Directory containing the source model/ folder
+# target_dir: OpenCode config directory (usually ~/.config/opencode)
+# non_interactive: "true" to skip prompts, "false" for interactive mode
+# sync_models: "true" to regenerate and sync model files (used with --sync-models flag)
+#
+# Syncs:
+#   models/models.conf -> ~/.config/opencode/models.conf
+#
+# Returns: 0 if files were created/updated, 1 if skipped
+
+# Sync models to OpenCode config
+sync_models() {
+    local script_dir="$1"
+    local opencode_models_dir="$2"
+    local non_interactive="$3"
+    local sync_models="$4"
+    
+    print_header "Syncing Model Configuration"
+    echo
+    
+    # Get list of downloaded models
+    load_models_conf
+    local downloaded_models=()
+    for model in "${MODEL_ORDER[@]}"; do
+        IFS='|' read -r _category _hf_repo gguf_file size _description <<< "${MODEL_INFO[$model]}"
+        if [[ -f "$MODELS_DIR/$gguf_file" ]]; then
+            downloaded_models+=("$model")
+        fi
+    done
+    
+    if [[ ${#downloaded_models[@]} -eq 0 ]]; then
+        print_warning "No downloaded models found"
+        echo "Download models first with: ./setup.sh"
+        return 1
+    fi
+    
+    # Backup existing config
+    local backup_file=""
+    if [[ -f "$OPENCODE_CONFIG" ]]; then
+        backup_file="$OPENCODE_CONFIG.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$OPENCODE_CONFIG" "$backup_file"
+        print_status "Backed up existing config to: $backup_file"
+    fi
+    
+    # Generate and write new config
+    print_status "Generating OpenCode configuration..."
+    mkdir -p "$(dirname "$OPENCODE_CONFIG")"
+    generate_opencode_config "${downloaded_models[@]}" > "$OPENCODE_CONFIG"
+    
+    print_success "Model configuration synced to: $OPENCODE_CONFIG"
+    print_status "Added ${#downloaded_models[@]} model(s) to config"\
+
+    echo
+    return 0
+}
 
 # -----------------------------------------------------------------------------
 # OpenCode Config Management
