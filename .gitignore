@@ -27,12 +27,28 @@ llama-cpp/
 .DS_Store
 Thumbs.db
 
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
+# Python package build artifacts
+*.egg-info/
+*.egg
+build/
+dist/
+
+# Virtual environment
 .venv/
 venv/
+env/
+ENV/
 
-# RAG data (user-specific indexed content and logs)
-rag/data/
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Project specific
+models/*.gguf
+llama.cpp/
+*.log
