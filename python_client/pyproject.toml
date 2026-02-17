@@ -5,23 +5,44 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ai-stack"
 version = "0.1.0"
-description = "AI Stack - Local LLM setup and management"
+description = "AI Stack - Local LLM setup and management with HuggingFace integration"
 readme = "README.md"
 authors = [
     {name = "Your Name", email = "your.email@example.com"},
 ]
 license = {text = "MIT"}
 requires-python = ">=3.8"
+keywords = ["llm", "ai", "huggingface", "llama.cpp", "rag"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
 dependencies = [
-    "requests>=2.28.0",
-    "pydantic>=1.10.0",
+    "huggingface_hub>=0.23.0",      # Core HuggingFace functionality
+    "click>=8.1.0",                  # CLI argument parsing
+    "rich>=13.0.0",                  # Pretty console output
+    "requests>=2.28.0",               # HTTP requests for health checks
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
-    "black>=22.0.0",
-    "isort>=5.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
 ]
 
 [project.scripts]
@@ -31,6 +52,21 @@ server-status = "ai_stack.cli:status_cli"
 server-stop = "ai_stack.cli:stop_server_cli"
 download-model = "ai_stack.cli:download_model_cli"
 check-deps = "ai_stack.cli:check_deps_cli"
+uninstall-stack = "ai_stack.cli:uninstall_cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "B"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.8"
+strict = true
+ignore_missing_imports = true

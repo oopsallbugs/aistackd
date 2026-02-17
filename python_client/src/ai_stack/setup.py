@@ -7,7 +7,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
-
+from .huggingface import HFModelManager, CachedHFModelManager
 from .config import config
 
 class SetupManager:
@@ -66,7 +66,7 @@ class SetupManager:
         """Clone llama.cpp repository"""
         if self.config.paths.llama_cpp_dir.exists():
             if force:
-                import shutil
+                import shutil  # Add this import
                 shutil.rmtree(self.config.paths.llama_cpp_dir)
             else:
                 print(f"✓ llama.cpp already exists at {self.config.paths.llama_cpp_dir}")
@@ -182,43 +182,146 @@ class SetupManager:
                 print(f"  Error: {e.stderr.strip()[:500]}...")
             return False
     
-    def download_model(self, model_url: str, filename: Optional[str] = None) -> bool:
-        """Download a model file"""
-        import urllib.request
+class SetupManager:
+    def __init__(self):
+        self.config = config
+        self.hf_manager = HFModelManager(config.paths.models_dir)
+    
+    def list_huggingface_files(self, repo_id: str):
+        """List available files in a HuggingFace repo"""
+        files = self.hf_manager.find_gguf_files(repo_id)
+        mmproj = self.hf_manager.find_mmproj_files(repo_id)
         
-        if not self.config.paths.models_dir.exists():
-            self.config.paths.models_dir.mkdir(parents=True)
+        # Get model info
+        info = self.hf_manager.get_model_metadata(repo_id)
+        if info:
+            print(f"\n📦 {repo_id}")
+            print(f"   Type: {info['pipeline_tag'] or 'unknown'}")
+            if info['is_vision']:
+                print(f"   🖼️  Vision model")
+            print(f"   Downloads: {info['downloads']:,}")
+            print(f"   Likes: {info['likes']}")
         
-        if not filename:
-            filename = model_url.split("/")[-1]
-        
-        output_path = self.config.paths.models_dir / filename
-        
-        if output_path.exists():
-            print(f"✓ Model already exists: {filename}")
-            return True
-        
-        print(f"Downloading model: {filename}")
-        
-        try:
-            # Simple download with progress
-            def report_progress(block_num, block_size, total_size):
-                downloaded = block_num * block_size
-                if total_size > 0:
-                    percent = min(100, downloaded * 100 / total_size)
-                    print(f"\r  Progress: {percent:.1f}%", end="", flush=True)
+        if files:
+            print(f"\n📋 Available GGUF files:")
+            for i, f in enumerate(files[:10], 1):
+                size = self.hf_manager.get_file_size(repo_id, f)
+                size_str = f" ({size // 1024 // 1024} MB)" if size else ""
+                is_mmproj = " (MMproj)" if 'mmproj' in f.lower() else ""
+                print(f"  {i}. {f}{size_str}{is_mmproj}")
             
-            urllib.request.urlretrieve(
-                model_url,
-                output_path,
-                report_progress
-            )
-            print(f"\n✓ Downloaded: {filename}")
-            return True
-            
-        except Exception as e:
-            print(f"\n✗ Download failed: {e}")
+            if len(files) > 10:
+                print(f"  ... and {len(files) - 10} more")
+        
+        if mmproj:
+            print(f"\n🖼️  MMproj files available:")
+            for f in mmproj:
+                print(f"  • {f}")
+    
+    def download_from_huggingface(self, 
+                                 repo_id: str, 
+                                 filename: Optional[str] = None,
+                                 download_mmproj: bool = False) -> bool:
+        """Download model from HuggingFace"""
+        
+        print(f"🔍 Fetching info for {repo_id}...")
+        info = self.hf_manager.get_model_metadata(repo_id)
+        
+        if not info:
             return False
+        
+        print(f"  Type: {info['pipeline_tag'] or 'unknown'}")
+        if info['is_vision']:
+            print(f"  🖼️  Vision model detected")
+        
+        # Get available files
+        files = self.hf_manager.find_gguf_files(repo_id)
+        if not files:
+            print(f"❌ No GGUF files found in {repo_id}")
+            return False
+        
+        # Select file
+        if not filename:
+            # Auto-select: prefer non-mmproj files
+            candidates = [f for f in files if 'mmproj' not in f.lower()]
+            filename = candidates[0] if candidates else files[0]
+            print(f"\n📝 Auto-selected: {filename}")
+        
+        # Find MMproj if requested
+        mmproj_filename = None
+        if download_mmproj or info['is_vision']:
+            mmproj_filename = self.hf_manager.suggest_mmproj(repo_id, filename)
+            if mmproj_filename:
+                print(f"🖼️  Found MMproj: {mmproj_filename}")
+        
+        # Download
+        result = self.hf_manager.download_model_with_mmproj(
+            repo_id,
+            model_filename=filename,
+            mmproj_filename=mmproj_filename
+        )
+        
+        if result["model"]:
+            # Extract info for manifest
+            model_info = self.hf_manager.extract_model_info(repo_id, filename)
+            
+            # Add to manifest
+            self.config.add_model_to_manifest(
+                model_path=result["model"],
+                source_url=f"https://huggingface.co/{repo_id}",
+                mmproj_path=result["mmproj"],
+                family=model_info["family"],
+                metadata={
+                    "repo": repo_id,
+                    "pipeline": info['pipeline_tag'],
+                    "is_vision": info['is_vision']
+                }
+            )
+            
+            if result["mmproj"]:
+                # Find all models this MMproj works with
+                base_name = filename.split('.Q')[0] if '.Q' in filename else filename.rsplit('.', 1)[0]
+                for_models = [
+                    f.name for f in self.config.paths.models_dir.glob(f"{base_name}*.gguf")
+                    if 'mmproj' not in f.name.lower()
+                ]
+                
+                self.config.add_mmproj_to_manifest(
+                    mmproj_path=result["mmproj"],
+                    for_models=for_models,
+                    source_url=f"https://huggingface.co/{repo_id}"
+                )
+            
+            print(f"\n✅ Download complete!")
+            print(f"   Model: {result['model'].name}")
+            if result["mmproj"]:
+                print(f"   MMproj: {result['mmproj'].name}")
+            
+            # Show next steps
+            print(f"\n📋 To start the server:")
+            print(f"   server-start {result['model'].name}")
+            
+            return True
+        
+        return False
+
+    def _detect_model_family(self, filename: str) -> str:
+        """Simple family detection from filename"""
+        name = filename.replace('.gguf', '')
+        
+        # Remove quantization
+        if '.Q' in name:
+            name = name.split('.Q')[0]
+        
+        # Remove common suffixes
+        for suffix in ['.instruct', '-instruct', '_instruct',
+                    '.chat', '-chat', '_chat',
+                    '.base', '-base', '_base',
+                    '.vision', '-vision', '_vision']:
+            if suffix in name.lower():
+                name = name[:name.lower().index(suffix)]
+
+        return name
     
     def start_server(self, 
                     model_path: Optional[str] = None,
@@ -228,16 +331,41 @@ class SetupManager:
         if not self.config.is_llama_built:
             raise RuntimeError("llama.cpp is not built. Run setup() first.")
         
-        # Use first available model if none specified
+        # Require explicit model path - no auto-selection
         if not model_path:
-            models = self.config.get_available_models()
-            if not models:
-                raise RuntimeError("No models available. Download models first.")
-            model_path = models[0]["path"]
+            raise ValueError(
+                "No model specified. You must provide a model path.\n"
+                "Example: manager.start_server('models/my-model.gguf')"
+            )
         
         model_path = Path(model_path)
         if not model_path.exists():
-            raise FileNotFoundError(f"Model not found: {model_path}")
+            # Try relative to models_dir
+            alt_path = self.config.paths.models_dir / model_path
+            if alt_path.exists():
+                model_path = alt_path
+            else:
+                # Show available models to help user
+                models = self.config.get_available_models()
+                if models:
+                    model_list = "\n  • ".join([m['name'] for m in models[:5]])
+                    msg = (
+                        f"Model not found: {model_path}\n"
+                        f"Available models in {self.config.paths.models_dir}:\n  • {model_list}"
+                    )
+                    if len(models) > 5:
+                        msg += f"\n  ... and {len(models) - 5} more"
+                else:
+                    msg = f"Model not found: {model_path}\nNo models available in {self.config.paths.models_dir}"
+            
+                raise FileNotFoundError(msg)
+        
+        # Auto-detect MMproj from manifest if not provided
+        if not mmproj_path:
+            mmproj = self.config.get_mmproj_for_model(model_path)
+            if mmproj:
+                print(f"📎 Auto-detected MMproj: {mmproj.name}")
+                mmproj_path = str(mmproj)
         
         # Build command
         cmd = [
@@ -336,12 +464,14 @@ class SetupManager:
             print("1. Download models:")
             print(f"   mkdir -p {self.config.paths.models_dir}")
             print("   # Download GGUF models from HuggingFace")
+            print("   # Example: download-model https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_K_M.gguf")
         else:
-            print("1. Start server:")
-            print(f"   from ai_stack.setup import SetupManager")
-            print(f"   manager = SetupManager()")
-            print(f"   server = manager.start_server()")
-        
+            print("1. Start server with a specific model:")
+            print("   from ai_stack.setup import SetupManager")
+            print("   manager = SetupManager()")
+            print("   server = manager.start_server('models/your-model.gguf')")
+            print("   # Or via CLI: server-start your-model.gguf")
+    
         print(f"\n2. Use the LLM client:")
         print(f"   from ai_stack.llm import create_client")
         print(f"   client = create_client()")
