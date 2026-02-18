@@ -55,3 +55,7 @@ uninstall-stack --yes
 
 ## Progress UX
 - `setup-stack` and `download-model` now print stable stage checkpoints like `[1/3] ...` for long-running workflows.
+
+## Download Workers
+- `AI_STACK_HF_MAX_WORKERS` controls bounded concurrent HF file downloads (default `1`).
+- Current concurrency applies to model+mmproj fetches only; manifest writes remain serialized.

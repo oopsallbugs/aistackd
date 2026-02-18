@@ -101,6 +101,7 @@ Examples:
 
     args = parser.parse_args()
     manager = SetupManager()
+    active_workers = hf_downloads.get_hf_max_workers()
 
     if args.list:
         try:
@@ -130,6 +131,7 @@ Examples:
             )
         if args.cache_diagnostics:
             manager.print_cache_diagnostics()
+            print(f"   workers: {active_workers}")
         return
 
     try:
@@ -173,6 +175,7 @@ Examples:
 
     if args.cache_diagnostics:
         manager.print_cache_diagnostics()
+        print(f"   workers: {active_workers}")
 
     sys.exit(0)
 

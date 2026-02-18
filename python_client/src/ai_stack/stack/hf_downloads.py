@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Callable, List, Optional
 from urllib.parse import urlparse
@@ -16,6 +18,8 @@ from ai_stack.huggingface.resolver import DEFAULT_QUANT_RANKING, resolve_downloa
 
 DEFAULT_HF_RETRY_ATTEMPTS = 3
 DEFAULT_HF_RETRY_BACKOFF_SECONDS = 0.25
+DEFAULT_HF_MAX_WORKERS = 1
+MAX_HF_MAX_WORKERS = 8
 
 
 @dataclass
@@ -45,6 +49,22 @@ class HfDownloadResult:
     quant_preference: Optional[str] = None
     error: Optional[str] = None
     cache_event: Optional[str] = None
+
+
+def get_hf_max_workers() -> int:
+    """
+    Return bounded worker count for HF file downloads.
+
+    Controlled by AI_STACK_HF_MAX_WORKERS; defaults to 1.
+    """
+    raw = os.environ.get("AI_STACK_HF_MAX_WORKERS", "").strip()
+    if not raw:
+        return DEFAULT_HF_MAX_WORKERS
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_HF_MAX_WORKERS
+    return max(1, min(value, MAX_HF_MAX_WORKERS))
 
 
 def normalize_hf_repo_id(repo_input: str) -> str:
@@ -216,65 +236,89 @@ def download_from_huggingface(
         mmproj_file = resolved.mmproj_file if download_mmproj else None
 
     models_dir = str(config.paths.models_dir)
-    try:
-        model_local_path = Path(
-            retry_call(
-                operation="hf.download_file.model",
-                attempts=retry_attempts,
-                backoff_seconds=retry_backoff_seconds,
-                fn=lambda: hf_client.download_file(
-                    repo_id,
-                    model_file.path,
-                    revision=snapshot.revision,
-                    local_dir=models_dir,
-                ),
-            )
-        )
-    except (OSError, RuntimeError, TimeoutError, ConnectionError) as exc:
-        emit_event("hf.download.file.failed", level="error", repo_id=repo_id, file=model_file.path, error=str(exc))
-        return HfDownloadResult(
-            success=False,
-            repo_id=repo_id,
-            error=f"Failed to download model file '{model_file.path}': {exc}",
-        )
-    emit_event("hf.download.file.complete", repo_id=repo_id, file=model_file.path, local_path=str(model_local_path))
+    max_workers = get_hf_max_workers()
+    emit_event("hf.download.workers", requested=max_workers)
 
-    mmproj_local_path: Optional[Path] = None
-    if mmproj_file:
+    class _DownloadFileError(RuntimeError):
+        def __init__(self, *, file: RepoFile, file_type: str, cause: Exception):
+            super().__init__(str(cause))
+            self.file = file
+            self.file_type = file_type
+            self.cause = cause
+
+    def _download_file(file: RepoFile, operation: str, file_type: str) -> Path:
         try:
-            mmproj_local_path = Path(
+            local_path = Path(
                 retry_call(
-                    operation="hf.download_file.mmproj",
+                    operation=operation,
                     attempts=retry_attempts,
                     backoff_seconds=retry_backoff_seconds,
                     fn=lambda: hf_client.download_file(
                         repo_id,
-                        mmproj_file.path,
+                        file.path,
                         revision=snapshot.revision,
                         local_dir=models_dir,
                     ),
                 )
             )
         except (OSError, RuntimeError, TimeoutError, ConnectionError) as exc:
-            emit_event(
-                "hf.download.file.failed",
-                level="error",
-                repo_id=repo_id,
-                file=mmproj_file.path,
-                file_type="mmproj",
-                error=str(exc),
-            )
-            return HfDownloadResult(
-                success=False,
-                repo_id=repo_id,
-                error=f"Failed to download mmproj file '{mmproj_file.path}': {exc}",
-            )
+            raise _DownloadFileError(file=file, file_type=file_type, cause=exc) from exc
         emit_event(
             "hf.download.file.complete",
             repo_id=repo_id,
-            file=mmproj_file.path,
-            local_path=str(mmproj_local_path),
-            file_type="mmproj",
+            file=file.path,
+            local_path=str(local_path),
+            file_type=file_type,
+        )
+        return local_path
+
+    def _format_download_error(file: RepoFile, file_type: str, exc: Exception) -> str:
+        label = "model file" if file_type == "model" else "mmproj file"
+        return f"Failed to download {label} '{file.path}': {exc}"
+
+    try:
+        if mmproj_file and max_workers > 1:
+            worker_count = min(max_workers, 2)
+            emit_event("hf.download.parallel.start", repo_id=repo_id, workers=worker_count)
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = {
+                    "model": executor.submit(_download_file, model_file, "hf.download_file.model", "model"),
+                    "mmproj": executor.submit(_download_file, mmproj_file, "hf.download_file.mmproj", "mmproj"),
+                }
+                wait(set(futures.values()))
+
+                # Deterministic failure precedence: model first, then mmproj.
+                for file_type in ("model", "mmproj"):
+                    error = futures[file_type].exception()
+                    if error is not None:
+                        emit_event(
+                            "hf.download.parallel.failed",
+                            level="error",
+                            repo_id=repo_id,
+                            failed_file_type=file_type,
+                            error=str(error),
+                        )
+                        raise error
+
+                model_local_path = futures["model"].result()
+                mmproj_local_path = futures["mmproj"].result()
+                emit_event("hf.download.parallel.complete", repo_id=repo_id, workers=worker_count)
+        else:
+            model_local_path = _download_file(model_file, "hf.download_file.model", "model")
+            mmproj_local_path = _download_file(mmproj_file, "hf.download_file.mmproj", "mmproj") if mmproj_file else None
+    except _DownloadFileError as exc:
+        emit_event(
+            "hf.download.file.failed",
+            level="error",
+            repo_id=repo_id,
+            file=exc.file.path,
+            file_type=exc.file_type,
+            error=str(exc.cause),
+        )
+        return HfDownloadResult(
+            success=False,
+            repo_id=repo_id,
+            error=_format_download_error(exc.file, exc.file_type, exc.cause),
         )
 
     registry.register_model(
@@ -325,9 +369,12 @@ __all__ = [
     "HfDownloadResult",
     "HfFileListResult",
     "SnapshotFetchResult",
+    "DEFAULT_HF_MAX_WORKERS",
     "DEFAULT_HF_RETRY_ATTEMPTS",
     "DEFAULT_HF_RETRY_BACKOFF_SECONDS",
+    "MAX_HF_MAX_WORKERS",
     "download_from_huggingface",
+    "get_hf_max_workers",
     "get_hf_snapshot",
     "list_huggingface_files",
     "normalize_hf_repo_id",
