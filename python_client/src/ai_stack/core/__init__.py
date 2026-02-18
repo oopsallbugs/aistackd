@@ -9,7 +9,7 @@ from ai_stack.core.config import (
     USER_CONFIG,
     config,
 )
-from ai_stack.core.errors import exit_with_error, print_error
+from ai_stack.core.errors import exit_with_error, exit_with_unexpected_error, print_error
 from ai_stack.core.exceptions import (
     AiStackError,
     BuildError,
@@ -49,5 +49,6 @@ __all__ = [
     "events_enabled",
     "retry_call",
     "exit_with_error",
+    "exit_with_unexpected_error",
     "print_error",
 ]

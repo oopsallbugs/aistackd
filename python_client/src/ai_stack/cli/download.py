@@ -8,7 +8,7 @@ import sys
 from huggingface_hub.errors import HFValidationError
 
 from ai_stack.cli.main import print_bullet_list, print_progress, print_section
-from ai_stack.core.errors import exit_with_error
+from ai_stack.core.errors import exit_with_error, exit_with_unexpected_error
 from ai_stack.core.logging import emit_event
 from ai_stack.stack import hf_downloads
 from ai_stack.stack.manager import SetupManager
@@ -123,9 +123,10 @@ Examples:
             )
         except (RuntimeError, OSError, TimeoutError, ConnectionError) as exc:
             emit_event("cli.download.list.failed", level="error", error=str(exc))
-            exit_with_error(
-                message=f"Failed to fetch HuggingFace file list: {exc}",
-                detail="Check network access and repo visibility, then try again.",
+            exit_with_unexpected_error(
+                command="Download list",
+                exc=exc,
+                detail="Check network access and repo visibility.",
             )
         if args.cache_diagnostics:
             manager.print_cache_diagnostics()
@@ -157,9 +158,17 @@ Examples:
         )
     except (RuntimeError, OSError, TimeoutError, ConnectionError) as exc:
         emit_event("cli.download.failed", level="error", error=str(exc))
-        exit_with_error(
-            message=f"Download failed: {exc}",
+        exit_with_unexpected_error(
+            command="Download",
+            exc=exc,
             detail="Check network access and retry. Use --list to inspect available files.",
+        )
+    except Exception as exc:
+        emit_event("cli.download.failed", level="error", error=str(exc))
+        exit_with_unexpected_error(
+            command="Download",
+            exc=exc,
+            detail="Use --list to inspect available files.",
         )
 
     if args.cache_diagnostics:

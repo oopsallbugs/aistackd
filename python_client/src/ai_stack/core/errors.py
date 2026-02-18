@@ -16,3 +16,17 @@ def exit_with_error(message: str, detail: Optional[str] = None, exit_code: int =
     """Print an error and exit with a non-zero status code."""
     print_error(message=message, detail=detail)
     raise SystemExit(exit_code)
+
+
+def exit_with_unexpected_error(
+    *,
+    command: str,
+    exc: Exception,
+    detail: Optional[str] = None,
+    exit_code: int = 1,
+) -> None:
+    """Print a consistent unexpected-error message and exit."""
+    suffix = f" {detail}" if detail else ""
+    message = f"{command} failed unexpectedly: {exc}"
+    print_error(message=message, detail=f"Please retry and check logs.{suffix}".strip())
+    raise SystemExit(exit_code)
