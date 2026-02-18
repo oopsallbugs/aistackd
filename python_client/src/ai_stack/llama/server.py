@@ -10,6 +10,8 @@ from typing import Optional
 
 import requests
 
+from ai_stack.core.exceptions import ServerError
+
 
 def start_llama_server(
     config,
@@ -21,10 +23,10 @@ def start_llama_server(
 ) -> subprocess.Popen:
     """Start llama.cpp server with configured runtime options."""
     if not config.is_llama_built:
-        raise RuntimeError("llama.cpp is not built. Run setup() first.")
+        raise ServerError("llama.cpp is not built. Run setup() first.")
 
     if not model_path:
-        raise ValueError(
+        raise ServerError(
             "No model specified. You must provide a model path.\n"
             "Example: manager.start_server('models/my-model.gguf')"
         )
@@ -50,7 +52,7 @@ def start_llama_server(
                     f"Model not found: {resolved_model_path}\n"
                     f"No models available in {config.paths.models_dir}"
                 )
-            raise FileNotFoundError(msg)
+            raise ServerError(msg)
 
     if not mmproj_path:
         mmproj = registry.get_mmproj_for_model(resolved_model_path)
@@ -96,11 +98,11 @@ def start_llama_server(
                 print(" ✓")
                 print(f"Server started on {config.server.llama_url}")
                 return process
-        except Exception:
+        except requests.RequestException:
             pass
         print(".", end="", flush=True)
         time.sleep(1)
 
     print(" ✗")
     process.terminate()
-    raise RuntimeError("Server failed to start within 30 seconds")
+    raise ServerError("Server failed to start within 30 seconds")

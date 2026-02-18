@@ -74,7 +74,7 @@ def build_llama_cpp(config) -> bool:
             if config.gpu.hsa_override_gfx_version:
                 env["HSA_OVERRIDE_GFX_VERSION"] = config.gpu.hsa_override_gfx_version
 
-        except Exception as exc:
+        except (OSError, subprocess.SubprocessError) as exc:
             print(f"⚠ Warning: Could not set HIP environment: {exc}")
 
     build_dir = config.paths.llama_cpp_dir / "build"

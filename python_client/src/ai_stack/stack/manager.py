@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from ai_stack.core.config import config
+from ai_stack.core.exceptions import DownloadError
 from ai_stack.huggingface.cache import HuggingFaceSnapshotCache
 from ai_stack.huggingface.client import HuggingFaceClient
 from ai_stack.huggingface.metadata import derive_model_metadata
@@ -60,7 +61,7 @@ class SetupManager:
         """
         value = (repo_input or "").strip()
         if not value:
-            raise ValueError("Repo cannot be empty. Use format: namespace/repo")
+            raise DownloadError("Repo cannot be empty. Use format: namespace/repo")
 
         if "://" not in value:
             return value
@@ -68,17 +69,17 @@ class SetupManager:
         parsed = urlparse(value)
         host = (parsed.netloc or "").lower()
         if host not in {"huggingface.co", "www.huggingface.co"}:
-            raise ValueError(f"Unsupported host '{parsed.netloc}'. Expected huggingface.co")
+            raise DownloadError(f"Unsupported host '{parsed.netloc}'. Expected huggingface.co")
 
         parts = [part for part in parsed.path.split("/") if part]
         if len(parts) < 2:
-            raise ValueError("Could not parse repo from URL. Expected: https://huggingface.co/namespace/repo")
+            raise DownloadError("Could not parse repo from URL. Expected: https://huggingface.co/namespace/repo")
 
         if parts[0] in {"models", "spaces", "datasets"}:
             if parts[0] != "models":
-                raise ValueError("Only model repos are supported. Use a model URL or namespace/repo.")
+                raise DownloadError("Only model repos are supported. Use a model URL or namespace/repo.")
             if len(parts) < 3:
-                raise ValueError(
+                raise DownloadError(
                     "Could not parse model repo from URL. Expected: https://huggingface.co/models/namespace/repo"
                 )
             return f"{parts[1]}/{parts[2]}"
@@ -98,7 +99,7 @@ class SetupManager:
         try:
             subprocess.run([sys.executable, "-m", "pip", "--version"], capture_output=True, check=False)
             deps["pip"] = True
-        except Exception:
+        except OSError:
             pass
 
         for tool in ["git", "cmake", "make"]:
@@ -112,13 +113,13 @@ class SetupManager:
             try:
                 subprocess.run(["nvidia-smi"], capture_output=True, check=False)
                 deps["nvidia_driver"] = True
-            except Exception:
+            except OSError:
                 deps["nvidia_driver"] = False
         elif self.config.gpu.vendor == "amd":
             try:
                 subprocess.run(["hipconfig", "--version"], capture_output=True, check=False)
                 deps["rocm"] = True
-            except Exception:
+            except OSError:
                 deps["rocm"] = False
 
         return deps
@@ -348,7 +349,7 @@ class SetupManager:
             print("   # Example: download-model TheBloke/Llama-2-7B-GGUF")
         else:
             print("1. Start server with a specific model:")
-            print("   from ai_stack.setup import SetupManager")
+            print("   from ai_stack.stack.manager import SetupManager")
             print("   manager = SetupManager()")
             print("   server = manager.start_server('models/your-model.gguf')")
             print("   # Or via CLI: server-start your-model.gguf")

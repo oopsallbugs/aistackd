@@ -68,7 +68,7 @@ class HuggingFaceSnapshotCache:
 
         try:
             snapshot = self._deserialize_snapshot(snapshot_raw)
-        except Exception:
+        except (TypeError, ValueError):
             return None
 
         return CachedRepoSnapshot(

@@ -7,7 +7,7 @@ from typing import Any, Dict, Generator, List, Optional
 
 import requests
 
-from .config import config
+from ai_stack.core.config import config
 
 @dataclass
 class LLMResponse:
@@ -35,7 +35,7 @@ class LLMClient:
                 timeout=5
             )
             return response.status_code == 200
-        except:
+        except requests.RequestException:
             return False
     
     def wait_for_server(self, timeout: int = 60) -> bool:
@@ -119,7 +119,7 @@ class LLMClient:
                             break
                         try:
                             yield requests.models.complexjson.loads(data)
-                        except:
+                        except ValueError:
                             continue
     
     def quick_chat(self, prompt: str, **kwargs) -> str:
@@ -139,7 +139,7 @@ class LLMClient:
             response.raise_for_status()
             data = response.json()
             return [model["id"] for model in data.get("data", [])]
-        except:
+        except requests.RequestException:
             return []
     
     def get_model_info(self) -> Dict[str, Any]:
@@ -151,7 +151,7 @@ class LLMClient:
             )
             if response.status_code == 200:
                 return response.json()
-        except:
+        except requests.RequestException:
             pass
         return {}
 
