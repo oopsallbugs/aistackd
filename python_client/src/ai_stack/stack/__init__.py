@@ -1,4 +1,4 @@
-"""Compatibility shim for SetupManager."""
+"""Stack orchestration layer."""
 
 from ai_stack.stack.manager import SetupManager
 

@@ -1,19 +1,15 @@
-# Local configuration (contains system-specific values)
+# Local configuration
 .env
 
-# Model files (large binary files)
-*.gguf
+# Runtime artifacts at repo root
+/llama.cpp/
+/llama-cpp/
+/.ai_stack/
+/huggingface/
+/models/**
 
-# llama.cpp repository (cloned by setup.sh)
-llama.cpp/
-
-# Downloaded models directory
-models/
-
-# Legacy llama-cpp directory (for existing clones during transition)
-llama-cpp/
-
-# Backup files
+# Logs and backups
+*.log
 *.backup.*
 
 # Editor files
@@ -47,8 +43,4 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-
-# Project specific
-models/*.gguf
-llama.cpp/
-*.log
+.ruff_cache/

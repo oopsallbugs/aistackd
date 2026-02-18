@@ -1,4 +1,4 @@
-"""Compatibility shim for ai_stack configuration."""
+"""Core runtime configuration layer."""
 
 from ai_stack.core.config import (
     AiStackConfig,

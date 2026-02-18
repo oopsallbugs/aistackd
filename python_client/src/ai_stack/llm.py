@@ -1,10 +1,12 @@
 """
 LLM Client - Works with auto-detected configuration
 """
-import requests
 import time
-from typing import List, Dict, Any, Optional, Generator
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+from typing import Any, Dict, Generator, List, Optional
+
+import requests
+
 from .config import config
 
 @dataclass
