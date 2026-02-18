@@ -1,0 +1,49 @@
+# AI Stack
+
+Local LLM orchestration for `llama.cpp` with Hugging Face model discovery/download.
+
+## What It Does
+- Builds and runs `llama.cpp` for local inference.
+- Discovers GGUF files from Hugging Face via metadata APIs.
+- Selects model files with quant-aware resolver logic.
+- Tracks installed models in a manifest registry.
+- Caches HF snapshots in local runtime cache.
+
+## Quick Start
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e python_client
+
+setup-stack
+download-model Qwen/Qwen2.5-7B-Instruct-GGUF --quant Q5_K_M
+download-model https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF --list --cache-diagnostics
+server-start qwen2.5-7b-instruct-q5_k_m.gguf
+server-status
+```
+
+## Commands
+- `setup-stack`: dependency check + clone/build `llama.cpp`.
+- `download-model`: list/select/download GGUF (+ optional mmproj).
+- `server-start`: start model server (foreground or detached).
+- `server-status`: show runtime status and model/context info.
+- `server-stop`: stop managed detached server.
+- `check-deps`: print dependency readiness.
+- `uninstall-stack`: remove repo-local runtime artifacts.
+
+## Runtime State Paths
+- Models and manifest: `./models/`
+- HF snapshot cache: `./.ai_stack/huggingface/cache.json`
+- Detached server runtime metadata: `./.ai_stack/server/`
+
+## Python Module Entry Points
+- Config: `ai_stack.core.config`
+- Orchestration manager: `ai_stack.stack.manager`
+- CLI exports: `ai_stack.cli`
+- LLM client facade: `ai_stack.llm`
+
+## Architecture + Specs
+- `docs/architecture.md`
+- `docs/roadmap.md`
+- `docs/hf-cache-spec.md`
+- `docs/resolver-spec.md`

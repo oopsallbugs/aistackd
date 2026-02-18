@@ -1,49 +1,50 @@
-# AI Stack
+# ai-stack Python Client
 
-Local LLM setup and management with auto-detected GPU support.
+Python package for local AI Stack orchestration and CLI commands.
 
-## Installation
-
+## Install
 ```bash
-# Install in development mode
 pip install -e .
-
-# Or install with dev dependencies
 pip install -e ".[dev]"
+pip install -e ".[docs]"
 ```
 
-## Usage
+## Console Scripts
+Configured in `python_client/pyproject.toml`:
+- `setup-stack = ai_stack.cli:setup_cli`
+- `server-start = ai_stack.cli:start_server_cli`
+- `server-status = ai_stack.cli:status_cli`
+- `server-stop = ai_stack.cli:stop_server_cli`
+- `download-model = ai_stack.cli:download_model_cli`
+- `check-deps = ai_stack.cli:check_deps_cli`
+- `uninstall-stack = ai_stack.cli:uninstall_cli`
 
+## Usage Examples
 ```bash
-# project.scripts
-setup-stack = "ai_stack.cli:setup_cli" # Auto detect system hw config & check deps, download and builds llama.cpp
-server-start = "ai_stack.cli:start_server_cli" # Starts llama.cpp server 
-server-status = "ai_stack.cli:status_cli" # Shows status of llama.cpp server
-server-stop = "ai_stack.cli:stop_server_cli" # Stops managed detached llama.cpp server
-download-model = "ai_stack.cli:download_model_cli" # Download model from namespace/repo or huggingface.co URL
-check-deps = "ai_stack.cli:check_deps_cli"
-```
+setup-stack
 
-### Download model examples
+# Repo ID input
+download-model TheBloke/Llama-2-7B-GGUF --cache-diagnostics
 
-```bash
-download-model TheBloke/Llama-2-7B-GGUF
+# Hugging Face URL input
 download-model https://huggingface.co/TheBloke/Llama-2-7B-GGUF --list --cache-diagnostics
-download-model Qwen/Qwen2.5-7B-Instruct-GGUF --quant Q5_K_M
+
+server-start --list
+server-start llama-2-7b.q4_k_m.gguf --detach
+server-status
+server-stop
+uninstall-stack --yes
 ```
 
-### Detection controls
+## Package Layout
+- `ai_stack/core/`: runtime config + shared errors/exceptions.
+- `ai_stack/llama/`: GPU detection, build helpers, server runtime helpers.
+- `ai_stack/huggingface/`: HF transport client, resolver, metadata extraction, snapshot cache.
+- `ai_stack/models/`: model registry + manifest ownership.
+- `ai_stack/stack/`: orchestration manager and HF download orchestration.
+- `ai_stack/cli/`: CLI wrappers, command modules, and shared runtime helpers.
+- `ai_stack/llm.py`: local LLM client facade for llama.cpp-compatible API.
 
-```bash
-AI_STACK_VERBOSE_DETECT=1 server-status
-AI_STACK_AMD_TARGET=gfx1100 setup-stack
-```
-
-### Internal layout
-
-- `ai_stack/cli/`: CLI entrypoints and command wrappers
-- `ai_stack/stack/manager.py`: `SetupManager` orchestration
-- `ai_stack/core/config.py`: runtime config and path/model discovery
-- `ai_stack/llama/`: llama.cpp build/runtime helpers
-- `ai_stack/huggingface/`: HF transport + resolver + cache
-- `ai_stack/models/registry.py`: manifest ownership and model registry
+## Runtime Data
+- Manifest: `project_root/models/manifest.json`
+- HF cache: `project_root/.ai_stack/huggingface/cache.json`
