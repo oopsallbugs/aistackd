@@ -29,7 +29,7 @@ def detect_linux_gpu(config: Any, verbose: bool = False, fallback_amd_target: st
                 config.layers = 99
                 _log(verbose, f"  Detected NVIDIA GPU: {result.stdout.strip()}")
                 return
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             pass
 
         if os.path.exists("/dev/kfd"):
@@ -62,7 +62,7 @@ def detect_linux_gpu(config: Any, verbose: bool = False, fallback_amd_target: st
                                         config.target = gfx_match.group(1)
                                         _log(verbose, f"  Detected AMD GPU via line match: {config.target}")
                                         break
-            except Exception as exc:
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
                 _log(verbose, f"  rocminfo detection failed: {exc}")
 
             if not config.target:
@@ -81,7 +81,7 @@ def detect_linux_gpu(config: Any, verbose: bool = False, fallback_amd_target: st
             _log(verbose, f"  HSA override: {config.hsa_override_gfx_version}")
             return
 
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError, TypeError) as exc:
         _log(verbose, f"  GPU detection error: {exc}")
 
     if os.path.exists("/dev/kfd"):

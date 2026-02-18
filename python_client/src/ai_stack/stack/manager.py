@@ -151,7 +151,9 @@ class SetupManager:
 
         try:
             remote_sha = self.hf.get_repo_sha(repo_id=repo_id, revision=revision)
-        except Exception:
+        except (OSError, RuntimeError, TimeoutError, ValueError):
+            # Intentional broad fallback domain: if SHA check cannot be trusted,
+            # reuse cached snapshot instead of failing the command.
             self._record_cache_event("fallback")
             print(f"🧠 HF cache fallback: {repo_id}@{revision} (SHA check failed, using cached snapshot)")
             self.hf_cache.touch(repo_id=repo_id, revision=revision)
