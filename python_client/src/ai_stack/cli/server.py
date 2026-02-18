@@ -15,6 +15,7 @@ from typing import Optional
 import requests
 
 from ai_stack.core.config import config
+from ai_stack.core.errors import exit_with_error
 from ai_stack.core.exceptions import AiStackError
 from ai_stack.llm import create_client
 from ai_stack.stack.manager import SetupManager
@@ -23,7 +24,7 @@ from ai_stack.cli.main import extract_context_size
 
 
 def _runtime_dir() -> Path:
-    return config.paths.script_dir / ".ai_stack"
+    return config.paths.project_root / ".ai_stack"
 
 
 def _server_pid_path() -> Path:
@@ -147,34 +148,40 @@ def start_server_cli():
         print(f"📝 Using default model: {default_name}")
         print("   (Override by specifying a model: server-start <other-model>)")
     else:
-        print("❌ Error: No model specified and no default model configured.")
-        print("\nYou must specify which model to use:")
+        print_error_detail = []
+        print_error_detail.append("You must specify which model to use:")
         models = config.get_available_models()
         if models:
-            print("\nAvailable models:")
+            print_error_detail.append("")
+            print_error_detail.append("Available models:")
             for idx, model in enumerate(models, 1):
-                print(f"  {idx}. {model['name']} ({model['size_human']})")
-            print("\nOptions:")
-            print("  1. Set a default model in config.py:")
-            print("     USER_CONFIG['model']['default_model'] = 'path/to/model.gguf'")
-            print("\n  2. Specify a model now:")
+                print_error_detail.append(f"  {idx}. {model['name']} ({model['size_human']})")
+            print_error_detail.append("")
+            print_error_detail.append("Options:")
+            print_error_detail.append("  1. Set a default model in config.py:")
+            print_error_detail.append("     USER_CONFIG['model']['default_model'] = 'path/to/model.gguf'")
+            print_error_detail.append("")
+            print_error_detail.append("  2. Specify a model now:")
             for model in models[:3]:
-                print(f"     server-start {model['name']}")
+                print_error_detail.append(f"     server-start {model['name']}")
         else:
-            print(f"\nNo models found in: {config.paths.models_dir}")
-            print("Download a model first:")
-            print("  download-model <namespace/repo or hf-url>")
-        sys.exit(1)
+            print_error_detail.append("")
+            print_error_detail.append(f"No models found in: {config.paths.models_dir}")
+            print_error_detail.append("Download a model first:")
+            print_error_detail.append("  download-model <namespace/repo or hf-url>")
+        exit_with_error(
+            message="No model specified and no default model configured.",
+            detail="\n".join(print_error_detail),
+        )
 
     resolved = config.resolve_model_path(model_to_use)
     if not resolved:
-        print(f"❌ Error: Model not found: {model_to_use}")
-        print("\n📋 Available models:")
+        details = [f"📋 Available models:"]
         models = config.get_available_models()
         if models:
             for idx, model in enumerate(models, 1):
-                print(f"  {idx}. {model['name']} ({model['size_human']})")
-        sys.exit(1)
+                details.append(f"  {idx}. {model['name']} ({model['size_human']})")
+        exit_with_error(message=f"Model not found: {model_to_use}", detail="\n".join(details))
     model_path = str(resolved)
 
     manager = SetupManager()
@@ -191,8 +198,7 @@ def start_server_cli():
             _start_foreground_server(manager, model_path)
 
     except (AiStackError, OSError) as exc:
-        print(f"❌ Error: {exc}")
-        sys.exit(1)
+        exit_with_error(message=str(exc))
 
 
 def _start_detached_server(manager, model_path: str):
@@ -211,7 +217,7 @@ def _start_detached_server(manager, model_path: str):
             return
         _clear_server_pid()
 
-    log_file = config.paths.script_dir / "server.log"
+    log_file = config.paths.project_root / "server.log"
     with open(log_file, "a", encoding="utf-8") as log_handle:
         log_handle.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Starting detached server\n")
         log_handle.write(f"Model: {model_path}\n")
@@ -329,8 +335,7 @@ def stop_server_cli(argv=None):
         print("✅ Server stopped")
         return
 
-    print(f"❌ Failed to stop PID {pid}")
-    sys.exit(1)
+    exit_with_error(message=f"Failed to stop PID {pid}")
 
 
 __all__ = [

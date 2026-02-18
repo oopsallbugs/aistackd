@@ -27,7 +27,7 @@ class SetupManager:
         self.registry = ModelRegistry(models_dir=self.config.paths.models_dir)
         self.registry.ensure_manifest()
         self.hf = HuggingFaceClient()
-        runtime_dir = self.config.paths.script_dir / ".ai_stack"
+        runtime_dir = self.config.paths.project_root / ".ai_stack"
         self.hf_cache = HuggingFaceSnapshotCache(cache_path=runtime_dir / "huggingface" / "cache.json")
         self.hf_cache_diagnostics = {
             "miss": 0,

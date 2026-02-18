@@ -7,6 +7,7 @@ import sys
 
 from huggingface_hub.errors import HFValidationError
 
+from ai_stack.core.errors import exit_with_error
 from ai_stack.stack.manager import SetupManager
 
 
@@ -41,9 +42,10 @@ Examples:
         try:
             manager.list_huggingface_files(args.repo)
         except (HFValidationError, ValueError) as exc:
-            print(f"❌ Invalid HuggingFace repo input: {exc}")
-            print("   Use 'namespace/repo' or a full model URL on huggingface.co")
-            sys.exit(1)
+            exit_with_error(
+                message=f"Invalid HuggingFace repo input: {exc}",
+                detail="Use 'namespace/repo' or a full model URL on huggingface.co",
+            )
         if args.cache_diagnostics:
             manager.print_cache_diagnostics()
         return
@@ -56,9 +58,10 @@ Examples:
             quant_preference=args.quant,
         )
     except (HFValidationError, ValueError) as exc:
-        print(f"❌ Invalid HuggingFace repo input: {exc}")
-        print("   Use 'namespace/repo' or a full model URL on huggingface.co")
-        sys.exit(1)
+        exit_with_error(
+            message=f"Invalid HuggingFace repo input: {exc}",
+            detail="Use 'namespace/repo' or a full model URL on huggingface.co",
+        )
 
     if args.cache_diagnostics:
         manager.print_cache_diagnostics()

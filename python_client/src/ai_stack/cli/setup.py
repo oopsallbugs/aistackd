@@ -7,6 +7,7 @@ import shutil
 import sys
 
 from ai_stack.core.config import config
+from ai_stack.core.errors import exit_with_error
 from ai_stack.stack.manager import SetupManager
 
 
@@ -44,10 +45,12 @@ def check_deps_cli():
     if all_good:
         print("\n✅ All dependencies satisfied!")
     else:
-        print("\n❌ Some dependencies are missing")
-        print("\nRun 'setup-stack' to install missing dependencies")
+        exit_with_error(
+            message="Some dependencies are missing",
+            detail="Run 'setup-stack' to install missing dependencies",
+        )
 
-    sys.exit(0 if all_good else 1)
+    sys.exit(0)
 
 
 def uninstall_cli(argv=None):
@@ -93,7 +96,7 @@ def uninstall_cli(argv=None):
         except OSError as exc:
             failed.append(f"llama.cpp: {exc}")
 
-    runtime_cache = config.paths.script_dir / ".ai_stack"
+    runtime_cache = config.paths.project_root / ".ai_stack"
     if runtime_cache.exists():
         try:
             shutil.rmtree(runtime_cache)

@@ -40,7 +40,7 @@ USER_CONFIG = {
         "context_size": 32768,
     },
     "paths": {
-        "script_dir": None,
+        "project_root": None,
         "llama_cpp_dir": None,
         "models_dir": None,
     },
@@ -122,7 +122,7 @@ class ModelConfig:
 
 @dataclass
 class PathConfig:
-    script_dir: Path
+    project_root: Path
     llama_cpp_dir: Path
     models_dir: Path
 
@@ -152,12 +152,12 @@ class AiStackConfig:
                 fallback_amd_target=fallback_amd_target,
             )
 
-        if self.paths.script_dir is None:
-            self.paths.script_dir = Path(__file__).resolve().parents[4]
+        if self.paths.project_root is None:
+            self.paths.project_root = Path(__file__).resolve().parents[4]
         if self.paths.llama_cpp_dir is None:
-            self.paths.llama_cpp_dir = self.paths.script_dir / "llama.cpp"
+            self.paths.llama_cpp_dir = self.paths.project_root / "llama.cpp"
         if self.paths.models_dir is None:
-            self.paths.models_dir = self.paths.script_dir / "models"
+            self.paths.models_dir = self.paths.project_root / "models"
 
         self._auto_detect_models()
         self._validate_model_exists()
@@ -277,7 +277,7 @@ class AiStackConfig:
                 "layers": self.gpu.layers,
             },
             "paths": {
-                "script_dir": str(self.paths.script_dir),
+                "project_root": str(self.paths.project_root),
                 "llama_cpp_dir": str(self.paths.llama_cpp_dir),
                 "models_dir": str(self.paths.models_dir),
             },
@@ -324,7 +324,7 @@ class AiStackConfig:
         print(f"  RAG: {self.server.rag_url}")
 
         print("\nPaths:")
-        print(f"  Project Root: {self.paths.script_dir}")
+        print(f"  Project Root: {self.paths.project_root}")
         print(f"  Models Directory: {self.paths.models_dir}")
 
         print("\nStatus:")
