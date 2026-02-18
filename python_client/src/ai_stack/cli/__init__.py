@@ -1,7 +1,7 @@
 """ai_stack CLI package with backward-compatible entrypoint exports."""
 
-from ai_stack.config import config
-from ai_stack.setup import SetupManager
+from ai_stack.core.config import config
+from ai_stack.stack.manager import SetupManager
 
 from ai_stack.cli.download import download_model_cli
 from ai_stack.cli.server import (

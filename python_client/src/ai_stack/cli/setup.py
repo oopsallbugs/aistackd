@@ -6,8 +6,8 @@ import argparse
 import shutil
 import sys
 
-from ai_stack.config import config
-from ai_stack.setup import SetupManager
+from ai_stack.core.config import config
+from ai_stack.stack.manager import SetupManager
 
 
 def setup_cli():
@@ -83,14 +83,14 @@ def uninstall_cli(argv=None):
         try:
             shutil.rmtree(config.paths.models_dir)
             removed.append(f"Models: {config.paths.models_dir}")
-        except Exception as exc:
+        except OSError as exc:
             failed.append(f"Models: {exc}")
 
     if config.paths.llama_cpp_dir.exists():
         try:
             shutil.rmtree(config.paths.llama_cpp_dir)
             removed.append(f"llama.cpp: {config.paths.llama_cpp_dir}")
-        except Exception as exc:
+        except OSError as exc:
             failed.append(f"llama.cpp: {exc}")
 
     runtime_cache = config.paths.script_dir / ".ai_stack"
@@ -98,7 +98,7 @@ def uninstall_cli(argv=None):
         try:
             shutil.rmtree(runtime_cache)
             removed.append(f"Runtime cache: {runtime_cache}")
-        except Exception as exc:
+        except OSError as exc:
             failed.append(f"Runtime cache: {exc}")
 
     print("\n" + "=" * 60)

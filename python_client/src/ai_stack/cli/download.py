@@ -7,7 +7,7 @@ import sys
 
 from huggingface_hub.errors import HFValidationError
 
-from ai_stack.setup import SetupManager
+from ai_stack.stack.manager import SetupManager
 
 
 def download_model_cli():

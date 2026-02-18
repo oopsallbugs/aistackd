@@ -6,14 +6,18 @@ import argparse
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Optional
 
-from ai_stack.config import config
+import requests
+
+from ai_stack.core.config import config
+from ai_stack.core.exceptions import AiStackError
 from ai_stack.llm import create_client
-from ai_stack.setup import SetupManager
+from ai_stack.stack.manager import SetupManager
 
 from ai_stack.cli.main import extract_context_size
 
@@ -32,7 +36,7 @@ def _load_server_pid() -> Optional[dict]:
         return None
     try:
         return json.loads(pid_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return None
 
 
@@ -186,7 +190,7 @@ def start_server_cli():
         else:
             _start_foreground_server(manager, model_path)
 
-    except Exception as exc:
+    except (AiStackError, OSError) as exc:
         print(f"❌ Error: {exc}")
         sys.exit(1)
 
@@ -250,7 +254,7 @@ def _start_foreground_server(manager, model_path: str):
         server.terminate()
         try:
             server.wait(timeout=5)
-        except Exception:
+        except (subprocess.TimeoutExpired, OSError):
             server.kill()
         print("✅ Server stopped.")
 
@@ -278,7 +282,7 @@ def status_cli():
                     print(f"   Context size: {context_size}")
                 else:
                     print("   Context size: unknown (/props did not include a recognized context field)")
-        except Exception as exc:
+        except (requests.RequestException, ValueError, TypeError, KeyError, OSError) as exc:
             print(f"   Could not get model info: {exc}")
     else:
         print("\n❌ Server is not running")
