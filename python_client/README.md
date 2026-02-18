@@ -48,3 +48,7 @@ uninstall-stack --yes
 ## Runtime Data
 - Manifest: `project_root/models/manifest.json`
 - HF cache: `project_root/.ai_stack/huggingface/cache.json`
+
+## Structured Events
+- Set `AI_STACK_LOG_EVENTS=1` to enable structured event logs (JSON lines on stderr).
+- Default is off, so normal CLI output remains unchanged.

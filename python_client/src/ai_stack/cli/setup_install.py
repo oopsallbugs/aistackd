@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Callable, Protocol
 
+from ai_stack.core.logging import emit_event
+
 
 class _SetupResultLike(Protocol):
     missing_critical: list[str]
@@ -33,6 +35,7 @@ def setup_cli(
     print_section: Callable[[str], None],
 ):
     """CLI for setup command."""
+    emit_event("cli.setup.start")
     parser = argparse.ArgumentParser(description="AI Stack Setup")
     parser.parse_args()
 
@@ -43,6 +46,7 @@ def setup_cli(
     result = manager.setup()
 
     if result.missing_critical:
+        emit_event("cli.setup.failed", level="error", reason="missing_critical", missing=result.missing_critical)
         print_section("1. Checking dependencies...")
         print("✗ Missing critical dependencies:")
         for dep in result.missing_critical:
@@ -51,11 +55,13 @@ def setup_cli(
         sys.exit(1)
 
     if not result.clone_ok:
+        emit_event("cli.setup.failed", level="error", reason="clone_failed")
         print_section("2. Setting up llama.cpp...")
         print("✗ Failed to set up llama.cpp")
         sys.exit(1)
 
     if not result.build_ok:
+        emit_event("cli.setup.failed", level="error", reason="build_failed")
         print_section("3. Building llama.cpp...")
         print("✗ Build failed")
         sys.exit(1)
@@ -79,6 +85,7 @@ def setup_cli(
     print("   client = create_client()")
     print("   response = client.chat([{'role': 'user', 'content': 'Hello'}])")
 
+    emit_event("cli.setup.complete", ok=True, has_models=result.has_models)
     sys.exit(0)
 
 

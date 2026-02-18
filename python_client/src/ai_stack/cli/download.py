@@ -9,6 +9,7 @@ from huggingface_hub.errors import HFValidationError
 
 from ai_stack.cli.main import print_bullet_list, print_section
 from ai_stack.core.errors import exit_with_error
+from ai_stack.core.logging import emit_event
 from ai_stack.stack import hf_downloads
 from ai_stack.stack.manager import SetupManager
 
@@ -75,6 +76,7 @@ def _print_download_result(result: hf_downloads.HfDownloadResult) -> None:
 
 def download_model_cli():
     """CLI for downloading models from HuggingFace"""
+    emit_event("cli.download.start")
     parser = argparse.ArgumentParser(
         description="Download a model from HuggingFace",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -105,7 +107,14 @@ Examples:
             result = manager.list_huggingface_files(args.repo)
             _print_cache_event(manager, result.cache_event, result.repo_id)
             _print_hf_file_list(result)
+            emit_event(
+                "cli.download.list.complete",
+                repo_id=result.repo_id,
+                gguf_count=len(result.gguf_files),
+                mmproj_count=len(result.mmproj_files),
+            )
         except (HFValidationError, ValueError) as exc:
+            emit_event("cli.download.list.failed", level="error", error=str(exc))
             exit_with_error(
                 message=f"Invalid HuggingFace repo input: {exc}",
                 detail="Use 'namespace/repo' or a full model URL on huggingface.co",
@@ -123,7 +132,14 @@ Examples:
         )
         _print_cache_event(manager, result.cache_event, result.repo_id)
         _print_download_result(result)
+        emit_event(
+            "cli.download.complete",
+            repo_id=result.repo_id,
+            ok=result.success,
+            selected_model_file=result.selected_model_file,
+        )
     except (HFValidationError, ValueError) as exc:
+        emit_event("cli.download.failed", level="error", error=str(exc))
         exit_with_error(
             message=f"Invalid HuggingFace repo input: {exc}",
             detail="Use 'namespace/repo' or a full model URL on huggingface.co",

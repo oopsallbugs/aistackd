@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Callable, Optional, Protocol
 
+from ai_stack.core.logging import emit_event
+
 
 class _ModelConfigLike(Protocol):
     default_model: Optional[str]
@@ -63,6 +65,7 @@ def start_server_cli(
     print_bullet_list: _PrintBulletListLike,
 ):
     """CLI for starting the server."""
+    emit_event("cli.server_start.start")
     parser = argparse.ArgumentParser(description="Start AI Stack server")
     parser.add_argument("model", nargs="?", help="Model to use (filename or path)")
     parser.add_argument("--port", type=int, help="Port to run on")
@@ -73,6 +76,7 @@ def start_server_cli(
     args = parser.parse_args()
 
     if args.list:
+        emit_event("cli.server_start.list")
         print_section("Available models:")
         models = config.get_available_models()
         if models:
@@ -160,6 +164,7 @@ def start_server_cli(
             start_foreground_fn(manager, model_path)
 
     except (ai_stack_error_cls, OSError) as exc:
+        emit_event("cli.server_start.failed", level="error", error=str(exc))
         exit_with_error(message=str(exc))
 
 
@@ -175,6 +180,7 @@ def start_detached_server(
     print_section: Callable[[str], None],
 ):
     """Start server in background."""
+    emit_event("cli.server_start.detached.begin", model_path=model_path)
     existing = load_server_pid_fn()
     if existing:
         try:
@@ -186,6 +192,7 @@ def start_detached_server(
             print(f"   PID: {existing_pid}")
             print(f"   📍 Endpoint: {config.server.llama_url}")
             print("   Use `server-stop` first if you want to restart it.")
+            emit_event("cli.server_start.detached.skipped", reason="already_running", pid=existing_pid)
             return
         clear_server_pid_fn()
 
@@ -202,6 +209,7 @@ def start_detached_server(
         )
 
     write_server_pid_fn(server.pid, model_path)
+    emit_event("cli.server_start.detached.started", pid=server.pid, endpoint=config.server.llama_url)
     print(f"✅ Server started in background (PID: {server.pid})")
     print(f"   📍 Endpoint: {config.server.llama_url}")
     print(f"   📝 Log file: {log_file}")
@@ -218,6 +226,7 @@ def start_foreground_server(
     print_section: Callable[[str], None],
 ):
     """Start server in foreground."""
+    emit_event("cli.server_start.foreground.begin", model_path=model_path)
     server = manager.start_server(model_path)
 
     print_section("✅ Server is running!")
@@ -235,12 +244,14 @@ def start_foreground_server(
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n\n🛑 Stopping server...")
+        emit_event("cli.server_start.foreground.interrupt")
         server.terminate()
         try:
             server.wait(timeout=5)
         except (subprocess.TimeoutExpired, OSError):
             server.kill()
         print("✅ Server stopped.")
+        emit_event("cli.server_start.foreground.stopped")
 
 
 __all__ = ["start_detached_server", "start_foreground_server", "start_server_cli"]

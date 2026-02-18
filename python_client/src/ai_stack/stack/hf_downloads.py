@@ -8,6 +8,7 @@ from typing import Callable, List, Optional
 from urllib.parse import urlparse
 
 from ai_stack.core.exceptions import DownloadError
+from ai_stack.core.logging import emit_event
 from ai_stack.huggingface.client import RepoFile, RepoSnapshot
 from ai_stack.huggingface.metadata import derive_model_metadata
 from ai_stack.huggingface.resolver import DEFAULT_QUANT_RANKING, resolve_download
@@ -50,10 +51,12 @@ def normalize_hf_repo_id(repo_input: str) -> str:
     and normalize to namespace/repo.
     """
     value = (repo_input or "").strip()
+    emit_event("hf.repo.normalize.start", repo_input=repo_input)
     if not value:
         raise DownloadError("Repo cannot be empty. Use format: namespace/repo")
 
     if "://" not in value:
+        emit_event("hf.repo.normalize.complete", repo_id=value)
         return value
 
     parsed = urlparse(value)
@@ -70,9 +73,13 @@ def normalize_hf_repo_id(repo_input: str) -> str:
             raise DownloadError("Only model repos are supported. Use a model URL or namespace/repo.")
         if len(parts) < 3:
             raise DownloadError("Could not parse model repo from URL. Expected: https://huggingface.co/models/namespace/repo")
-        return f"{parts[1]}/{parts[2]}"
+        repo_id = f"{parts[1]}/{parts[2]}"
+        emit_event("hf.repo.normalize.complete", repo_id=repo_id)
+        return repo_id
 
-    return f"{parts[0]}/{parts[1]}"
+    repo_id = f"{parts[0]}/{parts[1]}"
+    emit_event("hf.repo.normalize.complete", repo_id=repo_id)
+    return repo_id
 
 
 def get_hf_snapshot(
@@ -94,6 +101,7 @@ def get_hf_snapshot(
     cached = hf_cache.get(repo_id=repo_id, revision=revision)
     if cached is None:
         record_cache_event("miss")
+        emit_event("hf.snapshot.cache.miss", repo_id=repo_id, revision=revision)
         snap = hf_client.get_snapshot(repo_id=repo_id, revision=revision)
         hf_cache.put(snap)
         return SnapshotFetchResult(snapshot=snap, cache_event="miss")
@@ -104,6 +112,7 @@ def get_hf_snapshot(
         # Intentional broad fallback domain: if SHA check cannot be trusted,
         # reuse cached snapshot instead of failing the command.
         record_cache_event("fallback")
+        emit_event("hf.snapshot.cache.fallback", repo_id=repo_id, revision=revision)
         hf_cache.touch(repo_id=repo_id, revision=revision)
         return SnapshotFetchResult(snapshot=cached.snapshot, cache_event="fallback")
 
@@ -113,11 +122,13 @@ def get_hf_snapshot(
 
     if sha_changed or sha_missing_locally:
         record_cache_event("refresh")
+        emit_event("hf.snapshot.cache.refresh", repo_id=repo_id, revision=revision)
         snap = hf_client.get_snapshot(repo_id=repo_id, revision=revision)
         hf_cache.put(snap)
         return SnapshotFetchResult(snapshot=snap, cache_event="refresh")
 
     record_cache_event("hit")
+    emit_event("hf.snapshot.cache.hit", repo_id=repo_id, revision=revision)
     hf_cache.touch(repo_id=repo_id, revision=revision)
     return SnapshotFetchResult(snapshot=cached.snapshot, cache_event="hit")
 
@@ -145,8 +156,16 @@ def download_from_huggingface(
     download_mmproj: bool = False,
     quant_preference: Optional[str] = None,
 ) -> HfDownloadResult:
+    emit_event(
+        "hf.download.resolve.start",
+        repo_id=repo_id,
+        filename=filename,
+        download_mmproj=download_mmproj,
+        quant_preference=quant_preference,
+    )
     ggufs = snapshot.gguf_files
     if not ggufs:
+        emit_event("hf.download.resolve.failed", repo_id=repo_id, reason="no_gguf")
         return HfDownloadResult(
             success=False,
             repo_id=repo_id,
@@ -156,6 +175,7 @@ def download_from_huggingface(
     if filename:
         match = next((file for file in snapshot.files if file.path == filename), None)
         if not match:
+            emit_event("hf.download.resolve.failed", repo_id=repo_id, reason="file_not_found", filename=filename)
             return HfDownloadResult(
                 success=False,
                 repo_id=repo_id,
@@ -176,11 +196,19 @@ def download_from_huggingface(
     model_local_path = Path(
         hf_client.download_file(repo_id, model_file.path, revision=snapshot.revision, local_dir=models_dir)
     )
+    emit_event("hf.download.file.complete", repo_id=repo_id, file=model_file.path, local_path=str(model_local_path))
 
     mmproj_local_path: Optional[Path] = None
     if mmproj_file:
         mmproj_local_path = Path(
             hf_client.download_file(repo_id, mmproj_file.path, revision=snapshot.revision, local_dir=models_dir)
+        )
+        emit_event(
+            "hf.download.file.complete",
+            repo_id=repo_id,
+            file=mmproj_file.path,
+            local_path=str(mmproj_local_path),
+            file_type="mmproj",
         )
 
     registry.register_model(
@@ -211,6 +239,12 @@ def download_from_huggingface(
             save=True,
         )
 
+    emit_event(
+        "hf.download.resolve.complete",
+        repo_id=repo_id,
+        selected_model_file=model_file.path,
+        has_mmproj=bool(mmproj_local_path),
+    )
     return HfDownloadResult(
         success=True,
         repo_id=repo_id,

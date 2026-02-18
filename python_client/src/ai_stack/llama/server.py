@@ -11,6 +11,7 @@ from typing import Optional
 import requests
 
 from ai_stack.core.exceptions import ServerError
+from ai_stack.core.logging import emit_event
 
 
 def start_llama_server(
@@ -22,10 +23,13 @@ def start_llama_server(
     stderr=None,
 ) -> subprocess.Popen:
     """Start llama.cpp server with configured runtime options."""
+    emit_event("server.start.exec", model_path=model_path, mmproj_path=mmproj_path)
     if not config.is_llama_built:
+        emit_event("server.start.failed", level="error", reason="llama_not_built")
         raise ServerError("llama.cpp is not built. Run setup() first.")
 
     if not model_path:
+        emit_event("server.start.failed", level="error", reason="missing_model_path")
         raise ServerError(
             "No model specified. You must provide a model path.\n"
             "Example: manager.start_server('models/my-model.gguf')"
@@ -59,6 +63,7 @@ def start_llama_server(
         if mmproj:
             print(f"📎 Auto-detected MMproj: {mmproj.name}")
             mmproj_path = str(mmproj)
+            emit_event("server.mmproj.auto_detected", mmproj_path=mmproj_path)
 
     cmd = [
         str(config.llama_server_binary),
@@ -97,6 +102,12 @@ def start_llama_server(
             if response.status_code == 200:
                 print(" ✓")
                 print(f"Server started on {config.server.llama_url}")
+                emit_event(
+                    "server.start.succeeded",
+                    pid=getattr(process, "pid", None),
+                    endpoint=config.server.llama_url,
+                    model_path=str(resolved_model_path),
+                )
                 return process
         except requests.RequestException:
             pass
@@ -105,4 +116,5 @@ def start_llama_server(
 
     print(" ✗")
     process.terminate()
+    emit_event("server.start.failed", level="error", reason="health_timeout", endpoint=config.server.llama_url)
     raise ServerError("Server failed to start within 30 seconds")

@@ -18,6 +18,7 @@ from ai_stack.core.exceptions import (
     DownloadError,
     ServerError,
 )
+from ai_stack.core.logging import EVENT_SCHEMA_VERSION, LOG_ENV_FLAG, emit_event, events_enabled
 
 __all__ = [
     "AiStackError",
@@ -33,6 +34,10 @@ __all__ = [
     "ServerConfig",
     "USER_CONFIG",
     "config",
+    "EVENT_SCHEMA_VERSION",
+    "LOG_ENV_FLAG",
+    "emit_event",
+    "events_enabled",
     "exit_with_error",
     "print_error",
 ]

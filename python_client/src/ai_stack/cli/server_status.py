@@ -7,6 +7,8 @@ from typing import Any, Callable, Optional, Protocol
 
 import requests
 
+from ai_stack.core.logging import emit_event
+
 
 class _ModelConfigLike(Protocol):
     default_model: Optional[str]
@@ -34,12 +36,14 @@ def status_cli(
     print_section: Callable[[str], None],
 ):
     """CLI for checking status."""
+    emit_event("cli.server_status.start")
     print_cli_header("AI Stack Status")
 
     config.print_summary(show_header=False)
 
     client = create_client()
     if client.health_check():
+        emit_event("cli.server_status.health", healthy=True)
         print_section("✅ Server is running")
         try:
             models = client.get_models()
@@ -54,8 +58,10 @@ def status_cli(
                 else:
                     print("   Context size: unknown (/props did not include a recognized context field)")
         except (requests.RequestException, ValueError, TypeError, KeyError, OSError) as exc:
+            emit_event("cli.server_status.props.failed", level="error", error=str(exc))
             print(f"   Could not get model info: {exc}")
     else:
+        emit_event("cli.server_status.health", healthy=False)
         print_section("❌ Server is not running")
         print_section("To start the server:")
         models = config.get_available_models()

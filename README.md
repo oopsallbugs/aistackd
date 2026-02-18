@@ -36,6 +36,9 @@ server-status
 - HF snapshot cache: `./.ai_stack/huggingface/cache.json`
 - Detached server runtime metadata: `./.ai_stack/server/`
 
+## Diagnostics
+- Set `AI_STACK_LOG_EVENTS=1` to emit structured JSON event lines to stderr for setup/download/server flows.
+
 ## Python Module Entry Points
 - Config: `ai_stack.core.config`
 - Orchestration manager: `ai_stack.stack.manager`

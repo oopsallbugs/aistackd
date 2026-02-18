@@ -8,6 +8,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ai_stack.core.logging import emit_event
+
 
 def clone_llama_cpp(config, force: bool = False) -> bool:
     """Clone llama.cpp repository into configured path."""
@@ -16,9 +18,11 @@ def clone_llama_cpp(config, force: bool = False) -> bool:
             shutil.rmtree(config.paths.llama_cpp_dir)
         else:
             print(f"✓ llama.cpp already exists at {config.paths.llama_cpp_dir}")
+            emit_event("llama.clone.skipped", reason="already_exists", path=str(config.paths.llama_cpp_dir))
             return True
 
     print(f"Cloning llama.cpp to {config.paths.llama_cpp_dir}...")
+    emit_event("llama.clone.exec", target_dir=str(config.paths.llama_cpp_dir))
     try:
         subprocess.run(
             [
@@ -34,11 +38,13 @@ def clone_llama_cpp(config, force: bool = False) -> bool:
             check=True,
         )
         print("✓ Cloned llama.cpp")
+        emit_event("llama.clone.succeeded", target_dir=str(config.paths.llama_cpp_dir))
         return True
     except subprocess.CalledProcessError as exc:
         print(f"✗ Failed to clone: {exc}")
         if exc.stderr:
             print(f"  Error: {exc.stderr.strip()}")
+        emit_event("llama.clone.failed", level="error", error=str(exc))
         return False
 
 
@@ -46,9 +52,15 @@ def build_llama_cpp(config) -> bool:
     """Build llama.cpp with configured GPU flags."""
     if config.is_llama_built:
         print("✓ llama.cpp already built")
+        emit_event("llama.build.skipped", reason="already_built")
         return True
 
     print(f"Building llama.cpp for {config.gpu.vendor.upper()}...")
+    emit_event(
+        "llama.build.exec",
+        vendor=getattr(config.gpu, "vendor", None),
+        target=getattr(config.gpu, "target", None),
+    )
     env = os.environ.copy()
 
     if config.gpu.vendor == "amd":
@@ -130,9 +142,11 @@ def build_llama_cpp(config) -> bool:
 
         if config.llama_server_binary.exists():
             print("✓ Built llama.cpp successfully")
+            emit_event("llama.build.succeeded", binary=str(config.llama_server_binary))
             return True
 
         print("✗ Build completed but llama-server not found")
+        emit_event("llama.build.failed", level="error", reason="binary_missing", binary=str(config.llama_server_binary))
         return False
 
     except subprocess.CalledProcessError as exc:
@@ -141,4 +155,5 @@ def build_llama_cpp(config) -> bool:
             print(f"  Output: {exc.stdout.strip()[:500]}...")
         if exc.stderr:
             print(f"  Error: {exc.stderr.strip()[:500]}...")
+        emit_event("llama.build.failed", level="error", reason="cmake_error", error=str(exc))
         return False

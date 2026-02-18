@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from typing import Callable, Optional, Protocol
 
+from ai_stack.core.logging import emit_event
+
 
 class _SetupManagerLike(Protocol):
     def check_dependencies(self) -> dict[str, bool]: ...
@@ -21,6 +23,7 @@ def check_deps_cli(
     exit_with_error: _ExitWithErrorLike,
 ):
     """CLI for checking dependencies."""
+    emit_event("cli.check_deps.start")
     manager = setup_manager_cls()
     deps = manager.check_dependencies()
 
@@ -34,8 +37,10 @@ def check_deps_cli(
             all_good = False
 
     if all_good:
+        emit_event("cli.check_deps.complete", ok=True)
         print("\n✅ All dependencies satisfied!")
     else:
+        emit_event("cli.check_deps.complete", ok=False)
         exit_with_error(
             message="Some dependencies are missing",
             detail="Run 'setup-stack' to install missing dependencies",
