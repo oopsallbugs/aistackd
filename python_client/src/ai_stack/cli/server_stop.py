@@ -1,0 +1,47 @@
+"""Stop command logic for server CLI."""
+
+from __future__ import annotations
+
+import argparse
+
+
+def stop_server_cli(
+    *,
+    load_server_pid_fn,
+    is_process_running_fn,
+    terminate_process_fn,
+    clear_server_pid_fn,
+    exit_with_error,
+    argv=None,
+):
+    """CLI for stopping the server."""
+    parser = argparse.ArgumentParser(description="Stop detached AI Stack server")
+    parser.parse_args(argv)
+
+    print("🛑 Stopping AI Stack server...")
+
+    pid_record = load_server_pid_fn()
+    if not pid_record:
+        print("ℹ️  No managed detached server found (missing PID file).")
+        return
+
+    try:
+        pid = int(pid_record.get("pid", 0))
+    except (TypeError, ValueError):
+        pid = 0
+
+    if not is_process_running_fn(pid):
+        print("ℹ️  PID file exists but process is not running. Cleaning up stale state.")
+        clear_server_pid_fn()
+        return
+
+    print(f"  Stopping PID {pid}...")
+    if terminate_process_fn(pid):
+        clear_server_pid_fn()
+        print("✅ Server stopped")
+        return
+
+    exit_with_error(message=f"Failed to stop PID {pid}")
+
+
+__all__ = ["stop_server_cli"]
