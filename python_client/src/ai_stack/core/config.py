@@ -96,15 +96,15 @@ class ServerConfig:
     rag_host: str
     rag_port: int
 
-    @cached_property
+    @property
     def llama_url(self) -> str:
         return f"http://{self.host}:{self.port}"
 
-    @cached_property
+    @property
     def llama_api_url(self) -> str:
         return f"{self.llama_url}/v1"
 
-    @cached_property
+    @property
     def rag_url(self) -> str:
         return f"http://{self.rag_host}:{self.rag_port}"
 
@@ -228,15 +228,15 @@ class AiStackConfig:
         """Get path to llama-server binary"""
         return self.paths.llama_cpp_dir / "build" / "bin" / "llama-server"
 
-    @cached_property
+    @property
     def is_llama_built(self) -> bool:
         """Check if llama.cpp is built"""
         return self.llama_server_binary.exists()
 
-    @cached_property
+    @property
     def has_models(self) -> bool:
         """Check if any models are available"""
-        return len(self._available_models) > 0
+        return len(self.get_available_models()) > 0
 
     def get_available_models(self) -> list:
         """Get list of available GGUF models"""

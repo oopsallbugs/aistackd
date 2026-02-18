@@ -22,7 +22,9 @@ class LLMClient:
     """LLM client for llama.cpp server using auto-detected config"""
     
     def __init__(self, base_url: Optional[str] = None, model: Optional[str] = None):
-        self.base_url = base_url or config.server.llama_api_url
+        api_base = (base_url or config.server.llama_api_url).rstrip("/")
+        self.base_url = api_base
+        self.server_base_url = api_base[:-3] if api_base.endswith("/v1") else api_base
         self.model = model or config.model.default_model
         self.session = requests.Session()
         self.session.timeout = 30
@@ -31,7 +33,7 @@ class LLMClient:
         """Check if server is healthy"""
         try:
             response = self.session.get(
-                f"{config.server.llama_url}/health",
+                f"{self.server_base_url}/health",
                 timeout=5
             )
             return response.status_code == 200
@@ -146,7 +148,7 @@ class LLMClient:
         """Get server model information"""
         try:
             response = self.session.get(
-                f"{config.server.llama_url}/props",
+                f"{self.server_base_url}/props",
                 timeout=5
             )
             if response.status_code == 200:
