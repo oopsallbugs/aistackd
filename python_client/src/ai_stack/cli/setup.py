@@ -9,6 +9,7 @@ import sys
 from ai_stack.core.config import config
 from ai_stack.core.errors import exit_with_error
 from ai_stack.stack.manager import SetupManager
+from ai_stack.cli.main import print_cli_header
 
 
 def setup_cli():
@@ -16,9 +17,7 @@ def setup_cli():
     parser = argparse.ArgumentParser(description="AI Stack Setup")
     parser.parse_args()
 
-    print("=" * 60)
-    print("AI Stack Setup")
-    print("=" * 60)
+    print_cli_header("AI Stack Setup")
 
     manager = SetupManager()
     success = manager.setup()
@@ -31,9 +30,7 @@ def check_deps_cli():
     manager = SetupManager()
     deps = manager.check_dependencies()
 
-    print("=" * 60)
-    print("Dependency Check")
-    print("=" * 60)
+    print_cli_header("Dependency Check")
 
     all_good = True
     for dep, installed in deps.items():
@@ -64,9 +61,7 @@ def uninstall_cli(argv=None):
     )
     args = parser.parse_args(argv)
 
-    print("=" * 60)
-    print("🧹 AI Stack Uninstall")
-    print("=" * 60)
+    print_cli_header("🧹 AI Stack Uninstall")
     print("\nThis will remove:")
     print("  • llama.cpp build directory")
     print("  • All downloaded models")

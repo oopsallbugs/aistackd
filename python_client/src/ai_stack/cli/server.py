@@ -20,7 +20,7 @@ from ai_stack.core.exceptions import AiStackError
 from ai_stack.llm import create_client
 from ai_stack.stack.manager import SetupManager
 
-from ai_stack.cli.main import extract_context_size
+from ai_stack.cli.main import extract_context_size, print_cli_header
 
 
 def _runtime_dir() -> Path:
@@ -267,9 +267,7 @@ def _start_foreground_server(manager, model_path: str):
 
 def status_cli():
     """CLI for checking status"""
-    print("=" * 60)
-    print("AI Stack Status")
-    print("=" * 60)
+    print_cli_header("AI Stack Status")
 
     config.print_summary(show_header=False)
 
