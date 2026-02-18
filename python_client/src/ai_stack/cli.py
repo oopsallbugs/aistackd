@@ -292,8 +292,14 @@ Examples:
     )
     parser.add_argument("repo", help="HuggingFace repo ID (e.g., 'TheBloke/Llama-2-7B-GGUF')")
     parser.add_argument("-f", "--file", help="Specific filename to download (default: auto-select)")
+    parser.add_argument("--quant", help="Preferred quant for auto-selection (e.g., Q5_K_M)")
     parser.add_argument("--mmproj", action="store_true", help="Also download MMproj file if available")
     parser.add_argument("--list", "-l", action="store_true", help="List available files and exit")
+    parser.add_argument(
+        "--cache-diagnostics",
+        action="store_true",
+        help="Show HF snapshot cache diagnostics for this command run",
+    )
     
     args = parser.parse_args()
     
@@ -301,13 +307,18 @@ Examples:
     
     if args.list:
         manager.list_huggingface_files(args.repo)
+        if args.cache_diagnostics:
+            manager.print_cache_diagnostics()
         return
     
     success = manager.download_from_huggingface(
         repo_id=args.repo,
         filename=args.file,
-        download_mmproj=args.mmproj
+        download_mmproj=args.mmproj,
+        quant_preference=args.quant,
     )
+    if args.cache_diagnostics:
+        manager.print_cache_diagnostics()
     
     sys.exit(0 if success else 1)
 

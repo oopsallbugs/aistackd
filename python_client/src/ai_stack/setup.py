@@ -7,7 +7,13 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
-from .huggingface import HFModelManager, CachedHFModelManager
+from ai_stack.huggingface.client import HuggingFaceClient
+from ai_stack.huggingface.cache import HuggingFaceSnapshotCache
+from ai_stack.huggingface.metadata import derive_model_metadata
+from ai_stack.huggingface.resolver import DEFAULT_QUANT_RANKING, resolve_download
+import requests
+
+from ai_stack.models.registry import ModelRegistry
 from .config import config
 
 class SetupManager:
@@ -15,6 +21,33 @@ class SetupManager:
     
     def __init__(self):
         self.config = config
+        self.registry = ModelRegistry(models_dir=self.config.paths.models_dir)
+        self.registry.ensure_manifest()
+        self.hf = HuggingFaceClient()
+        self.hf_cache = HuggingFaceSnapshotCache(
+            cache_path=self.config.paths.script_dir / "huggingface" / "cache.json"
+        )
+        self.hf_cache_diagnostics = {
+            "miss": 0,
+            "hit": 0,
+            "refresh": 0,
+            "fallback": 0,
+        }
+
+    def _record_cache_event(self, event: str) -> None:
+        if event in self.hf_cache_diagnostics:
+            self.hf_cache_diagnostics[event] += 1
+
+    def get_cache_diagnostics(self) -> Dict[str, int]:
+        return dict(self.hf_cache_diagnostics)
+
+    def print_cache_diagnostics(self) -> None:
+        stats = self.get_cache_diagnostics()
+        print("\n📊 HF cache diagnostics")
+        print(f"   miss: {stats['miss']}")
+        print(f"   hit: {stats['hit']}")
+        print(f"   refresh: {stats['refresh']}")
+        print(f"   fallback: {stats['fallback']}")
     
     def check_dependencies(self) -> Dict[str, bool]:
         """Check system dependencies"""
@@ -181,148 +214,174 @@ class SetupManager:
             if e.stderr:
                 print(f"  Error: {e.stderr.strip()[:500]}...")
             return False
-    
-class SetupManager:
-    def __init__(self):
-        self.config = config
-        self.hf_manager = HFModelManager(config.paths.models_dir)
-    
+    def _get_hf_snapshot(self, repo_id: str, revision: str = "main"):
+        """
+        Get repo snapshot using local cache + SHA validation.
+
+        Cache behavior:
+        - miss -> fetch full snapshot and store
+        - hit -> fetch remote SHA and refresh only if SHA changed
+        - if SHA check fails, fall back to cached snapshot
+        """
+        cached = self.hf_cache.get(repo_id=repo_id, revision=revision)
+        if cached is None:
+            self._record_cache_event("miss")
+            print(f"🧠 HF cache miss: {repo_id}@{revision} (fetching snapshot)")
+            snap = self.hf.get_snapshot(repo_id=repo_id, revision=revision)
+            self.hf_cache.put(snap)
+            return snap
+
+        try:
+            remote_sha = self.hf.get_repo_sha(repo_id=repo_id, revision=revision)
+        except Exception:
+            self._record_cache_event("fallback")
+            print(f"🧠 HF cache fallback: {repo_id}@{revision} (SHA check failed, using cached snapshot)")
+            self.hf_cache.touch(repo_id=repo_id, revision=revision)
+            return cached.snapshot
+
+        cached_sha = cached.sha or cached.snapshot.sha
+        sha_changed = bool(remote_sha) and remote_sha != cached_sha
+        sha_missing_locally = bool(remote_sha) and not cached_sha
+
+        if sha_changed or sha_missing_locally:
+            self._record_cache_event("refresh")
+            print(f"🧠 HF cache refresh: {repo_id}@{revision} (SHA changed)")
+            snap = self.hf.get_snapshot(repo_id=repo_id, revision=revision)
+            self.hf_cache.put(snap)
+            return snap
+
+        self._record_cache_event("hit")
+        print(f"🧠 HF cache hit: {repo_id}@{revision} (SHA unchanged)")
+        self.hf_cache.touch(repo_id=repo_id, revision=revision)
+        return cached.snapshot
+
     def list_huggingface_files(self, repo_id: str):
-        """List available files in a HuggingFace repo"""
-        files = self.hf_manager.find_gguf_files(repo_id)
-        mmproj = self.hf_manager.find_mmproj_files(repo_id)
-        
-        # Get model info
-        info = self.hf_manager.get_model_metadata(repo_id)
-        if info:
-            print(f"\n📦 {repo_id}")
-            print(f"   Type: {info['pipeline_tag'] or 'unknown'}")
-            if info['is_vision']:
-                print(f"   🖼️  Vision model")
-            print(f"   Downloads: {info['downloads']:,}")
-            print(f"   Likes: {info['likes']}")
-        
-        if files:
+        """List available files in a HuggingFace repo (GGUF + mmproj)."""
+        snap = self._get_hf_snapshot(repo_id=repo_id, revision="main")
+
+        print(f"\n📦 {repo_id}")
+        if snap.pipeline_tag:
+            print(f"   Type: {snap.pipeline_tag}")
+        if snap.tags:
+            # keep it short
+            print(f"   Tags: {', '.join(snap.tags[:8])}{'...' if len(snap.tags) > 8 else ''}")
+        if snap.sha:
+            print(f"   SHA: {snap.sha[:12]}")
+
+        ggufs = snap.gguf_files
+        mmprojs = snap.mmproj_files
+
+        if ggufs:
             print(f"\n📋 Available GGUF files:")
-            for i, f in enumerate(files[:10], 1):
-                size = self.hf_manager.get_file_size(repo_id, f)
-                size_str = f" ({size // 1024 // 1024} MB)" if size else ""
-                is_mmproj = " (MMproj)" if 'mmproj' in f.lower() else ""
-                print(f"  {i}. {f}{size_str}{is_mmproj}")
-            
-            if len(files) > 10:
-                print(f"  ... and {len(files) - 10} more")
-        
-        if mmproj:
+            for i, f in enumerate(ggufs[:10], 1):
+                size_str = f" ({f.size // 1024 // 1024} MB)" if f.size else ""
+                print(f"  {i}. {f.path}{size_str}")
+            if len(ggufs) > 10:
+                print(f"  ... and {len(ggufs) - 10} more")
+        else:
+            print("\n❌ No GGUF files found.")
+
+        if mmprojs:
             print(f"\n🖼️  MMproj files available:")
-            for f in mmproj:
-                print(f"  • {f}")
+            for f in mmprojs:
+                size_str = f" ({f.size // 1024 // 1024} MB)" if f.size else ""
+                print(f"  • {f.path}{size_str}")
+
     
-    def download_from_huggingface(self, 
-                                 repo_id: str, 
-                                 filename: Optional[str] = None,
-                                 download_mmproj: bool = False) -> bool:
-        """Download model from HuggingFace"""
-        
+    def download_from_huggingface(
+        self,
+        repo_id: str,
+        filename: Optional[str] = None,
+        download_mmproj: bool = False,
+        quant_preference: Optional[str] = None,
+    ) -> bool:
         print(f"🔍 Fetching info for {repo_id}...")
-        info = self.hf_manager.get_model_metadata(repo_id)
-        
-        if not info:
-            return False
-        
-        print(f"  Type: {info['pipeline_tag'] or 'unknown'}")
-        if info['is_vision']:
-            print(f"  🖼️  Vision model detected")
-        
-        # Get available files
-        files = self.hf_manager.find_gguf_files(repo_id)
-        if not files:
+        snap = self._get_hf_snapshot(repo_id=repo_id, revision="main")
+
+        ggufs = snap.gguf_files
+        if not ggufs:
             print(f"❌ No GGUF files found in {repo_id}")
             return False
-        
-        # Select file
-        if not filename:
-            # Auto-select: prefer non-mmproj files
-            candidates = [f for f in files if 'mmproj' not in f.lower()]
-            filename = candidates[0] if candidates else files[0]
-            print(f"\n📝 Auto-selected: {filename}")
-        
-        # Find MMproj if requested
-        mmproj_filename = None
-        if download_mmproj or info['is_vision']:
-            mmproj_filename = self.hf_manager.suggest_mmproj(repo_id, filename)
-            if mmproj_filename:
-                print(f"🖼️  Found MMproj: {mmproj_filename}")
-        
-        # Download
-        result = self.hf_manager.download_model_with_mmproj(
-            repo_id,
-            model_filename=filename,
-            mmproj_filename=mmproj_filename
-        )
-        
-        if result["model"]:
-            # Extract info for manifest
-            model_info = self.hf_manager.extract_model_info(repo_id, filename)
-            
-            # Add to manifest
-            self.config.add_model_to_manifest(
-                model_path=result["model"],
-                source_url=f"https://huggingface.co/{repo_id}",
-                mmproj_path=result["mmproj"],
-                family=model_info["family"],
-                metadata={
-                    "repo": repo_id,
-                    "pipeline": info['pipeline_tag'],
-                    "is_vision": info['is_vision']
-                }
+
+        # Decide model file
+        if filename:
+            # user specified exact path
+            match = next((f for f in snap.files if f.path == filename), None)
+            if not match:
+                print(f"❌ File not found in repo: {filename}")
+                print("Tip: use --list to see available files.")
+                return False
+            model_file = match
+            mmproj_file = None
+            if download_mmproj:
+                mmproj_file = snap.mmproj_files[0] if snap.mmproj_files else None
+        else:
+            preferred_quants: List[str] = []
+            if quant_preference:
+                preferred_quants.append(quant_preference.upper())
+            preferred_quants.extend(DEFAULT_QUANT_RANKING)
+            resolved = resolve_download(
+                snap,
+                preferred_quants=preferred_quants,
             )
-            
-            if result["mmproj"]:
-                # Find all models this MMproj works with
-                base_name = filename.split('.Q')[0] if '.Q' in filename else filename.rsplit('.', 1)[0]
-                for_models = [
-                    f.name for f in self.config.paths.models_dir.glob(f"{base_name}*.gguf")
-                    if 'mmproj' not in f.name.lower()
-                ]
-                
-                self.config.add_mmproj_to_manifest(
-                    mmproj_path=result["mmproj"],
-                    for_models=for_models,
-                    source_url=f"https://huggingface.co/{repo_id}"
-                )
-            
-            print(f"\n✅ Download complete!")
-            print(f"   Model: {result['model'].name}")
-            if result["mmproj"]:
-                print(f"   MMproj: {result['mmproj'].name}")
-            
-            # Show next steps
-            print(f"\n📋 To start the server:")
-            print(f"   server-start {result['model'].name}")
-            
-            return True
-        
-        return False
+            model_file = resolved.model_file
+            mmproj_file = resolved.mmproj_file if download_mmproj else None
+            print(f"\n📝 Auto-selected: {model_file.path}")
+            if quant_preference:
+                print(f"   Quant preference: {quant_preference.upper()}")
 
-    def _detect_model_family(self, filename: str) -> str:
-        """Simple family detection from filename"""
-        name = filename.replace('.gguf', '')
-        
-        # Remove quantization
-        if '.Q' in name:
-            name = name.split('.Q')[0]
-        
-        # Remove common suffixes
-        for suffix in ['.instruct', '-instruct', '_instruct',
-                    '.chat', '-chat', '_chat',
-                    '.base', '-base', '_base',
-                    '.vision', '-vision', '_vision']:
-            if suffix in name.lower():
-                name = name[:name.lower().index(suffix)]
+        # Download model into your local models dir
+        models_dir = str(self.config.paths.models_dir)
+        model_local_path = Path(
+            self.hf.download_file(repo_id, model_file.path, revision=snap.revision, local_dir=models_dir)
+        )
 
-        return name
-    
+        mmproj_local_path: Optional[Path] = None
+        if mmproj_file:
+            print(f"🖼️  Downloading MMproj: {mmproj_file.path}")
+            mmproj_local_path = Path(
+                self.hf.download_file(repo_id, mmproj_file.path, revision=snap.revision, local_dir=models_dir)
+            )
+
+        # Register into manifest (registry)
+        self.registry.register_model(
+            path=model_local_path,
+            origin="huggingface",
+            mmproj_path=mmproj_local_path,
+            repo={
+                "repo_id": repo_id,
+                "revision": snap.revision,
+                "sha": snap.sha,
+                "source_url": f"https://huggingface.co/{repo_id}",
+            },
+            derived=derive_model_metadata(repo_id=repo_id, model_file=model_file),
+            save=True,
+        )
+
+        if mmproj_local_path:
+            self.registry.register_mmproj(
+                path=mmproj_local_path,
+                origin="huggingface",
+                for_models=[model_local_path.name],
+                repo={
+                    "repo_id": repo_id,
+                    "revision": snap.revision,
+                    "sha": snap.sha,
+                    "source_url": f"https://huggingface.co/{repo_id}",
+                },
+                save=True,
+            )
+
+        print(f"\n✅ Download complete!")
+        print(f"   Model: {model_local_path.name}")
+        if mmproj_local_path:
+            print(f"   MMproj: {mmproj_local_path.name}")
+
+        print(f"\n📋 To start the server:")
+        print(f"   server-start {model_local_path.name}")
+
+        return True
+
     def start_server(self, 
                     model_path: Optional[str] = None,
                     mmproj_path: Optional[str] = None) -> subprocess.Popen:
@@ -345,16 +404,18 @@ class SetupManager:
             if alt_path.exists():
                 model_path = alt_path
             else:
-                # Show available models to help user
-                models = self.config.get_available_models()
-                if models:
-                    model_list = "\n  • ".join([m['name'] for m in models[:5]])
+                # If not found, scan models dir to ensure manifest is up-to-date
+                self.registry.scan_models_dir()
+                model_names = [m["name"] for m in self.registry.manifest.get("models", [])]
+
+                if model_names:
+                    model_list = "\n  • ".join(model_names[:5])
                     msg = (
                         f"Model not found: {model_path}\n"
                         f"Available models in {self.config.paths.models_dir}:\n  • {model_list}"
                     )
-                    if len(models) > 5:
-                        msg += f"\n  ... and {len(models) - 5} more"
+                    if len(model_names) > 5:
+                        msg += f"\n  ... and {len(model_names) - 5} more"
                 else:
                     msg = f"Model not found: {model_path}\nNo models available in {self.config.paths.models_dir}"
             
@@ -362,7 +423,7 @@ class SetupManager:
         
         # Auto-detect MMproj from manifest if not provided
         if not mmproj_path:
-            mmproj = self.config.get_mmproj_for_model(model_path)
+            mmproj = self.registry.get_mmproj_for_model(model_path)
             if mmproj:
                 print(f"📎 Auto-detected MMproj: {mmproj.name}")
                 mmproj_path = str(mmproj)
@@ -401,7 +462,6 @@ class SetupManager:
         print("Waiting for server to start...", end="", flush=True)
         for _ in range(30):  # 30 second timeout
             try:
-                import requests
                 response = requests.get(
                     f"{self.config.server.llama_url}/health",
                     timeout=1
