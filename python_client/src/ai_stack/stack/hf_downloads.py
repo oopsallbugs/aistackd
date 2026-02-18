@@ -9,9 +9,13 @@ from urllib.parse import urlparse
 
 from ai_stack.core.exceptions import DownloadError
 from ai_stack.core.logging import emit_event
+from ai_stack.core.retry import retry_call
 from ai_stack.huggingface.client import RepoFile, RepoSnapshot
 from ai_stack.huggingface.metadata import derive_model_metadata
 from ai_stack.huggingface.resolver import DEFAULT_QUANT_RANKING, resolve_download
+
+DEFAULT_HF_RETRY_ATTEMPTS = 3
+DEFAULT_HF_RETRY_BACKOFF_SECONDS = 0.25
 
 
 @dataclass
@@ -89,6 +93,8 @@ def get_hf_snapshot(
     record_cache_event: Callable[[str], None],
     repo_id: str,
     revision: str = "main",
+    retry_attempts: int = DEFAULT_HF_RETRY_ATTEMPTS,
+    retry_backoff_seconds: float = DEFAULT_HF_RETRY_BACKOFF_SECONDS,
 ):
     """
     Get repo snapshot using local cache + SHA validation.
@@ -102,12 +108,22 @@ def get_hf_snapshot(
     if cached is None:
         record_cache_event("miss")
         emit_event("hf.snapshot.cache.miss", repo_id=repo_id, revision=revision)
-        snap = hf_client.get_snapshot(repo_id=repo_id, revision=revision)
+        snap = retry_call(
+            operation="hf.get_snapshot",
+            attempts=retry_attempts,
+            backoff_seconds=retry_backoff_seconds,
+            fn=lambda: hf_client.get_snapshot(repo_id=repo_id, revision=revision),
+        )
         hf_cache.put(snap)
         return SnapshotFetchResult(snapshot=snap, cache_event="miss")
 
     try:
-        remote_sha = hf_client.get_repo_sha(repo_id=repo_id, revision=revision)
+        remote_sha = retry_call(
+            operation="hf.get_repo_sha",
+            attempts=retry_attempts,
+            backoff_seconds=retry_backoff_seconds,
+            fn=lambda: hf_client.get_repo_sha(repo_id=repo_id, revision=revision),
+        )
     except (OSError, RuntimeError, TimeoutError, ValueError):
         # Intentional broad fallback domain: if SHA check cannot be trusted,
         # reuse cached snapshot instead of failing the command.
@@ -123,7 +139,12 @@ def get_hf_snapshot(
     if sha_changed or sha_missing_locally:
         record_cache_event("refresh")
         emit_event("hf.snapshot.cache.refresh", repo_id=repo_id, revision=revision)
-        snap = hf_client.get_snapshot(repo_id=repo_id, revision=revision)
+        snap = retry_call(
+            operation="hf.get_snapshot",
+            attempts=retry_attempts,
+            backoff_seconds=retry_backoff_seconds,
+            fn=lambda: hf_client.get_snapshot(repo_id=repo_id, revision=revision),
+        )
         hf_cache.put(snap)
         return SnapshotFetchResult(snapshot=snap, cache_event="refresh")
 
@@ -155,6 +176,8 @@ def download_from_huggingface(
     filename: Optional[str] = None,
     download_mmproj: bool = False,
     quant_preference: Optional[str] = None,
+    retry_attempts: int = DEFAULT_HF_RETRY_ATTEMPTS,
+    retry_backoff_seconds: float = DEFAULT_HF_RETRY_BACKOFF_SECONDS,
 ) -> HfDownloadResult:
     emit_event(
         "hf.download.resolve.start",
@@ -193,16 +216,59 @@ def download_from_huggingface(
         mmproj_file = resolved.mmproj_file if download_mmproj else None
 
     models_dir = str(config.paths.models_dir)
-    model_local_path = Path(
-        hf_client.download_file(repo_id, model_file.path, revision=snapshot.revision, local_dir=models_dir)
-    )
+    try:
+        model_local_path = Path(
+            retry_call(
+                operation="hf.download_file.model",
+                attempts=retry_attempts,
+                backoff_seconds=retry_backoff_seconds,
+                fn=lambda: hf_client.download_file(
+                    repo_id,
+                    model_file.path,
+                    revision=snapshot.revision,
+                    local_dir=models_dir,
+                ),
+            )
+        )
+    except (OSError, RuntimeError, TimeoutError, ConnectionError) as exc:
+        emit_event("hf.download.file.failed", level="error", repo_id=repo_id, file=model_file.path, error=str(exc))
+        return HfDownloadResult(
+            success=False,
+            repo_id=repo_id,
+            error=f"Failed to download model file '{model_file.path}': {exc}",
+        )
     emit_event("hf.download.file.complete", repo_id=repo_id, file=model_file.path, local_path=str(model_local_path))
 
     mmproj_local_path: Optional[Path] = None
     if mmproj_file:
-        mmproj_local_path = Path(
-            hf_client.download_file(repo_id, mmproj_file.path, revision=snapshot.revision, local_dir=models_dir)
-        )
+        try:
+            mmproj_local_path = Path(
+                retry_call(
+                    operation="hf.download_file.mmproj",
+                    attempts=retry_attempts,
+                    backoff_seconds=retry_backoff_seconds,
+                    fn=lambda: hf_client.download_file(
+                        repo_id,
+                        mmproj_file.path,
+                        revision=snapshot.revision,
+                        local_dir=models_dir,
+                    ),
+                )
+            )
+        except (OSError, RuntimeError, TimeoutError, ConnectionError) as exc:
+            emit_event(
+                "hf.download.file.failed",
+                level="error",
+                repo_id=repo_id,
+                file=mmproj_file.path,
+                file_type="mmproj",
+                error=str(exc),
+            )
+            return HfDownloadResult(
+                success=False,
+                repo_id=repo_id,
+                error=f"Failed to download mmproj file '{mmproj_file.path}': {exc}",
+            )
         emit_event(
             "hf.download.file.complete",
             repo_id=repo_id,
@@ -259,6 +325,8 @@ __all__ = [
     "HfDownloadResult",
     "HfFileListResult",
     "SnapshotFetchResult",
+    "DEFAULT_HF_RETRY_ATTEMPTS",
+    "DEFAULT_HF_RETRY_BACKOFF_SECONDS",
     "download_from_huggingface",
     "get_hf_snapshot",
     "list_huggingface_files",
