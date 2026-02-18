@@ -121,6 +121,12 @@ Examples:
                 message=f"Invalid HuggingFace repo input: {exc}",
                 detail="Use 'namespace/repo' or a full model URL on huggingface.co",
             )
+        except (RuntimeError, OSError, TimeoutError, ConnectionError) as exc:
+            emit_event("cli.download.list.failed", level="error", error=str(exc))
+            exit_with_error(
+                message=f"Failed to fetch HuggingFace file list: {exc}",
+                detail="Check network access and repo visibility, then try again.",
+            )
         if args.cache_diagnostics:
             manager.print_cache_diagnostics()
         return
@@ -148,6 +154,12 @@ Examples:
         exit_with_error(
             message=f"Invalid HuggingFace repo input: {exc}",
             detail="Use 'namespace/repo' or a full model URL on huggingface.co",
+        )
+    except (RuntimeError, OSError, TimeoutError, ConnectionError) as exc:
+        emit_event("cli.download.failed", level="error", error=str(exc))
+        exit_with_error(
+            message=f"Download failed: {exc}",
+            detail="Check network access and retry. Use --list to inspect available files.",
         )
 
     if args.cache_diagnostics:
