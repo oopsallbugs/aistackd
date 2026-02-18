@@ -3,11 +3,36 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Callable, Optional, Protocol
 
 import requests
 
 
-def status_cli(*, config, create_client, extract_context_size, print_cli_header, print_section):
+class _ModelConfigLike(Protocol):
+    default_model: Optional[str]
+
+
+class _ConfigLike(Protocol):
+    model: _ModelConfigLike
+
+    def print_summary(self, show_header: bool = True) -> None: ...
+    def get_available_models(self) -> list[dict[str, object]]: ...
+
+
+class _ClientLike(Protocol):
+    def health_check(self) -> bool: ...
+    def get_models(self) -> list[str]: ...
+    def get_model_info(self) -> dict[str, Any]: ...
+
+
+def status_cli(
+    *,
+    config: _ConfigLike,
+    create_client: Callable[[], _ClientLike],
+    extract_context_size: Callable[[dict[str, Any]], Optional[int]],
+    print_cli_header: Callable[[str], None],
+    print_section: Callable[[str], None],
+):
     """CLI for checking status."""
     print_cli_header("AI Stack Status")
 

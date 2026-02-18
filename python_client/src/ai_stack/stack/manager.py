@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 from ai_stack.core.config import config
 from ai_stack.huggingface.cache import HuggingFaceSnapshotCache
-from ai_stack.huggingface.client import HuggingFaceClient
+from ai_stack.huggingface.client import HuggingFaceClient, RepoSnapshot
 from ai_stack.llama.build import build_llama_cpp, clone_llama_cpp
 from ai_stack.llama.server import start_llama_server
 from ai_stack.models.registry import ModelRegistry
@@ -122,7 +122,7 @@ class SetupManager:
         """Build llama.cpp with auto-detected GPU support."""
         return build_llama_cpp(config=self.config)
 
-    def _get_hf_snapshot(self, repo_id: str, revision: str = "main"):
+    def _get_hf_snapshot(self, repo_id: str, revision: str = "main") -> RepoSnapshot:
         result = hf_downloads.get_hf_snapshot(
             hf_client=self.hf,
             hf_cache=self.hf_cache,

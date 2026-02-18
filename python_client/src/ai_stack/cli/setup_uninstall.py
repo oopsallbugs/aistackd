@@ -4,9 +4,28 @@ from __future__ import annotations
 
 import argparse
 import shutil
+from pathlib import Path
+from typing import Callable, Protocol
 
 
-def uninstall_cli(*, config, print_cli_header, print_divider, print_section, argv=None):
+class _PathsLike(Protocol):
+    models_dir: Path
+    llama_cpp_dir: Path
+    project_root: Path
+
+
+class _ConfigLike(Protocol):
+    paths: _PathsLike
+
+
+def uninstall_cli(
+    *,
+    config: _ConfigLike,
+    print_cli_header: Callable[[str], None],
+    print_divider: Callable[[], None],
+    print_section: Callable[[str], None],
+    argv=None,
+):
     """CLI for uninstalling AI Stack."""
     parser = argparse.ArgumentParser(description="Uninstall AI Stack runtime artifacts")
     parser.add_argument(

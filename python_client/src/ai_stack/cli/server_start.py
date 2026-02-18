@@ -6,18 +6,61 @@ import argparse
 import subprocess
 import time
 from pathlib import Path
+from typing import Callable, Optional, Protocol
+
+
+class _ModelConfigLike(Protocol):
+    default_model: Optional[str]
+
+
+class _PathsLike(Protocol):
+    models_dir: Path
+    project_root: Path
+
+
+class _ServerConfigLike(Protocol):
+    host: str
+    port: int
+    llama_url: str
+    llama_api_url: str
+
+
+class _GpuConfigLike(Protocol):
+    layers: int
+
+
+class _ConfigLike(Protocol):
+    model: _ModelConfigLike
+    paths: _PathsLike
+    server: _ServerConfigLike
+    gpu: _GpuConfigLike
+
+    def get_available_models(self) -> list[dict[str, object]]: ...
+    def resolve_model_path(self, model_arg: str) -> Optional[Path]: ...
+
+
+class _ServerManagerLike(Protocol):
+    def start_server(self, model_path: str, stdout=None, stderr=None): ...
+
+
+class _ExitWithErrorLike(Protocol):
+    def __call__(self, *, message: str, detail: Optional[str] = None) -> None: ...
+
+
+class _PrintBulletListLike(Protocol):
+    def __call__(self, items: list[str], prefix: str = "  • ") -> None: ...
 
 
 def start_server_cli(
     *,
-    config,
-    setup_manager_cls,
-    exit_with_error,
-    ai_stack_error_cls,
-    start_detached_fn,
-    start_foreground_fn,
-    print_section,
-    print_bullet_list,
+    config: _ConfigLike,
+    setup_manager_cls: Callable[[], _ServerManagerLike],
+    exit_with_error: _ExitWithErrorLike,
+    ai_stack_error_cls: type[Exception],
+    start_detached_fn: Callable[[_ServerManagerLike, str], None],
+    start_foreground_fn: Callable[[_ServerManagerLike, str], None],
+    print_section: Callable[[str], None],
+    print_bullet_list: _PrintBulletListLike,
 ):
     """CLI for starting the server."""
     parser = argparse.ArgumentParser(description="Start AI Stack server")
@@ -122,14 +165,14 @@ def start_server_cli(
 
 def start_detached_server(
     *,
-    config,
-    load_server_pid_fn,
-    is_process_running_fn,
-    clear_server_pid_fn,
-    write_server_pid_fn,
-    manager,
+    config: _ConfigLike,
+    load_server_pid_fn: Callable[[], Optional[dict]],
+    is_process_running_fn: Callable[[int], bool],
+    clear_server_pid_fn: Callable[[], None],
+    write_server_pid_fn: Callable[[int, str], None],
+    manager: _ServerManagerLike,
     model_path: str,
-    print_section,
+    print_section: Callable[[str], None],
 ):
     """Start server in background."""
     existing = load_server_pid_fn()
@@ -167,7 +210,13 @@ def start_detached_server(
     print("   server-stop    - Stop the server")
 
 
-def start_foreground_server(*, config, manager, model_path: str, print_section):
+def start_foreground_server(
+    *,
+    config: _ConfigLike,
+    manager: _ServerManagerLike,
+    model_path: str,
+    print_section: Callable[[str], None],
+):
     """Start server in foreground."""
     server = manager.start_server(model_path)
 

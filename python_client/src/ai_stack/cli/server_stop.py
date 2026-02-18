@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import argparse
+from typing import Callable, Optional, Protocol
+
+
+class _ExitWithErrorLike(Protocol):
+    def __call__(self, *, message: str, detail: Optional[str] = None) -> None: ...
 
 
 def stop_server_cli(
     *,
-    load_server_pid_fn,
-    is_process_running_fn,
-    terminate_process_fn,
-    clear_server_pid_fn,
-    exit_with_error,
+    load_server_pid_fn: Callable[[], Optional[dict]],
+    is_process_running_fn: Callable[[int], bool],
+    terminate_process_fn: Callable[[int], bool],
+    clear_server_pid_fn: Callable[[], None],
+    exit_with_error: _ExitWithErrorLike,
     argv=None,
 ):
     """CLI for stopping the server."""

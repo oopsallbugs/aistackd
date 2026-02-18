@@ -3,9 +3,23 @@
 from __future__ import annotations
 
 import sys
+from typing import Callable, Optional, Protocol
 
 
-def check_deps_cli(*, setup_manager_cls, print_cli_header, exit_with_error):
+class _SetupManagerLike(Protocol):
+    def check_dependencies(self) -> dict[str, bool]: ...
+
+
+class _ExitWithErrorLike(Protocol):
+    def __call__(self, *, message: str, detail: Optional[str] = None) -> None: ...
+
+
+def check_deps_cli(
+    *,
+    setup_manager_cls: Callable[[], _SetupManagerLike],
+    print_cli_header: Callable[[str], None],
+    exit_with_error: _ExitWithErrorLike,
+):
     """CLI for checking dependencies."""
     manager = setup_manager_cls()
     deps = manager.check_dependencies()

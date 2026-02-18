@@ -4,9 +4,34 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
+from typing import Callable, Protocol
 
 
-def setup_cli(*, config, setup_manager_cls, print_cli_header, print_divider, print_section):
+class _SetupResultLike(Protocol):
+    missing_critical: list[str]
+    clone_ok: bool
+    build_ok: bool
+    has_models: bool
+    models_dir: Path
+
+
+class _ConfigLike(Protocol):
+    def print_summary(self) -> None: ...
+
+
+class _SetupManagerLike(Protocol):
+    def setup(self) -> _SetupResultLike: ...
+
+
+def setup_cli(
+    *,
+    config: _ConfigLike,
+    setup_manager_cls: Callable[[], _SetupManagerLike],
+    print_cli_header: Callable[[str], None],
+    print_divider: Callable[[], None],
+    print_section: Callable[[str], None],
+):
     """CLI for setup command."""
     parser = argparse.ArgumentParser(description="AI Stack Setup")
     parser.parse_args()
