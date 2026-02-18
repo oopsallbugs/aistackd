@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional
 
+from ai_stack.core.logging import emit_event
+
 
 def print_cli_header(title: str) -> None:
     print("=" * 60)
@@ -17,6 +19,12 @@ def print_divider() -> None:
 
 def print_section(title: str) -> None:
     print(f"\n{title}")
+
+
+def print_progress(stage: int, total: int, message: str) -> None:
+    """Print a stable progress checkpoint line."""
+    print(f"[{stage}/{total}] {message}")
+    emit_event("cli.progress", stage=stage, total=total, message=message)
 
 
 def print_bullet_list(items: Iterable[str], prefix: str = "  • ") -> None:
@@ -49,5 +57,6 @@ __all__ = [
     "print_bullet_list",
     "print_cli_header",
     "print_divider",
+    "print_progress",
     "print_section",
 ]

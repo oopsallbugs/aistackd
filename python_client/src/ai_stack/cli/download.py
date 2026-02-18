@@ -7,7 +7,7 @@ import sys
 
 from huggingface_hub.errors import HFValidationError
 
-from ai_stack.cli.main import print_bullet_list, print_section
+from ai_stack.cli.main import print_bullet_list, print_progress, print_section
 from ai_stack.core.errors import exit_with_error
 from ai_stack.core.logging import emit_event
 from ai_stack.stack import hf_downloads
@@ -104,8 +104,10 @@ Examples:
 
     if args.list:
         try:
+            print_progress(1, 2, f"Fetching snapshot metadata for {args.repo}")
             result = manager.list_huggingface_files(args.repo)
             _print_cache_event(manager, result.cache_event, result.repo_id)
+            print_progress(2, 2, "Rendering available file list")
             _print_hf_file_list(result)
             emit_event(
                 "cli.download.list.complete",
@@ -124,6 +126,7 @@ Examples:
         return
 
     try:
+        print_progress(1, 3, f"Fetching snapshot metadata for {args.repo}")
         result = manager.download_from_huggingface(
             repo_id=args.repo,
             filename=args.file,
@@ -131,7 +134,9 @@ Examples:
             quant_preference=args.quant,
         )
         _print_cache_event(manager, result.cache_event, result.repo_id)
+        print_progress(2, 3, "Resolving and downloading selected files")
         _print_download_result(result)
+        print_progress(3, 3, "Completed download workflow")
         emit_event(
             "cli.download.complete",
             repo_id=result.repo_id,

@@ -32,6 +32,7 @@ def setup_cli(
     setup_manager_cls: Callable[[], _SetupManagerLike],
     print_cli_header: Callable[[str], None],
     print_divider: Callable[[], None],
+    print_progress: Callable[[int, int, str], None],
     print_section: Callable[[str], None],
 ):
     """CLI for setup command."""
@@ -42,7 +43,9 @@ def setup_cli(
     print_cli_header("AI Stack Setup")
     config.print_summary()
 
+    print_progress(1, 3, "Checking dependencies and preparing setup")
     manager = setup_manager_cls()
+    print_progress(2, 3, "Running llama.cpp clone/build flow")
     result = manager.setup()
 
     if result.missing_critical:
@@ -67,6 +70,7 @@ def setup_cli(
         sys.exit(1)
 
     print_divider()
+    print_progress(3, 3, "Finalizing setup output")
     print("Setup complete!")
     print("=" * 60)
 

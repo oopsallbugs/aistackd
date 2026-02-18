@@ -52,3 +52,6 @@ uninstall-stack --yes
 ## Structured Events
 - Set `AI_STACK_LOG_EVENTS=1` to enable structured event logs (JSON lines on stderr).
 - Default is off, so normal CLI output remains unchanged.
+
+## Progress UX
+- `setup-stack` and `download-model` now print stable stage checkpoints like `[1/3] ...` for long-running workflows.
