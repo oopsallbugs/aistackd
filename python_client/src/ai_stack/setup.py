@@ -1,5 +1,0 @@
-"""Compatibility shim for SetupManager."""
-
-from ai_stack.stack.manager import SetupManager
-
-__all__ = ["SetupManager"]
