@@ -16,7 +16,7 @@ class LLMResponse:
     model: str = ""
     tokens_used: int = 0
     finish_reason: str = ""
-    raw_response: Dict[str, Any] = None
+    raw_response: Optional[Dict[str, Any]] = None
 
 class LLMClient:
     """LLM client for llama.cpp server using auto-detected config"""

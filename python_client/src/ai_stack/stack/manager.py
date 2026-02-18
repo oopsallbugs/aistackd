@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import subprocess
 import sys
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Dict, List, Optional
 
 from ai_stack.core.config import config
 from ai_stack.huggingface.cache import HuggingFaceSnapshotCache
@@ -13,6 +15,16 @@ from ai_stack.llama.build import build_llama_cpp, clone_llama_cpp
 from ai_stack.llama.server import start_llama_server
 from ai_stack.models.registry import ModelRegistry
 from . import hf_downloads
+
+
+@dataclass
+class SetupResult:
+    success: bool
+    missing_critical: List[str]
+    clone_ok: bool
+    build_ok: bool
+    has_models: bool
+    models_dir: Path
 
 
 class SetupManager:
@@ -31,6 +43,7 @@ class SetupManager:
             "refresh": 0,
             "fallback": 0,
         }
+        self._last_cache_event: Optional[str] = None
 
     def _record_cache_event(self, event: str) -> None:
         if event in self.hf_cache_diagnostics:
@@ -50,6 +63,18 @@ class SetupManager:
     @staticmethod
     def normalize_hf_repo_id(repo_input: str) -> str:
         return hf_downloads.normalize_hf_repo_id(repo_input)
+
+    @staticmethod
+    def format_cache_event(event: Optional[str], repo_id: str, revision: str) -> Optional[str]:
+        if event == "miss":
+            return f"🧠 HF cache miss: {repo_id}@{revision} (fetching snapshot)"
+        if event == "hit":
+            return f"🧠 HF cache hit: {repo_id}@{revision} (SHA unchanged)"
+        if event == "refresh":
+            return f"🧠 HF cache refresh: {repo_id}@{revision} (SHA changed)"
+        if event == "fallback":
+            return f"🧠 HF cache fallback: {repo_id}@{revision} (SHA check failed, using cached snapshot)"
+        return None
 
     def check_dependencies(self) -> Dict[str, bool]:
         """Check system dependencies."""
@@ -98,19 +123,23 @@ class SetupManager:
         return build_llama_cpp(config=self.config)
 
     def _get_hf_snapshot(self, repo_id: str, revision: str = "main"):
-        return hf_downloads.get_hf_snapshot(
+        result = hf_downloads.get_hf_snapshot(
             hf_client=self.hf,
             hf_cache=self.hf_cache,
             record_cache_event=self._record_cache_event,
             repo_id=repo_id,
             revision=revision,
         )
+        self._last_cache_event = result.cache_event
+        return result.snapshot
 
-    def list_huggingface_files(self, repo_id: str):
+    def list_huggingface_files(self, repo_id: str) -> hf_downloads.HfFileListResult:
         """List available files in a HuggingFace repo (GGUF + mmproj)."""
         repo_id = self.normalize_hf_repo_id(repo_id)
         snap = self._get_hf_snapshot(repo_id=repo_id, revision="main")
-        hf_downloads.list_huggingface_files(snapshot=snap)
+        result = hf_downloads.list_huggingface_files(snapshot=snap)
+        result.cache_event = self._last_cache_event
+        return result
 
     def download_from_huggingface(
         self,
@@ -118,11 +147,10 @@ class SetupManager:
         filename: Optional[str] = None,
         download_mmproj: bool = False,
         quant_preference: Optional[str] = None,
-    ) -> bool:
+    ) -> hf_downloads.HfDownloadResult:
         repo_id = self.normalize_hf_repo_id(repo_id)
-        print(f"🔍 Fetching info for {repo_id}...")
         snap = self._get_hf_snapshot(repo_id=repo_id, revision="main")
-        return hf_downloads.download_from_huggingface(
+        result = hf_downloads.download_from_huggingface(
             config=self.config,
             registry=self.registry,
             hf_client=self.hf,
@@ -132,6 +160,8 @@ class SetupManager:
             download_mmproj=download_mmproj,
             quant_preference=quant_preference,
         )
+        result.cache_event = self._last_cache_event
+        return result
 
     def start_server(
         self,
@@ -150,58 +180,51 @@ class SetupManager:
             stderr=stderr,
         )
 
-    def setup(self) -> bool:
-        """Complete setup process."""
-        print("=" * 60)
-        print("AI Stack Setup")
-        print("=" * 60)
-
-        self.config.print_summary()
-
-        print("\n1. Checking dependencies...")
+    def setup(self) -> SetupResult:
+        """Complete setup process and return structured result."""
         deps = self.check_dependencies()
 
         missing_critical = [dep for dep, installed in deps.items() if not installed and dep in ["git", "cmake", "make"]]
         if missing_critical:
-            print("✗ Missing critical dependencies:")
-            for dep in missing_critical:
-                print(f"  • {dep}")
-            print("\nPlease install missing dependencies and try again.")
-            return False
+            return SetupResult(
+                success=False,
+                missing_critical=missing_critical,
+                clone_ok=False,
+                build_ok=False,
+                has_models=self.config.has_models,
+                models_dir=self.config.paths.models_dir,
+            )
 
-        print("✓ All dependencies satisfied")
+        clone_ok = self.clone_llama_cpp()
+        if not clone_ok:
+            return SetupResult(
+                success=False,
+                missing_critical=[],
+                clone_ok=False,
+                build_ok=False,
+                has_models=self.config.has_models,
+                models_dir=self.config.paths.models_dir,
+            )
 
-        print("\n2. Setting up llama.cpp...")
-        if not self.clone_llama_cpp():
-            return False
+        build_ok = self.build_llama_cpp()
+        if not build_ok:
+            return SetupResult(
+                success=False,
+                missing_critical=[],
+                clone_ok=True,
+                build_ok=False,
+                has_models=self.config.has_models,
+                models_dir=self.config.paths.models_dir,
+            )
 
-        print("\n3. Building llama.cpp...")
-        if not self.build_llama_cpp():
-            return False
-
-        print("\n" + "=" * 60)
-        print("Setup complete!")
-        print("=" * 60)
-
-        print("\nNext steps:")
-        if not self.config.has_models:
-            print("1. Download models:")
-            print(f"   mkdir -p {self.config.paths.models_dir}")
-            print("   # Download GGUF models from HuggingFace")
-            print("   # Example: download-model TheBloke/Llama-2-7B-GGUF")
-        else:
-            print("1. Start server with a specific model:")
-            print("   from ai_stack.stack.manager import SetupManager")
-            print("   manager = SetupManager()")
-            print("   server = manager.start_server('models/your-model.gguf')")
-            print("   # Or via CLI: server-start your-model.gguf")
-
-        print("\n2. Use the LLM client:")
-        print("   from ai_stack.llm import create_client")
-        print("   client = create_client()")
-        print("   response = client.chat([{'role': 'user', 'content': 'Hello'}])")
-
-        return True
+        return SetupResult(
+            success=True,
+            missing_critical=[],
+            clone_ok=True,
+            build_ok=True,
+            has_models=self.config.has_models,
+            models_dir=self.config.paths.models_dir,
+        )
 
 
-__all__ = ["SetupManager"]
+__all__ = ["SetupManager", "SetupResult"]

@@ -1,10 +1,16 @@
-"""ai_stack CLI package with backward-compatible entrypoint exports."""
+"""CLI package exports.
+
+This module intentionally re-exports stable entrypoints used by:
+- console scripts (pyproject)
+- ``python -m ai_stack``
+- tests that patch CLI wrapper functions
+"""
 
 from ai_stack.core.config import config
 from ai_stack.stack.manager import SetupManager
 
-from ai_stack.cli.download import download_model_cli
-from ai_stack.cli.server import (
+from .download import download_model_cli
+from .server import (
     _clear_server_pid,
     _is_process_running,
     _load_server_pid,
@@ -18,7 +24,7 @@ from ai_stack.cli.server import (
     status_cli,
     stop_server_cli,
 )
-from ai_stack.cli.setup import check_deps_cli, setup_cli, uninstall_cli
+from .setup import check_deps_cli, setup_cli, uninstall_cli
 
 __all__ = [
     "SetupManager",
