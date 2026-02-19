@@ -65,6 +65,10 @@ def start_server_cli():
             print_section=print_section,
             print_bullet_list=print_bullet_list,
         )
+    except KeyboardInterrupt:
+        emit_event("cli.server_start.cancelled", level="info")
+        print("\n❌ Server start cancelled")
+        raise SystemExit(130)
     except Exception as exc:
         emit_event("cli.server_start.wrapper.failed", level="error", error=str(exc))
         exit_with_unexpected_error(command="Server start", exc=exc)
@@ -104,6 +108,10 @@ def status_cli():
             print_cli_header=print_cli_header,
             print_section=print_section,
         )
+    except KeyboardInterrupt:
+        emit_event("cli.server_status.cancelled", level="info")
+        print("\n❌ Server status cancelled")
+        raise SystemExit(130)
     except Exception as exc:
         emit_event("cli.server_status.wrapper.failed", level="error", error=str(exc))
         exit_with_unexpected_error(command="Server status", exc=exc)
@@ -120,6 +128,10 @@ def stop_server_cli(argv=None):
             exit_with_error=exit_with_error,
             argv=argv,
         )
+    except KeyboardInterrupt:
+        emit_event("cli.server_stop.cancelled", level="info")
+        print("\n❌ Server stop cancelled")
+        raise SystemExit(130)
     except Exception as exc:
         emit_event("cli.server_stop.wrapper.failed", level="error", error=str(exc))
         exit_with_unexpected_error(command="Server stop", exc=exc)

@@ -131,6 +131,10 @@ Examples:
                 exc=exc,
                 detail="Check network access and repo visibility.",
             )
+        except KeyboardInterrupt:
+            emit_event("cli.download.list.cancelled", level="info")
+            print("\n❌ Download list cancelled")
+            raise SystemExit(130)
         if args.cache_diagnostics:
             manager.print_cache_diagnostics()
             print(f"   workers: {active_workers}")
@@ -161,6 +165,10 @@ Examples:
             message=f"Invalid HuggingFace repo input: {exc}",
             detail="Use 'namespace/repo' or a full model URL on huggingface.co",
         )
+    except KeyboardInterrupt:
+        emit_event("cli.download.cancelled", level="info")
+        print("\n❌ Download cancelled")
+        raise SystemExit(130)
     except (RuntimeError, OSError, TimeoutError, ConnectionError) as exc:
         emit_event("cli.download.failed", level="error", error=str(exc))
         exit_with_unexpected_error(

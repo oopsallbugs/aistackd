@@ -23,6 +23,10 @@ def setup_cli():
             print_progress=print_progress,
             print_section=print_section,
         )
+    except KeyboardInterrupt:
+        emit_event("cli.setup.cancelled", level="info")
+        print("\n❌ Setup cancelled")
+        raise SystemExit(130)
     except Exception as exc:
         emit_event("cli.setup.wrapper.failed", level="error", error=str(exc))
         exit_with_unexpected_error(command="Setup", exc=exc)
@@ -36,6 +40,10 @@ def check_deps_cli():
             print_cli_header=print_cli_header,
             exit_with_error=exit_with_error,
         )
+    except KeyboardInterrupt:
+        emit_event("cli.check_deps.cancelled", level="info")
+        print("\n❌ Dependency check cancelled")
+        raise SystemExit(130)
     except Exception as exc:
         emit_event("cli.check_deps.wrapper.failed", level="error", error=str(exc))
         exit_with_unexpected_error(command="Dependency check", exc=exc)
@@ -51,6 +59,10 @@ def uninstall_cli(argv=None):
             print_section=print_section,
             argv=argv,
         )
+    except KeyboardInterrupt:
+        emit_event("cli.uninstall.cancelled", level="info")
+        print("\n❌ Uninstall cancelled")
+        raise SystemExit(130)
     except Exception as exc:
         emit_event("cli.uninstall.wrapper.failed", level="error", error=str(exc))
         exit_with_unexpected_error(command="Uninstall", exc=exc)

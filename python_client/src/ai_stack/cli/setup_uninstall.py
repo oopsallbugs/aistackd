@@ -29,6 +29,26 @@ def uninstall_cli(
     """CLI for uninstalling AI Stack."""
     parser = argparse.ArgumentParser(description="Uninstall AI Stack runtime artifacts")
     parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Remove all runtime artifacts (default when no specific flags are provided)",
+    )
+    parser.add_argument(
+        "--models",
+        action="store_true",
+        help="Remove downloaded models directory",
+    )
+    parser.add_argument(
+        "--llama",
+        action="store_true",
+        help="Remove llama.cpp directory",
+    )
+    parser.add_argument(
+        "--runtime-cache",
+        action="store_true",
+        help="Remove runtime cache directory (.ai_stack)",
+    )
+    parser.add_argument(
         "-y",
         "--yes",
         action="store_true",
@@ -36,15 +56,31 @@ def uninstall_cli(
     )
     args = parser.parse_args(argv)
 
+    selected_any = args.models or args.llama or args.runtime_cache
+    remove_models = args.models or (args.all or not selected_any)
+    remove_llama = args.llama or (args.all or not selected_any)
+    remove_runtime_cache = args.runtime_cache or (args.all or not selected_any)
+
+    selected_labels = []
+    if remove_llama:
+        selected_labels.append("llama.cpp build directory")
+    if remove_models:
+        selected_labels.append("All downloaded models")
+    if remove_runtime_cache:
+        selected_labels.append("Runtime cache (.ai_stack)")
+
     print_cli_header("🧹 AI Stack Uninstall")
     print_section("This will remove:")
-    print("  • llama.cpp build directory")
-    print("  • All downloaded models")
-    print("  • Runtime cache (.ai_stack)")
+    for label in selected_labels:
+        print(f"  • {label}")
     print()
 
     if not args.yes:
-        response = input("Are you sure you want to uninstall? (y/N): ")
+        try:
+            response = input("Are you sure you want to uninstall? (y/N): ")
+        except (KeyboardInterrupt, EOFError):
+            print("\n❌ Uninstall cancelled")
+            return
         if response.lower() != "y":
             print("❌ Uninstall cancelled")
             return
@@ -52,14 +88,14 @@ def uninstall_cli(
     removed = []
     failed = []
 
-    if config.paths.models_dir.exists():
+    if remove_models and config.paths.models_dir.exists():
         try:
             shutil.rmtree(config.paths.models_dir)
             removed.append(f"Models: {config.paths.models_dir}")
         except OSError as exc:
             failed.append(f"Models: {exc}")
 
-    if config.paths.llama_cpp_dir.exists():
+    if remove_llama and config.paths.llama_cpp_dir.exists():
         try:
             shutil.rmtree(config.paths.llama_cpp_dir)
             removed.append(f"llama.cpp: {config.paths.llama_cpp_dir}")
@@ -67,7 +103,7 @@ def uninstall_cli(
             failed.append(f"llama.cpp: {exc}")
 
     runtime_cache = config.paths.project_root / ".ai_stack"
-    if runtime_cache.exists():
+    if remove_runtime_cache and runtime_cache.exists():
         try:
             shutil.rmtree(runtime_cache)
             removed.append(f"Runtime cache: {runtime_cache}")

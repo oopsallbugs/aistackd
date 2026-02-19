@@ -6,9 +6,51 @@ import multiprocessing
 import os
 import shutil
 import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 
 from ai_stack.core.logging import emit_event
+
+
+def _run_with_heartbeat(label: str, run_fn, interval_seconds: float = 5.0):
+    """
+    Run a blocking function while printing periodic progress heartbeats.
+
+    Keeps existing subprocess behavior intact while improving UX for long-running steps.
+    """
+    stop_event = threading.Event()
+    started = time.monotonic()
+    use_inline = bool(getattr(sys.stdout, "isatty", lambda: False)())
+    printed_heartbeat = False
+
+    def _heartbeat() -> None:
+        nonlocal printed_heartbeat
+        while not stop_event.wait(interval_seconds):
+            elapsed = int(time.monotonic() - started)
+            if use_inline:
+                msg = f"  {label}... {elapsed}s elapsed"
+                sys.stdout.write("\r" + msg)
+                sys.stdout.flush()
+            else:
+                print(f"  {label}... {elapsed}s elapsed")
+            printed_heartbeat = True
+            emit_event("llama.progress.heartbeat", phase=label, elapsed_s=elapsed)
+
+    thread = threading.Thread(target=_heartbeat, daemon=True)
+    thread.start()
+    try:
+        return run_fn()
+    finally:
+        stop_event.set()
+        thread.join(timeout=0.2)
+        if use_inline and printed_heartbeat:
+            elapsed = int(time.monotonic() - started)
+            msg = f"  {label}... {elapsed}s elapsed"
+            clear_pad = " " * 16
+            sys.stdout.write("\r" + msg + clear_pad + "\n")
+            sys.stdout.flush()
 
 
 def clone_llama_cpp(config, force: bool = False) -> bool:
@@ -24,18 +66,21 @@ def clone_llama_cpp(config, force: bool = False) -> bool:
     print(f"Cloning llama.cpp to {config.paths.llama_cpp_dir}...")
     emit_event("llama.clone.exec", target_dir=str(config.paths.llama_cpp_dir))
     try:
-        subprocess.run(
-            [
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                "https://github.com/ggerganov/llama.cpp.git",
-                str(config.paths.llama_cpp_dir),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
+        _run_with_heartbeat(
+            "Cloning llama.cpp",
+            lambda: subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    "https://github.com/ggerganov/llama.cpp.git",
+                    str(config.paths.llama_cpp_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            ),
         )
         print("✓ Cloned llama.cpp")
         emit_event("llama.clone.succeeded", target_dir=str(config.paths.llama_cpp_dir))
@@ -119,25 +164,31 @@ def build_llama_cpp(config) -> bool:
 
         print(f"  Configuring with: {' '.join(cmake_cmd)}")
 
-        subprocess.run(
-            cmake_cmd,
-            cwd=build_dir,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=True,
+        _run_with_heartbeat(
+            "Configuring CMake",
+            lambda: subprocess.run(
+                cmake_cmd,
+                cwd=build_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            ),
         )
 
         cores = multiprocessing.cpu_count()
         print(f"  Building with {cores} cores...")
 
-        subprocess.run(
-            ["cmake", "--build", ".", "--config", "Release", "-j", str(cores)],
-            cwd=build_dir,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=True,
+        _run_with_heartbeat(
+            "Building llama.cpp",
+            lambda: subprocess.run(
+                ["cmake", "--build", ".", "--config", "Release", "-j", str(cores)],
+                cwd=build_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            ),
         )
 
         if config.llama_server_binary.exists():

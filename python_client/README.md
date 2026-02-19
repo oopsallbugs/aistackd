@@ -34,6 +34,7 @@ server-start llama-2-7b.q4_k_m.gguf --detach
 server-status
 server-stop
 uninstall-stack --yes
+uninstall-stack --yes --models
 ```
 
 ## Package Layout
@@ -55,6 +56,14 @@ uninstall-stack --yes
 
 ## Progress UX
 - `setup-stack` and `download-model` now print stable stage checkpoints like `[1/3] ...` for long-running workflows.
+- Long clone/build steps also print heartbeat lines (`... <seconds>s elapsed`) so setup no longer appears stalled.
+
+## Selective Uninstall
+- `uninstall-stack` defaults to removing all runtime artifacts.
+- Use selectors to remove only specific parts:
+  - `--models`
+  - `--llama`
+  - `--runtime-cache`
 
 ## Download Workers
 - `AI_STACK_HF_MAX_WORKERS` controls bounded concurrent HF file downloads (default `1`).
