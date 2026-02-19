@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 
 from huggingface_hub.errors import HFValidationError
 
@@ -100,6 +101,7 @@ Examples:
     )
 
     args = parser.parse_args()
+    command_started = time.perf_counter()
     manager = SetupManager()
     active_workers = hf_downloads.get_hf_max_workers()
 
@@ -132,6 +134,7 @@ Examples:
         if args.cache_diagnostics:
             manager.print_cache_diagnostics()
             print(f"   workers: {active_workers}")
+            print(f"   elapsed_s: {time.perf_counter() - command_started:.2f}")
         return
 
     try:
@@ -176,6 +179,7 @@ Examples:
     if args.cache_diagnostics:
         manager.print_cache_diagnostics()
         print(f"   workers: {active_workers}")
+        print(f"   elapsed_s: {time.perf_counter() - command_started:.2f}")
 
     sys.exit(0)
 
