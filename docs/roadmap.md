@@ -5,8 +5,8 @@
 |---|---|---|
 | Phase A | Complete | Layered architecture, manifest ownership, HF transport/resolver split |
 | Phase B | Complete | HF snapshot cache, quant-aware resolver, metadata derivation, URL normalization |
-| Phase C | Active | Hardening: reliability, observability, UX, and performance |
-| Phase D | Planned | Integrations: OpenCode/OpenHands/RAG/tools |
+| Phase C | Complete | Hardening: reliability, observability, UX, and performance |
+| Phase D | Next | Integrations: OpenCode/OpenHands/RAG/tools |
 
 ## Phase A (Done)
 - Manifest introduced and owned by `ModelRegistry`.
@@ -28,17 +28,24 @@
   - `HfFileListResult`
   - `HfDownloadResult`
 
-## Phase C (Active)
-- Structured logging and event taxonomy across setup/download/server lifecycle.
-- Retry/backoff policy for transient network operations.
-- Progress UX for long-running operations (snapshot fetch, download, build).
-- Safe bounded parallelism for download performance.
-- Reliability test expansion:
-  - CLI success/failure matrix
-  - recovery flows (stale PID, cache fallback, transient failures)
-- LLM module placement cleanup:
-  - keep `from ai_stack.llm import create_client`
-  - move implementation to `ai_stack/llama/client.py`.
+## Phase C (Complete)
+- Done:
+  - Structured logging and event taxonomy across setup/download/server lifecycle.
+  - Retry/backoff for transient HF operations (`SHA`, snapshot fetch, file download).
+  - Progress UX checkpoints for long-running setup/download flows.
+  - Reliability hardening:
+    - wrapper-level safe error boundaries for CLI commands
+    - recovery-path and compatibility test expansion
+  - LLM placement cleanup:
+    - `ai_stack.llm` remains stable facade
+    - implementation moved to `ai_stack/llama/client.py`
+  - Safe bounded parallelism for download performance:
+    - `AI_STACK_HF_MAX_WORKERS` (bounded)
+    - deterministic parallel failure ordering
+    - serialized registry writes
+    - diagnostics visibility (`workers`, `elapsed_s`)
+
+Phase C is now complete. Next execution focus shifts to Phase D integration scaffolding.
 
 ## Phase D (Planned)
 - OpenCode integration.

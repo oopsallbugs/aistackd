@@ -8,6 +8,14 @@ Out of scope for this phase:
 - Manifest/cache schema redesign.
 - Runtime path relocation.
 
+## Status Snapshot
+- Epic 1: Complete
+- Epic 2: Complete
+- Epic 3: Complete
+- Epic 4: Complete
+- Epic 5: Complete
+- Epic 6: Complete
+
 ## Epic 1: Structured Logging and Event Taxonomy
 ### Scope
 - Introduce structured event records for setup, build, download, cache, and server lifecycle.
@@ -31,6 +39,9 @@ Out of scope for this phase:
 
 ### Risk
 - Medium (touches many command paths).
+
+### Current status
+- Complete. Structured event emission is available behind `AI_STACK_LOG_EVENTS=1` and wired across setup/download/server paths.
 
 ## Epic 2: Retry/Backoff Policy for Transient Network Operations
 ### Scope
@@ -56,6 +67,9 @@ Out of scope for this phase:
 ### Risk
 - Medium (network edge-case handling).
 
+### Current status
+- Complete. Bounded retry/backoff is centralized and applied to transient HF operations.
+
 ## Epic 3: Progress Reporting UX for Long-Running Operations
 ### Scope
 - Add clear progress updates for snapshot fetch, model download, and build operations.
@@ -78,6 +92,9 @@ Out of scope for this phase:
 
 ### Risk
 - Low.
+
+### Current status
+- Complete. Stable progress checkpoints are shown for setup/download workflows.
 
 ## Epic 4: Download Performance/Parallelism (Bounded and Safe)
 ### Scope
@@ -102,6 +119,15 @@ Out of scope for this phase:
 
 ### Risk
 - High (concurrency + filesystem interactions).
+
+### Current status
+- Complete.
+- Implemented:
+  - `AI_STACK_HF_MAX_WORKERS` (default `1`, bounded max).
+  - Optional parallel model+mmproj fetch path.
+  - Deterministic parallel failure precedence and event logging.
+  - Registry writes remain serialized.
+  - Diagnostics surfacing for comparison runs (`workers`, `elapsed_s` in `--cache-diagnostics` output).
 
 ## Epic 5: Reliability Test Expansion (CLI Matrix and Recovery Flows)
 ### Scope
@@ -128,6 +154,10 @@ Out of scope for this phase:
 ### Risk
 - Medium.
 
+### Current status
+- Complete (for current hardening scope).
+- Includes wrapper-level safe error boundaries and expanded CLI failure/recovery coverage.
+
 ## Epic 6: LLM Placement Follow-Up (`ai_stack.llm` Facade)
 ### Scope
 - Move LLM client implementation to `ai_stack/llama/client.py`.
@@ -152,6 +182,9 @@ Out of scope for this phase:
 ### Risk
 - Low.
 
+### Current status
+- Complete. `ai_stack.llm` remains facade while implementation lives in `ai_stack/llama/client.py`.
+
 ## Sequencing and Dependencies
 1. Epic 1 (logging taxonomy).
 Dependency note: establishes shared observability fields used by retry/progress work.
@@ -168,3 +201,4 @@ Dependency note: do after logging/retry/tests are mature, because concurrency ra
 
 ## Exit Criteria for Phase C
 - Reliability and diagnostics are strong enough that integration work (Phase D) can build on stable operational primitives.
+- Status: Met.

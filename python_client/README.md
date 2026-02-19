@@ -59,3 +59,4 @@ uninstall-stack --yes
 ## Download Workers
 - `AI_STACK_HF_MAX_WORKERS` controls bounded concurrent HF file downloads (default `1`).
 - Current concurrency applies to model+mmproj fetches only; manifest writes remain serialized.
+- Use `download-model ... --cache-diagnostics` to print cache stats, active workers, and `elapsed_s` for quick throughput comparisons.
