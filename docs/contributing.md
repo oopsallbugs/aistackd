@@ -22,7 +22,9 @@
 
 ## Integration Boundary Rules
 - `ai_stack.integrations` is adapter-only and API-first in current scope.
-- Runtime layers (`core`, `llama`, `huggingface`, `models`, `stack`, `cli`) must not import integration modules.
+- Runtime core layers (`core`, `llama`, `huggingface`, `models`, `stack`) must not import integration modules.
+- CLI wrappers may import integration entrypoints for explicit user-triggered sync commands.
+- Cross-frontend shared tool/agent assets belong under `ai_stack/integrations/shared/`; frontend adapters map them to target config formats.
 - Integration adapters must not import or mutate:
   - `ai_stack.stack.manager`
   - `ai_stack.stack.hf_downloads`

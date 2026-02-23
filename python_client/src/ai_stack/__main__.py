@@ -9,6 +9,7 @@ from ai_stack.cli import (
     check_deps_cli,
     download_model_cli,
     setup_cli,
+    sync_opencode_config_cli,
     start_server_cli,
     status_cli,
     stop_server_cli,
@@ -31,6 +32,7 @@ def main(argv=None):
             "download-model",
             "check-deps",
             "uninstall-stack",
+            "sync-opencode-config",
         ],
         help="Command to run",
     )
@@ -45,10 +47,11 @@ def main(argv=None):
         "download-model": download_model_cli,
         "check-deps": check_deps_cli,
         "uninstall-stack": uninstall_cli,
+        "sync-opencode-config": sync_opencode_config_cli,
     }
 
     fn = command_map[parsed.command]
-    if parsed.command in {"server-stop", "uninstall-stack", "uninstall"}:
+    if parsed.command in {"server-stop", "uninstall-stack", "sync-opencode-config"}:
         return fn(parsed.args)
 
     old_argv = sys.argv

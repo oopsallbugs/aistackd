@@ -20,8 +20,12 @@ from ai_stack.integrations.core import (
     list_adapters,
     register_adapter,
 )
-from ai_stack.integrations.opencode import OpenCodeAdapter
-from ai_stack.integrations.tools import ReadOnlyFilesystemToolAdapter
+from ai_stack.integrations.adapters.opencode import OpenCodeAdapter
+from ai_stack.integrations.adapters.tools import ReadOnlyFilesystemToolAdapter
+from ai_stack.integrations.frontends.opencode import (
+    OpenCodeSyncResult,
+    sync_opencode_global_config_with_defaults,
+)
 from ai_stack.llm import create_client
 
 
@@ -61,6 +65,24 @@ def sync_opencode_project_config(path: Path | None = None) -> Path:
     return write_config(context, path=path)
 
 
+def sync_opencode_global_config(
+    *,
+    global_path: Path | None = None,
+    sync_tools: bool = False,
+    sync_agents: bool = False,
+    dry_run: bool = False,
+) -> OpenCodeSyncResult:
+    """Generate/refresh global opencode config from current ai-stack runtime."""
+    register_default_adapters()
+    return sync_opencode_global_config_with_defaults(
+        build_context=build_integration_context,
+        global_path=global_path,
+        sync_tools=sync_tools,
+        sync_agents=sync_agents,
+        dry_run=dry_run,
+    )
+
+
 __all__ = [
     "AdapterNotFoundError",
     "AdapterRegistrationError",
@@ -73,11 +95,13 @@ __all__ = [
     "IntegrationSmokeResult",
     "IntegrationValidationResult",
     "OpenCodeAdapter",
+    "OpenCodeSyncResult",
     "ReadOnlyFilesystemToolAdapter",
     "build_integration_context",
     "get_adapter",
     "list_adapters",
     "register_adapter",
     "register_default_adapters",
+    "sync_opencode_global_config",
     "sync_opencode_project_config",
 ]

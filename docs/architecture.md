@@ -31,6 +31,7 @@
    - `build_runtime_config(context)` for integration payload generation.
    - optional `smoke_test(context)` for lightweight probe verification.
 5. Integration layer emits typed results and typed integration errors only; it does not mutate manifest/cache or setup orchestration state.
+6. Intentional sync commands (for example `sync-opencode-config`) are invoked via CLI wrappers and update integration config files only.
 
 ## Practical Module Map
 - `python_client/src/ai_stack/core/`
@@ -58,6 +59,7 @@
 - `python_client/src/ai_stack/integrations/`
   - `core/`: integration contracts, protocol, typed errors, adapter registry
   - `opencode/`: first concrete runtime adapter
+  - `shared/`: canonical shared assets for tools/agents and cross-frontend mapping
   - `tools/`: tool adapter contract + read-only filesystem reference adapter
   - `openhands/README.md`: docs-only implementation spec (runtime deferred)
 
@@ -68,7 +70,8 @@
   - `download.py` still combines wrapper + command behavior and directly constructs `SetupManager` (planned Phase C cleanup).
 
 ## Integration Boundary Rules
-- Runtime layers (`core`, `llama`, `huggingface`, `models`, `stack`, `cli`) must not import from `ai_stack.integrations`.
+- Runtime core layers (`core`, `llama`, `huggingface`, `models`, `stack`) must not import from `ai_stack.integrations`.
+- CLI wrappers may call `ai_stack.integrations` entrypoints for intentional integration-sync commands.
 - Integrations must depend on public runtime facades (`ai_stack.core.config`, `ai_stack.llm`) and integration contracts.
 - Integrations must not import or mutate:
   - `ai_stack.stack.manager`

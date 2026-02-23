@@ -51,7 +51,7 @@ Milestone D1 (Complete):
   - `IntegrationAdapter` protocol
   - typed integration errors
   - in-memory adapter registry
-- OpenCode adapter implemented (`ai_stack.integrations.opencode.adapter`).
+- OpenCode runtime adapter implemented (`ai_stack.integrations.adapters.opencode.adapter`).
 - Integration core + OpenCode tests added.
 
 Milestone D2 (Complete):
@@ -61,7 +61,7 @@ Milestone D2 (Complete):
 - Tools adapter tests added.
 
 Milestone D3 (Complete, docs-only):
-- OpenHands integration spec added at `ai_stack/integrations/openhands/README.md`.
+- OpenHands integration spec added at `ai_stack/integrations/adapters/openhands/README.md`.
 - Runtime implementation intentionally deferred.
 
 Milestone D4 (Complete):
@@ -69,12 +69,15 @@ Milestone D4 (Complete):
   - `docs/phase-d-plan.md`
   - `docs/phase-d-exit-report.md` (template)
   - architecture/roadmap updates for integration boundaries.
+- Added intentional OpenCode sync command surface:
+  - `sync-opencode-config`
+  - `python -m ai_stack sync-opencode-config`
 
 Deferred beyond current Phase D scope:
 - RAG implementation.
 - Model tiering/runtime policy engine.
 - OpenHands runtime adapter implementation.
-- Integration-specific CLI commands (Phase D remains Python API-first).
+- Multi-frontend sync wrappers (for example future `sync-openhands-config`).
 
 ## Non-Negotiable Architecture Rules
 - Registry owns manifest.

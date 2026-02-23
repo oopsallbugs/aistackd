@@ -17,7 +17,7 @@ Out of scope:
 - RAG implementation.
 - Model tiering/runtime policy engine.
 - OpenHands runtime adapter implementation.
-- New integration CLI commands (Phase D is Python API-first).
+- Broad multi-frontend sync wrappers.
 
 ## Locked Decisions
 - Milestone shape: contracts + first concrete adapters.
@@ -43,7 +43,7 @@ Status: In progress.
 
 ### D3: OpenHands docs/spec only
 Status: In progress.
-- Added `python_client/src/ai_stack/integrations/openhands/README.md` with:
+- Added `python_client/src/ai_stack/integrations/adapters/openhands/README.md` with:
   - required contract methods
   - expected runtime config keys
   - validation/smoke criteria
@@ -84,4 +84,4 @@ Status: Not started
 2. First concrete adapter second (OpenCode).
 3. Tools contract/reference adapter third.
 4. OpenHands runtime remains intentionally deferred.
-5. CLI integration commands deferred to later phase to keep Phase D API-first.
+5. Multi-frontend wrapper commands deferred; targeted intentional command `sync-opencode-config` is in scope.

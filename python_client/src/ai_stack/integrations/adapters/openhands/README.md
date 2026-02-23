@@ -29,7 +29,7 @@ The first OpenHands adapter implementation should emit at least:
 - Adapter returns deterministic pass/fail detail string for diagnostics.
 
 ## Implementation Checklist (Deferred)
-1. Create `python_client/src/ai_stack/integrations/openhands/adapter.py`.
+1. Create `python_client/src/ai_stack/integrations/adapters/openhands/adapter.py`.
 2. Add typed payloads in `types.py`.
 3. Add registry + contract tests.
 4. Add mocked smoke tests and failure mapping tests.

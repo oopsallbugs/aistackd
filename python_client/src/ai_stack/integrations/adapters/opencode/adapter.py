@@ -13,7 +13,7 @@ from ai_stack.integrations.core.types import (
     IntegrationSmokeResult,
     IntegrationValidationResult,
 )
-from ai_stack.integrations.opencode.types import (
+from ai_stack.integrations.adapters.opencode.types import (
     OpenCodeModelEntry,
     OpenCodeModelLimit,
     OpenCodeProvider,

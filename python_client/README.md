@@ -18,6 +18,7 @@ Configured in `python_client/pyproject.toml`:
 - `download-model = ai_stack.cli:download_model_cli`
 - `check-deps = ai_stack.cli:check_deps_cli`
 - `uninstall-stack = ai_stack.cli:uninstall_cli`
+- `sync-opencode-config = ai_stack.cli:sync_opencode_config_cli`
 
 ## Usage Examples
 ```bash
@@ -48,14 +49,14 @@ uninstall-stack --yes --models
 - `ai_stack/integrations/`: Phase D adapter contracts + built-in adapters (`opencode`, `tools`).
 
 ## Integrations (API-first)
-Phase D integrations are exposed through Python API (no integration CLI commands yet):
+Phase D integrations are exposed through Python API with intentional sync CLI commands:
 
 ```python
 from ai_stack.integrations import (
     build_integration_context,
     get_adapter,
     register_default_adapters,
-    sync_opencode_project_config,
+    sync_opencode_global_config,
 )
 
 register_default_adapters()
@@ -66,9 +67,13 @@ validation = opencode.validate(context)
 runtime = opencode.build_runtime_config(context)
 smoke = opencode.smoke_test(context)
 
-# Export project-local opencode.json with local llama.cpp provider/models.
-written = sync_opencode_project_config()
-print(written)
+# Sync global opencode config intentionally.
+result = sync_opencode_global_config(sync_tools=True, sync_agents=True, dry_run=True)
+print(result.path)
+```
+
+```bash
+sync-opencode-config --sync-tools --sync-agents --dry-run --print
 ```
 
 ## Runtime Data

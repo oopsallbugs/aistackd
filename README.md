@@ -30,6 +30,7 @@ server-status
 - `server-stop`: stop managed detached server.
 - `check-deps`: print dependency readiness.
 - `uninstall-stack`: remove repo-local runtime artifacts.
+- `sync-opencode-config`: intentionally sync global OpenCode config from ai-stack runtime.
 
 ## Runtime State Paths
 - Models and manifest: `./models/`
@@ -47,14 +48,14 @@ server-status
 - Integrations API: `ai_stack.integrations`
 
 ## Integrations API (Phase D)
-Phase D is API-first for integrations (no new integration CLI commands yet).
+Phase D integrations are API-first with explicit sync commands where needed.
 
 ```python
 from ai_stack.integrations import (
     build_integration_context,
     get_adapter,
     register_default_adapters,
-    sync_opencode_project_config,
+    sync_opencode_global_config,
 )
 
 register_default_adapters()
@@ -65,9 +66,14 @@ validation = adapter.validate(context)
 runtime = adapter.build_runtime_config(context)
 smoke = adapter.smoke_test(context)
 
-# Write ./opencode.json so `opencode` can discover local provider/models.
-written = sync_opencode_project_config()
-print(written)
+# Sync global opencode config intentionally.
+result = sync_opencode_global_config(sync_tools=True, sync_agents=True, dry_run=True)
+print(result.path)
+```
+
+CLI equivalent:
+```bash
+sync-opencode-config --sync-tools --sync-agents --dry-run --print
 ```
 
 Built-in Phase D adapters:
