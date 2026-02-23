@@ -47,6 +47,12 @@ server-status
 - LLM client facade: `ai_stack.llm`
 - Integrations API: `ai_stack.integrations`
 
+## Integrations Layout
+- `ai_stack.integrations.core`: contracts, protocol, typed errors, adapter registry.
+- `ai_stack.integrations.adapters`: runtime adapter implementations (for example OpenCode and tools).
+- `ai_stack.integrations.frontends`: frontend sync/export flows (for example OpenCode config sync).
+- `ai_stack.integrations.shared`: canonical shared tool/agent catalogs mapped by frontends.
+
 ## Integrations API (Phase D)
 Phase D integrations are API-first with explicit sync commands where needed.
 

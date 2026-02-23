@@ -58,10 +58,13 @@
   - Runtime helpers: `server_runtime.py`, shared formatting helpers in `main.py`
 - `python_client/src/ai_stack/integrations/`
   - `core/`: integration contracts, protocol, typed errors, adapter registry
-  - `opencode/`: first concrete runtime adapter
+  - `adapters/`: runtime adapter implementations
+    - `adapters/opencode/`: OpenCode runtime adapter + adapter-local typed payloads
+    - `adapters/tools/`: tools runtime adapters + read-only filesystem reference adapter
+    - `adapters/openhands/`: future OpenHands adapter
+  - `frontends/`: external-client sync/export flows
+    - `frontends/opencode/sync.py`: global config sync helpers
   - `shared/`: canonical shared assets for tools/agents and cross-frontend mapping
-  - `tools/`: tool adapter contract + read-only filesystem reference adapter
-  - `openhands/README.md`: docs-only implementation spec (runtime deferred)
 
 ## CLI DI Boundary
 - Rule: command modules should receive dependencies via injected callables/protocols.

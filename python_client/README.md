@@ -46,7 +46,11 @@ uninstall-stack --yes --models
 - `ai_stack/stack/`: orchestration manager and HF download orchestration.
 - `ai_stack/cli/`: CLI wrappers, command modules, and shared runtime helpers.
 - `ai_stack/llm.py`: local LLM client facade for llama.cpp-compatible API.
-- `ai_stack/integrations/`: Phase D adapter contracts + built-in adapters (`opencode`, `tools`).
+- `ai_stack/integrations/`:
+  - `core/`: integration contracts, protocol, typed errors, adapter registry.
+  - `adapters/`: runtime adapter implementations (`opencode`, `tools`, and docs-only `openhands` placeholder).
+  - `frontends/`: external-client sync/export flows (`frontends/opencode/sync.py`).
+  - `shared/`: canonical shared tools/agents catalogs for frontend sync composition.
 
 ## Integrations (API-first)
 Phase D integrations are exposed through Python API with intentional sync CLI commands:
