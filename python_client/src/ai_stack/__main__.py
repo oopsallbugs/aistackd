@@ -24,13 +24,13 @@ def main(argv=None):
     parser.add_argument(
         "command",
         choices=[
-            "setup",
+            "setup-stack",
             "server-start",
             "server-status",
             "server-stop",
             "download-model",
             "check-deps",
-            "uninstall",
+            "uninstall-stack",
         ],
         help="Command to run",
     )
@@ -38,17 +38,17 @@ def main(argv=None):
     parsed = parser.parse_args(argv)
 
     command_map = {
-        "setup": setup_cli,
+        "setup-stack": setup_cli,
         "server-start": start_server_cli,
         "server-status": status_cli,
         "server-stop": stop_server_cli,
         "download-model": download_model_cli,
         "check-deps": check_deps_cli,
-        "uninstall": uninstall_cli,
+        "uninstall-stack": uninstall_cli,
     }
 
     fn = command_map[parsed.command]
-    if parsed.command in {"server-stop", "uninstall"}:
+    if parsed.command in {"server-stop", "uninstall-stack", "uninstall"}:
         return fn(parsed.args)
 
     old_argv = sys.argv

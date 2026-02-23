@@ -6,7 +6,7 @@
 | Phase A | Complete | Layered architecture, manifest ownership, HF transport/resolver split |
 | Phase B | Complete | HF snapshot cache, quant-aware resolver, metadata derivation, URL normalization |
 | Phase C | Complete | Hardening: reliability, observability, UX, and performance |
-| Phase D | Next | Integrations: OpenCode/OpenHands/RAG/tools |
+| Phase D | Active | Integration contracts + first adapters (API-first) |
 
 ## Phase A (Done)
 - Manifest introduced and owned by `ModelRegistry`.
@@ -28,32 +28,53 @@
   - `HfFileListResult`
   - `HfDownloadResult`
 
-## Phase C (Complete)
-- Done:
-  - Structured logging and event taxonomy across setup/download/server lifecycle.
-  - Retry/backoff for transient HF operations (`SHA`, snapshot fetch, file download).
-  - Progress UX checkpoints for long-running setup/download flows.
-  - Reliability hardening:
-    - wrapper-level safe error boundaries for CLI commands
-    - recovery-path and compatibility test expansion
-  - LLM placement cleanup:
-    - `ai_stack.llm` remains stable facade
-    - implementation moved to `ai_stack/llama/client.py`
-  - Safe bounded parallelism for download performance:
-    - `AI_STACK_HF_MAX_WORKERS` (bounded)
-    - deterministic parallel failure ordering
-    - serialized registry writes
-    - diagnostics visibility (`workers`, `elapsed_s`)
+## Phase C (Done)
+- Structured logging and event taxonomy across setup/download/server lifecycle.
+- Retry/backoff for transient HF operations (`SHA`, snapshot fetch, file download).
+- Progress UX checkpoints for long-running setup/download flows.
+- Reliability hardening:
+  - wrapper-level safe error boundaries for CLI commands
+  - recovery-path and compatibility test expansion
+- LLM placement cleanup:
+  - `ai_stack.llm` remains stable facade
+  - implementation moved to `ai_stack/llama/client.py`
+- Safe bounded parallelism for download performance:
+  - `AI_STACK_HF_MAX_WORKERS` (bounded)
+  - deterministic parallel failure ordering
+  - serialized registry writes
+  - diagnostics visibility (`workers`, `elapsed_s`)
 
-Phase C is now complete. Next execution focus shifts to Phase D integration scaffolding.
+## Phase D (Active, API-First)
+Milestone D1 (Complete):
+- Integration core contracts added under `ai_stack.integrations.core`:
+  - typed context/result dataclasses
+  - `IntegrationAdapter` protocol
+  - typed integration errors
+  - in-memory adapter registry
+- OpenCode adapter implemented (`ai_stack.integrations.opencode.adapter`).
+- Integration core + OpenCode tests added.
 
-## Phase D (Planned)
-- OpenCode integration.
-- OpenHands integration.
-- RAG workflows and tool runtime integration.
-- Model tiering/runtime policy.
+Milestone D2 (Complete):
+- Tools contract and reference read-only filesystem adapter implemented:
+  - `ReadOnlyFilesystemToolAdapter`
+  - path boundary enforcement and read-only mutation guards
+- Tools adapter tests added.
 
-Note: placeholder directories under `python_client/src` (`opencode`, `openhands`, `rag`, `tools`) are intentional and currently out of active implementation scope.
+Milestone D3 (Complete, docs-only):
+- OpenHands integration spec added at `ai_stack/integrations/openhands/README.md`.
+- Runtime implementation intentionally deferred.
+
+Milestone D4 (Complete):
+- Phase D docs set added/updated:
+  - `docs/phase-d-plan.md`
+  - `docs/phase-d-exit-report.md` (template)
+  - architecture/roadmap updates for integration boundaries.
+
+Deferred beyond current Phase D scope:
+- RAG implementation.
+- Model tiering/runtime policy engine.
+- OpenHands runtime adapter implementation.
+- Integration-specific CLI commands (Phase D remains Python API-first).
 
 ## Non-Negotiable Architecture Rules
 - Registry owns manifest.

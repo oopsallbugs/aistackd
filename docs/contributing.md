@@ -20,6 +20,16 @@
 - Wrapper modules (`ai_stack/cli/*.py`) own wiring/injection.
 - If a command needs shared wiring, add helper modules instead of cross-importing command implementations.
 
+## Integration Boundary Rules
+- `ai_stack.integrations` is adapter-only and API-first in current scope.
+- Runtime layers (`core`, `llama`, `huggingface`, `models`, `stack`, `cli`) must not import integration modules.
+- Integration adapters must not import or mutate:
+  - `ai_stack.stack.manager`
+  - `ai_stack.stack.hf_downloads`
+  - `ai_stack.models.registry`
+  - `ai_stack.huggingface.*`
+- Prefer public facades (`ai_stack.core.config`, `ai_stack.llm`) when integration runtime context is needed.
+
 ## Schema Changes
 If you modify manifest or cache structure:
 1. Increment `schema_version`.

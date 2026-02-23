@@ -44,9 +44,39 @@ server-status
 - Orchestration manager: `ai_stack.stack.manager`
 - CLI exports: `ai_stack.cli`
 - LLM client facade: `ai_stack.llm`
+- Integrations API: `ai_stack.integrations`
+
+## Integrations API (Phase D)
+Phase D is API-first for integrations (no new integration CLI commands yet).
+
+```python
+from ai_stack.integrations import (
+    build_integration_context,
+    get_adapter,
+    register_default_adapters,
+    sync_opencode_project_config,
+)
+
+register_default_adapters()
+context = build_integration_context()
+
+adapter = get_adapter("opencode")
+validation = adapter.validate(context)
+runtime = adapter.build_runtime_config(context)
+smoke = adapter.smoke_test(context)
+
+# Write ./opencode.json so `opencode` can discover local provider/models.
+written = sync_opencode_project_config()
+print(written)
+```
+
+Built-in Phase D adapters:
+- `opencode`
+- `tools.readonly_filesystem`
 
 ## Architecture + Specs
 - `docs/architecture.md`
 - `docs/roadmap.md`
 - `docs/hf-cache-spec.md`
 - `docs/resolver-spec.md`
+- `docs/phase-d-plan.md`

@@ -45,6 +45,31 @@ uninstall-stack --yes --models
 - `ai_stack/stack/`: orchestration manager and HF download orchestration.
 - `ai_stack/cli/`: CLI wrappers, command modules, and shared runtime helpers.
 - `ai_stack/llm.py`: local LLM client facade for llama.cpp-compatible API.
+- `ai_stack/integrations/`: Phase D adapter contracts + built-in adapters (`opencode`, `tools`).
+
+## Integrations (API-first)
+Phase D integrations are exposed through Python API (no integration CLI commands yet):
+
+```python
+from ai_stack.integrations import (
+    build_integration_context,
+    get_adapter,
+    register_default_adapters,
+    sync_opencode_project_config,
+)
+
+register_default_adapters()
+context = build_integration_context()
+
+opencode = get_adapter("opencode")
+validation = opencode.validate(context)
+runtime = opencode.build_runtime_config(context)
+smoke = opencode.smoke_test(context)
+
+# Export project-local opencode.json with local llama.cpp provider/models.
+written = sync_opencode_project_config()
+print(written)
+```
 
 ## Runtime Data
 - Manifest: `project_root/models/manifest.json`
