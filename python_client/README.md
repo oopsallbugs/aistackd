@@ -52,6 +52,22 @@ uninstall-stack --yes --models
   - `frontends/`: external-client sync/export flows (`frontends/opencode/sync.py`).
   - `shared/`: canonical shared tools/agents catalogs for frontend sync composition.
 
+## Skills Catalog (Optional, Maintainer Workflow)
+Repo-hosted agent skills live at repo root in `skills/`:
+- `skills/ai-stack-runtime-setup/SKILL.md`
+- `skills/ai-stack-model-operations/SKILL.md`
+- `skills/ai-stack-opencode-sync/SKILL.md`
+
+Install locally for Codex:
+```bash
+npx skills add ./skills/ai-stack-runtime-setup --agent codex
+npx skills add ./skills/ai-stack-model-operations --agent codex
+npx skills add ./skills/ai-stack-opencode-sync --agent codex
+```
+
+Static catalog checks are enforced by:
+- `python_client/tests/test_skills_catalog.py`
+
 ## Integrations (API-first)
 Phase D integrations are exposed through Python API with intentional sync CLI commands:
 

@@ -73,6 +73,15 @@ Milestone D4 (Complete):
   - `sync-opencode-config`
   - `python -m ai_stack sync-opencode-config`
 
+Milestone D5 (Complete, Codex-first skills catalog):
+- Added in-repo skills catalog at `skills/`:
+  - `skills/ai-stack-runtime-setup/SKILL.md`
+  - `skills/ai-stack-model-operations/SKILL.md`
+  - `skills/ai-stack-opencode-sync/SKILL.md`
+- Added static validation tests:
+  - `python_client/tests/test_skills_catalog.py`
+- Added installation and verification docs for `skills.sh` local usage (`npx skills add ... --agent codex`).
+
 Deferred beyond current Phase D scope:
 - RAG implementation.
 - Model tiering/runtime policy engine.

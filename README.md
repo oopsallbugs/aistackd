@@ -32,6 +32,30 @@ server-status
 - `uninstall-stack`: remove repo-local runtime artifacts.
 - `sync-opencode-config`: intentionally sync global OpenCode config from ai-stack runtime.
 
+## Agent Skills (Optional, Codex-First)
+This repo now ships a local skills catalog under `skills/` for use with `skills.sh`. https://skills.sh/
+
+Install from repo root:
+```bash
+npx skills add ./skills/ai-stack-runtime-setup --agent codex
+npx skills add ./skills/ai-stack-model-operations --agent codex
+npx skills add ./skills/ai-stack-opencode-sync --agent codex
+```
+
+Install from a repo URL:
+```bash
+npx skills add <repo_or_path>/skills/ai-stack-runtime-setup --agent codex
+```
+
+Manual verification checklist:
+1. Confirm skill install location contains the new folders:
+   - `ls ~/.codex/skills`
+2. Execute one workflow from each installed skill:
+   - runtime setup skill: `check-deps` or `setup-stack`
+   - model operations skill: `download-model <namespace/repo> --list --cache-diagnostics`
+   - opencode sync skill: `sync-opencode-config --sync-tools --sync-agents --dry-run --print`
+3. Confirm no runtime behavior changed; these skills are procedural guidance only.
+
 ## Runtime State Paths
 - Models and manifest: `./models/`
 - HF snapshot cache: `./.ai_stack/huggingface/cache.json`

@@ -49,6 +49,16 @@ Whenever module layout, command behavior, or architecture boundaries change:
 2. Update `docs/architecture.md` module map and boundary notes.
 3. Update user-facing command examples in `README.md` and `python_client/README.md`.
 
+## Skills Catalog Maintenance
+- Repo-hosted skills live under `skills/*/SKILL.md` at repo root.
+- Keep every skill frontmatter valid with required keys:
+  - `name`
+  - `description`
+- Keep commands copy-pastable and aligned with current CLI behavior.
+- Update relevant skills whenever command semantics change (for example setup, download, sync flows).
+- Keep failure triage and boundaries current with architecture rules.
+- Validate with `python_client/tests/test_skills_catalog.py` in every PR that changes `skills/`.
+
 ## Quality Bar
 - Maintain or improve tests for changed behavior.
 - Prefer typed dataclasses/protocols for cross-module contracts.
