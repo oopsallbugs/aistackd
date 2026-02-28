@@ -52,6 +52,7 @@ download-model = "ai_stack.cli:download_model_cli"
 check-deps = "ai_stack.cli:check_deps_cli"
 uninstall-stack = "ai_stack.cli:uninstall_cli"
 sync-opencode-config = "ai_stack.cli:sync_opencode_config_cli"
+sync-openhands-config = "ai_stack.cli:sync_openhands_config_cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

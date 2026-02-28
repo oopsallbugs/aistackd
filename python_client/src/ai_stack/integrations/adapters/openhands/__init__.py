@@ -1,3 +1,6 @@
-"""OpenHands adapter placeholder (docs/spec only in Phase D)."""
+"""OpenHands runtime adapter exports."""
 
-__all__ = []
+from ai_stack.integrations.adapters.openhands.adapter import OpenHandsAdapter
+from ai_stack.integrations.adapters.openhands.types import OpenHandsRuntimeValues
+
+__all__ = ["OpenHandsAdapter", "OpenHandsRuntimeValues"]

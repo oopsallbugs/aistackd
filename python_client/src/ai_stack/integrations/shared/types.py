@@ -24,4 +24,15 @@ class SharedAgentSpec:
     config: Dict[str, Any] = field(default_factory=dict)
 
 
-__all__ = ["SharedAgentSpec", "SharedToolSpec"]
+@dataclass(frozen=True)
+class SharedSkillSpec:
+    """Shared skill spec that frontend adapters map to target skill formats."""
+
+    key: str
+    name: str
+    description: str
+    content: str
+    config: Dict[str, Any] = field(default_factory=dict)
+
+
+__all__ = ["SharedAgentSpec", "SharedSkillSpec", "SharedToolSpec"]

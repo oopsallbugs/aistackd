@@ -10,7 +10,7 @@ from ai_stack.core.config import config
 from ai_stack.stack.manager import SetupManager
 
 from .download import download_model_cli
-from .integrations import sync_opencode_config_cli
+from .integrations import sync_openhands_config_cli, sync_opencode_config_cli
 from .server import (
     _clear_server_pid,
     _is_process_running,
@@ -33,6 +33,7 @@ __all__ = [
     "config",
     "download_model_cli",
     "setup_cli",
+    "sync_openhands_config_cli",
     "sync_opencode_config_cli",
     "start_server_cli",
     "status_cli",

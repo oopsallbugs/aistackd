@@ -7,8 +7,16 @@ from typing import Dict
 from ai_stack.integrations.shared.types import SharedAgentSpec
 
 
-# Populate this map with curated shared agent specs.
-DEFAULT_SHARED_AGENTS: Dict[str, SharedAgentSpec] = {}
+DEFAULT_SHARED_AGENTS: Dict[str, SharedAgentSpec] = {
+    "general-code-assistant": SharedAgentSpec(
+        key="general-code-assistant",
+        name="General Code Assistant",
+        config={
+            "mode": "balanced",
+            "read_only": False,
+        },
+    ),
+}
 
 
 def load_shared_agents() -> Dict[str, SharedAgentSpec]:

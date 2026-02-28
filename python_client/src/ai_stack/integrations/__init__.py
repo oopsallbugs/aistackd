@@ -21,10 +21,15 @@ from ai_stack.integrations.core import (
     register_adapter,
 )
 from ai_stack.integrations.adapters.opencode import OpenCodeAdapter
+from ai_stack.integrations.adapters.openhands import OpenHandsAdapter
 from ai_stack.integrations.adapters.tools import ReadOnlyFilesystemToolAdapter
 from ai_stack.integrations.frontends.opencode import (
     OpenCodeSyncResult,
     sync_opencode_global_config_with_defaults,
+)
+from ai_stack.integrations.frontends.openhands import (
+    OpenHandsSyncResult,
+    sync_openhands_global_config_with_defaults,
 )
 from ai_stack.llm import create_client
 
@@ -45,6 +50,9 @@ def register_default_adapters() -> None:
 
     if OpenCodeAdapter.name not in existing:
         register_adapter(OpenCodeAdapter())
+
+    if OpenHandsAdapter.name not in existing:
+        register_adapter(OpenHandsAdapter())
 
     if ReadOnlyFilesystemToolAdapter.name not in existing:
         register_adapter(ReadOnlyFilesystemToolAdapter())
@@ -70,6 +78,8 @@ def sync_opencode_global_config(
     global_path: Path | None = None,
     sync_tools: bool = False,
     sync_agents: bool = False,
+    sync_skills: bool = False,
+    skills_dir: Path | None = None,
     dry_run: bool = False,
 ) -> OpenCodeSyncResult:
     """Generate/refresh global opencode config from current ai-stack runtime."""
@@ -79,6 +89,34 @@ def sync_opencode_global_config(
         global_path=global_path,
         sync_tools=sync_tools,
         sync_agents=sync_agents,
+        sync_skills=sync_skills,
+        skills_dir=skills_dir,
+        dry_run=dry_run,
+    )
+
+
+def sync_openhands_global_config(
+    *,
+    global_path: Path | None = None,
+    mcp_json_path: Path | None = None,
+    skills_dir: Path | None = None,
+    sync_tools: bool = False,
+    sync_agents: bool = False,
+    sync_skills: bool = False,
+    emit_mcp_json: bool = False,
+    dry_run: bool = False,
+) -> OpenHandsSyncResult:
+    """Generate/refresh global OpenHands config from ai-stack runtime."""
+    register_default_adapters()
+    return sync_openhands_global_config_with_defaults(
+        build_context=build_integration_context,
+        global_path=global_path,
+        mcp_json_path=mcp_json_path,
+        skills_dir=skills_dir,
+        sync_tools=sync_tools,
+        sync_agents=sync_agents,
+        sync_skills=sync_skills,
+        emit_mcp_json=emit_mcp_json,
         dry_run=dry_run,
     )
 
@@ -94,6 +132,8 @@ __all__ = [
     "IntegrationRuntimeConfig",
     "IntegrationSmokeResult",
     "IntegrationValidationResult",
+    "OpenHandsAdapter",
+    "OpenHandsSyncResult",
     "OpenCodeAdapter",
     "OpenCodeSyncResult",
     "ReadOnlyFilesystemToolAdapter",
@@ -102,6 +142,7 @@ __all__ = [
     "list_adapters",
     "register_adapter",
     "register_default_adapters",
+    "sync_openhands_global_config",
     "sync_opencode_global_config",
     "sync_opencode_project_config",
 ]

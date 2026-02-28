@@ -1,6 +1,6 @@
-# OpenHands Adapter Spec (Phase D)
+# OpenHands Adapter Notes (Phase D)
 
-Status: docs/spec only (no runtime implementation in Phase D).
+Status: implemented in `adapter.py` and `types.py`; keep this file as behavior notes and future extension checklist.
 
 ## Required Adapter Contract
 Any future OpenHands adapter must implement the integration protocol:
@@ -28,9 +28,7 @@ The first OpenHands adapter implementation should emit at least:
 - Lightweight completion/chat probe succeeds using configured model.
 - Adapter returns deterministic pass/fail detail string for diagnostics.
 
-## Implementation Checklist (Deferred)
-1. Create `python_client/src/ai_stack/integrations/adapters/openhands/adapter.py`.
-2. Add typed payloads in `types.py`.
-3. Add registry + contract tests.
-4. Add mocked smoke tests and failure mapping tests.
-5. Add docs examples and handoff notes.
+## Follow-up Checklist
+1. Expand OpenHands-specific runtime payload coverage as upstream format evolves.
+2. Add richer agent/skill mapping scenarios for integration tests.
+3. Add docs examples and handoff notes for advanced OpenHands workflows.

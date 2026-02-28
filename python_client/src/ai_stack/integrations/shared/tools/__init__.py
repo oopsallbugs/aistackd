@@ -7,8 +7,17 @@ from typing import Dict
 from ai_stack.integrations.shared.types import SharedToolSpec
 
 
-# Populate this map with curated shared tool specs.
-DEFAULT_SHARED_TOOLS: Dict[str, SharedToolSpec] = {}
+DEFAULT_SHARED_TOOLS: Dict[str, SharedToolSpec] = {
+    "repo-readonly-files": SharedToolSpec(
+        key="repo-readonly-files",
+        name="Repository Read-Only Files",
+        config={
+            "type": "filesystem",
+            "read_only": True,
+            "root_scope": "project_root",
+        },
+    ),
+}
 
 
 def load_shared_tools() -> Dict[str, SharedToolSpec]:
