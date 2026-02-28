@@ -60,9 +60,12 @@ Milestone D2 (Complete):
   - path boundary enforcement and read-only mutation guards
 - Tools adapter tests added.
 
-Milestone D3 (Complete, docs-only):
-- OpenHands integration spec added at `ai_stack/integrations/adapters/openhands/README.md`.
-- Runtime implementation intentionally deferred.
+Milestone D3 (Complete):
+- OpenHands runtime adapter implemented (`ai_stack.integrations.adapters.openhands.adapter`).
+- OpenHands sync frontend implemented (`ai_stack.integrations.frontends.openhands.sync`).
+- Added intentional OpenHands sync command surface:
+  - `sync-openhands-config`
+  - `python -m ai_stack sync-openhands-config`
 
 Milestone D4 (Complete):
 - Phase D docs set added/updated:
@@ -82,11 +85,37 @@ Milestone D5 (Complete, Codex-first skills catalog):
   - `python_client/tests/test_skills_catalog.py`
 - Added installation and verification docs for `skills.sh` local usage (`npx skills add ... --agent codex`).
 
+Milestone D6 (Complete, hardening + expansion):
+- Skills hardening checks expanded in `python_client/tests/test_skills_catalog.py`:
+  - required section enforcement
+  - command snippet presence
+  - placeholder token rejection
+- Added shared skills catalog support:
+  - `ai_stack.integrations.shared.skills`
+  - `SharedSkillSpec`
+- Seeded starter catalogs for tools, agents, and skills.
+- Added OpenHands sync capabilities:
+  - `--sync-tools`
+  - `--sync-agents`
+  - `--sync-skills`
+  - `--emit-mcp-json`
+
+Milestone D7 (Complete, OpenCode managed skills sync):
+- Replaced OpenCode `--sync-skills` source with repo-managed skills catalog loader:
+  - `python_client/src/ai_stack/integrations/frontends/opencode/skills_catalog.py`
+- Managed OpenCode sync skill set is now:
+  - `ai-stack-runtime-setup`
+  - `ai-stack-model-operations`
+  - `ai-stack-opencode-sync`
+  - `find-skills` (vendored pinned snapshot)
+- Added refresh workflow documentation:
+  - `docs/skills-refresh.md`
+- OpenCode sync keeps non-destructive behavior for unrelated user skill folders.
+
 Deferred beyond current Phase D scope:
 - RAG implementation.
 - Model tiering/runtime policy engine.
-- OpenHands runtime adapter implementation.
-- Multi-frontend sync wrappers (for example future `sync-openhands-config`).
+- Generic multi-frontend sync orchestration command.
 
 ## Non-Negotiable Architecture Rules
 - Registry owns manifest.

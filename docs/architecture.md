@@ -31,7 +31,7 @@
    - `build_runtime_config(context)` for integration payload generation.
    - optional `smoke_test(context)` for lightweight probe verification.
 5. Integration layer emits typed results and typed integration errors only; it does not mutate manifest/cache or setup orchestration state.
-6. Intentional sync commands (for example `sync-opencode-config`) are invoked via CLI wrappers and update integration config files only.
+6. Intentional sync commands (for example `sync-opencode-config`, `sync-openhands-config`) are invoked via CLI wrappers and update integration config files only.
 
 ## Practical Module Map
 - `python_client/src/ai_stack/core/`
@@ -61,10 +61,11 @@
   - `adapters/`: runtime adapter implementations
     - `adapters/opencode/`: OpenCode runtime adapter + adapter-local typed payloads
     - `adapters/tools/`: tools runtime adapters + read-only filesystem reference adapter
-    - `adapters/openhands/`: future OpenHands adapter
+    - `adapters/openhands/`: OpenHands runtime adapter + typed payloads
   - `frontends/`: external-client sync/export flows
     - `frontends/opencode/sync.py`: global config sync helpers
-  - `shared/`: canonical shared assets for tools/agents and cross-frontend mapping
+    - `frontends/openhands/sync.py`: global OpenHands config sync helpers (TOML + optional MCP JSON + skills)
+  - `shared/`: canonical shared assets for tools/agents/skills and cross-frontend mapping
 
 ## CLI DI Boundary
 - Rule: command modules should receive dependencies via injected callables/protocols.

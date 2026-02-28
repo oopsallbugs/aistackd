@@ -1,12 +1,12 @@
 ---
 name: ai-stack-opencode-sync
-description: Use this skill to intentionally sync ai-stack OpenCode configuration with dry-run validation and optional shared tools and agents merges.
+description: Use this skill to sync ai-stack OpenCode configuration with dry-run validation and optional shared tools and agents merges.
 ---
 
 # AI Stack OpenCode Sync
 
 ## Purpose
-Use this skill to run intentional OpenCode config sync from ai-stack runtime state without introducing implicit auto-sync behavior.
+Use this skill to run OpenCode config sync from ai-stack runtime state without introducing implicit auto-sync behavior.
 
 ## When To Use
 - User needs to refresh global OpenCode config from current ai-stack runtime.
@@ -19,16 +19,17 @@ Use this skill to run intentional OpenCode config sync from ai-stack runtime sta
 - Required files are present:
   - `python_client/src/ai_stack/cli/integrations.py`
   - `python_client/src/ai_stack/integrations/frontends/opencode/sync.py`
+  - `python_client/src/ai_stack/integrations/frontends/opencode/skills_catalog.py`
   - `python_client/src/ai_stack/integrations/shared/tools/__init__.py`
   - `python_client/src/ai_stack/integrations/shared/agents/__init__.py`
 
 ## Workflow
 1. Validate and preview output without writing:
-   - `sync-opencode-config --sync-tools --sync-agents --dry-run --print`
+   - `sync-opencode-config --sync-tools --sync-agents --sync-skills --dry-run --print`
 2. Write merged global config intentionally:
-   - `sync-opencode-config --sync-tools --sync-agents`
+   - `sync-opencode-config --sync-tools --sync-agents --sync-skills`
 3. Use custom target when needed:
-   - `sync-opencode-config --global-path ~/.config/opencode/opencode.json --dry-run --print`
+   - `sync-opencode-config --global-path ~/.config/opencode/opencode.json --sync-skills --dry-run --print`
 
 ## Failure Triage
 - Invalid existing JSON:

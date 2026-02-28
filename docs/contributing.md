@@ -51,13 +51,27 @@ Whenever module layout, command behavior, or architecture boundaries change:
 
 ## Skills Catalog Maintenance
 - Repo-hosted skills live under `skills/*/SKILL.md` at repo root.
+- OpenCode managed sync skill set is currently:
+  - `ai-stack-runtime-setup`
+  - `ai-stack-model-operations`
+  - `ai-stack-opencode-sync`
+  - `find-skills`
 - Keep every skill frontmatter valid with required keys:
   - `name`
   - `description`
+- Keep each skill document structured with required sections:
+  - `## Purpose`
+  - `## When To Use`
+  - `## Preconditions`
+  - `## Workflow`
+  - `## Failure Triage`
+  - `## Boundaries`
 - Keep commands copy-pastable and aligned with current CLI behavior.
 - Update relevant skills whenever command semantics change (for example setup, download, sync flows).
 - Keep failure triage and boundaries current with architecture rules.
 - Validate with `python_client/tests/test_skills_catalog.py` in every PR that changes `skills/`.
+- Refresh vendored external skills (for example `skills/find-skills/SKILL.md`) using:
+  - `docs/skills-refresh.md`
 
 ## Quality Bar
 - Maintain or improve tests for changed behavior.

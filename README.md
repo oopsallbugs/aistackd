@@ -30,7 +30,8 @@ server-status
 - `server-stop`: stop managed detached server.
 - `check-deps`: print dependency readiness.
 - `uninstall-stack`: remove repo-local runtime artifacts.
-- `sync-opencode-config`: intentionally sync global OpenCode config from ai-stack runtime.
+- `sync-opencode-config`: intentionally sync global OpenCode config from ai-stack runtime and managed skills.
+- `sync-openhands-config`: intentionally sync global OpenHands config from ai-stack runtime.
 
 ## Agent Skills (Optional, Codex-First)
 This repo now ships a local skills catalog under `skills/` for use with `skills.sh`. https://skills.sh/
@@ -40,6 +41,7 @@ Install from repo root:
 npx skills add ./skills/ai-stack-runtime-setup --agent codex
 npx skills add ./skills/ai-stack-model-operations --agent codex
 npx skills add ./skills/ai-stack-opencode-sync --agent codex
+npx skills add ./skills/find-skills --agent codex
 ```
 
 Install from a repo URL:
@@ -53,8 +55,17 @@ Manual verification checklist:
 2. Execute one workflow from each installed skill:
    - runtime setup skill: `check-deps` or `setup-stack`
    - model operations skill: `download-model <namespace/repo> --list --cache-diagnostics`
-   - opencode sync skill: `sync-opencode-config --sync-tools --sync-agents --dry-run --print`
+   - opencode sync skill: `sync-opencode-config --sync-tools --sync-agents --sync-skills --dry-run --print`
 3. Confirm no runtime behavior changed; these skills are procedural guidance only.
+
+Managed OpenCode skill sync:
+- `sync-opencode-config --sync-skills` writes these managed skills to `~/.config/opencode/skills/`:
+  - `ai-stack-runtime-setup`
+  - `ai-stack-model-operations`
+  - `ai-stack-opencode-sync`
+  - `find-skills`
+- This command can be run from any current working directory as long as `sync-opencode-config` is on your shell `PATH`.
+- Unrelated user-installed skill folders are preserved.
 
 ## Runtime State Paths
 - Models and manifest: `./models/`
@@ -101,13 +112,15 @@ result = sync_opencode_global_config(sync_tools=True, sync_agents=True, dry_run=
 print(result.path)
 ```
 
-CLI equivalent:
+CLI equivalents:
 ```bash
-sync-opencode-config --sync-tools --sync-agents --dry-run --print
+sync-opencode-config --sync-tools --sync-agents --sync-skills --dry-run --print
+sync-openhands-config --sync-tools --sync-agents --sync-skills --dry-run --print --emit-mcp-json
 ```
 
 Built-in Phase D adapters:
 - `opencode`
+- `openhands`
 - `tools.readonly_filesystem`
 
 ## Architecture + Specs
@@ -116,3 +129,4 @@ Built-in Phase D adapters:
 - `docs/hf-cache-spec.md`
 - `docs/resolver-spec.md`
 - `docs/phase-d-plan.md`
+- `docs/skills-refresh.md`

@@ -10,50 +10,81 @@ In scope:
 - Integration contracts and adapter registry.
 - OpenCode adapter implementation.
 - Tools contract and one concrete read-only adapter.
-- OpenHands adapter spec (docs-only, no runtime code).
+- OpenHands adapter implementation + sync command.
+- Skills hardening for repo-hosted skills catalog.
 - Integration tests and boundary tests.
 
 Out of scope:
 - RAG implementation.
 - Model tiering/runtime policy engine.
-- OpenHands runtime adapter implementation.
-- Broad multi-frontend sync wrappers.
+- Broad generic multi-frontend sync orchestration.
 
 ## Locked Decisions
 - Milestone shape: contracts + first concrete adapters.
 - Adapter API: typed dataclasses + Python `Protocol`.
 - Delivery strategy: Python API first.
 - First concrete integration: OpenCode.
-- OpenHands: docs/spec only in Phase D.
+- OpenHands: implemented in Phase D.
 - Tools: contracts + one read-only adapter.
 - RAG and model tiering: deferred.
 
 ## Milestones
 ### D1: Integration foundation + OpenCode
-Status: In progress.
+Status: Complete.
 - Added `ai_stack.integrations.core` types/protocol/registry/errors.
 - Added `OpenCodeAdapter`.
 - Added unit tests for registry and OpenCode behavior.
 - Added boundary tests for integration/runtime layer separation.
 
 ### D2: Tools contract + reference adapter
-Status: In progress.
+Status: Complete.
 - Added tools types and `ReadOnlyFilesystemToolAdapter`.
 - Added tests for read/list behavior, path traversal rejection, and read-only write denial.
 
-### D3: OpenHands docs/spec only
-Status: In progress.
-- Added `python_client/src/ai_stack/integrations/adapters/openhands/README.md` with:
-  - required contract methods
-  - expected runtime config keys
-  - validation/smoke criteria
-  - implementation checklist
+### D3: OpenHands runtime adapter + sync
+Status: Complete.
+- Added OpenHands runtime adapter:
+  - `python_client/src/ai_stack/integrations/adapters/openhands/adapter.py`
+  - `python_client/src/ai_stack/integrations/adapters/openhands/types.py`
+- Added OpenHands sync frontend:
+  - `python_client/src/ai_stack/integrations/frontends/openhands/sync.py`
+- Added OpenHands sync CLI command:
+  - `sync-openhands-config`
 
 ### D4: Docs closure set
-Status: Not started
+Status: Complete.
 - Updated `docs/architecture.md` with integration layer and boundary rules.
 - Updated `docs/roadmap.md` with Phase D milestone status.
 - Added `docs/phase-d-exit-report.md` template.
+
+### D5: In-repo skills catalog
+Status: Complete.
+- Added Codex-first skills under `skills/`.
+- Added `python_client/tests/test_skills_catalog.py`.
+- Added install and validation docs for `skills.sh`.
+
+### D6: Hardening + shared skills model
+Status: Complete.
+- Expanded skills hardening checks:
+  - required sections
+  - command snippet presence
+  - placeholder token checks
+- Added shared skills model and loader:
+  - `SharedSkillSpec`
+  - `ai_stack.integrations.shared.skills`
+- Seeded starter shared catalogs (tools, agents, skills).
+
+### D7: OpenCode managed skills sync reset
+Status: Complete.
+- Replaced OpenCode `--sync-skills` seed usage with repo-backed managed catalog loader:
+  - `ai_stack.integrations.frontends.opencode.skills_catalog`
+- Managed sync set:
+  - `ai-stack-runtime-setup`
+  - `ai-stack-model-operations`
+  - `ai-stack-opencode-sync`
+  - `find-skills` (vendored pinned snapshot)
+- Added maintenance workflow:
+  - `docs/skills-refresh.md`
 
 ## Core Adapter Lifecycle
 1. Build context (`IntegrationContext`) from runtime state.
@@ -67,7 +98,7 @@ Status: Not started
 - Integration contracts are typed and stable.
 - OpenCode adapter implemented and tested.
 - Tools contract + read-only adapter implemented and tested.
-- OpenHands has implementation-ready docs spec.
+- OpenHands adapter and sync command implemented and tested.
 - No architecture boundary violations introduced.
 - Existing public APIs remain stable (`ai_stack.llm`, existing CLI scripts).
 
@@ -83,5 +114,5 @@ Status: Not started
 1. Foundation contracts first.
 2. First concrete adapter second (OpenCode).
 3. Tools contract/reference adapter third.
-4. OpenHands runtime remains intentionally deferred.
-5. Multi-frontend wrapper commands deferred; targeted intentional command `sync-opencode-config` is in scope.
+4. OpenHands runtime and per-frontend sync commands are implemented (`sync-opencode-config`, `sync-openhands-config`).
+5. Generic multi-frontend orchestration remains deferred.

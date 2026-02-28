@@ -19,6 +19,7 @@ Configured in `python_client/pyproject.toml`:
 - `check-deps = ai_stack.cli:check_deps_cli`
 - `uninstall-stack = ai_stack.cli:uninstall_cli`
 - `sync-opencode-config = ai_stack.cli:sync_opencode_config_cli`
+- `sync-openhands-config = ai_stack.cli:sync_openhands_config_cli`
 
 ## Usage Examples
 ```bash
@@ -48,8 +49,8 @@ uninstall-stack --yes --models
 - `ai_stack/llm.py`: local LLM client facade for llama.cpp-compatible API.
 - `ai_stack/integrations/`:
   - `core/`: integration contracts, protocol, typed errors, adapter registry.
-  - `adapters/`: runtime adapter implementations (`opencode`, `tools`, and docs-only `openhands` placeholder).
-  - `frontends/`: external-client sync/export flows (`frontends/opencode/sync.py`).
+  - `adapters/`: runtime adapter implementations (`opencode`, `openhands`, `tools`).
+  - `frontends/`: external-client sync/export flows (`frontends/opencode/sync.py`, `frontends/openhands/sync.py`).
   - `shared/`: canonical shared tools/agents catalogs for frontend sync composition.
 
 ## Skills Catalog (Optional, Maintainer Workflow)
@@ -57,12 +58,14 @@ Repo-hosted agent skills live at repo root in `skills/`:
 - `skills/ai-stack-runtime-setup/SKILL.md`
 - `skills/ai-stack-model-operations/SKILL.md`
 - `skills/ai-stack-opencode-sync/SKILL.md`
+- `skills/find-skills/SKILL.md`
 
 Install locally for Codex:
 ```bash
 npx skills add ./skills/ai-stack-runtime-setup --agent codex
 npx skills add ./skills/ai-stack-model-operations --agent codex
 npx skills add ./skills/ai-stack-opencode-sync --agent codex
+npx skills add ./skills/find-skills --agent codex
 ```
 
 Static catalog checks are enforced by:
@@ -93,7 +96,8 @@ print(result.path)
 ```
 
 ```bash
-sync-opencode-config --sync-tools --sync-agents --dry-run --print
+sync-opencode-config --sync-tools --sync-agents --sync-skills --dry-run --print
+sync-openhands-config --sync-tools --sync-agents --sync-skills --dry-run --print --emit-mcp-json
 ```
 
 ## Runtime Data
