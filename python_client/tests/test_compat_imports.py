@@ -15,6 +15,7 @@ def test_compat_imports_still_work() -> None:
     assert callable(cli.download_model_cli)
     assert callable(cli.check_deps_cli)
     assert callable(cli.uninstall_cli)
+    assert callable(cli.sync_openhands_config_cli)
     assert callable(cli.sync_opencode_config_cli)
     assert hasattr(config, "paths")
     assert isinstance(SetupManager.__name__, str)
@@ -60,6 +61,21 @@ def test_python_module_dispatch_accepts_sync_opencode_config(monkeypatch) -> Non
     monkeypatch.setattr(ai_stack_main, "sync_opencode_config_cli", _fake_sync)
 
     rc = ai_stack_main.main(["sync-opencode-config", "--dry-run"])
+
+    assert rc == 0
+    assert called["argv"] == ["--dry-run"]
+
+
+def test_python_module_dispatch_accepts_sync_openhands_config(monkeypatch) -> None:
+    called = {}
+
+    def _fake_sync(argv):
+        called["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(ai_stack_main, "sync_openhands_config_cli", _fake_sync)
+
+    rc = ai_stack_main.main(["sync-openhands-config", "--dry-run"])
 
     assert rc == 0
     assert called["argv"] == ["--dry-run"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ EXPECTED_SKILLS = {
     "ai-stack-runtime-setup",
     "ai-stack-model-operations",
     "ai-stack-opencode-sync",
+    "find-skills",
 }
 
 
@@ -46,6 +48,35 @@ def _parse_required_frontmatter(text: str) -> dict[str, str]:
     return fields
 
 
+def _require_sections(text: str) -> None:
+    required = [
+        "## Purpose",
+        "## When To Use",
+        "## Preconditions",
+        "## Workflow",
+        "## Failure Triage",
+        "## Boundaries",
+    ]
+    for section in required:
+        if section not in text:
+            raise ValueError(f"missing required section: {section}")
+
+
+def _require_commands(text: str) -> None:
+    has_fenced_bash = "```bash" in text
+    has_inline_command = bool(re.search(r"`[^`\n]+`", text))
+    if not has_fenced_bash and not has_inline_command:
+        raise ValueError("skill must include at least one command snippet")
+
+
+def _forbid_placeholders(text: str) -> None:
+    placeholders = ("TODO", "TBD", "lorem ipsum")
+    lowered = text.lower()
+    for token in placeholders:
+        if token.lower() in lowered:
+            raise ValueError(f"placeholder token found: {token}")
+
+
 def test_expected_skill_files_exist() -> None:
     assert SKILLS_ROOT.exists(), "skills/ directory must exist at repo root"
     actual = {path.name for path in SKILLS_ROOT.iterdir() if path.is_dir()}
@@ -61,8 +92,28 @@ def test_skill_frontmatter_has_required_fields() -> None:
             continue
         skill_md = skill_dir / "SKILL.md"
         assert skill_md.exists(), f"missing SKILL.md in {skill_dir.name}"
-        fields = _parse_required_frontmatter(skill_md.read_text(encoding="utf-8"))
+        text = skill_md.read_text(encoding="utf-8")
+        fields = _parse_required_frontmatter(text)
         assert fields["name"] == skill_dir.name
+        _require_sections(text)
+        _require_commands(text)
+        _forbid_placeholders(text)
+
+
+def test_skills_include_expected_key_commands() -> None:
+    text_runtime = (SKILLS_ROOT / "ai-stack-runtime-setup" / "SKILL.md").read_text(encoding="utf-8")
+    assert "setup-stack" in text_runtime or "check-deps" in text_runtime
+
+    text_models = (SKILLS_ROOT / "ai-stack-model-operations" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "download-model" in text_models
+
+    text_sync = (SKILLS_ROOT / "ai-stack-opencode-sync" / "SKILL.md").read_text(encoding="utf-8")
+    assert "sync-opencode-config" in text_sync
+
+    text_find = (SKILLS_ROOT / "find-skills" / "SKILL.md").read_text(encoding="utf-8")
+    assert "npx skills add" in text_find
 
 
 def test_parse_frontmatter_missing_frontmatter_fails() -> None:
@@ -89,3 +140,18 @@ description:
 """
     with pytest.raises(ValueError, match="frontmatter field is empty: description"):
         _parse_required_frontmatter(text)
+
+
+def test_require_sections_fails_on_missing_section() -> None:
+    with pytest.raises(ValueError, match="missing required section"):
+        _require_sections("## Purpose\nx\n")
+
+
+def test_require_commands_fails_without_command_snippet() -> None:
+    with pytest.raises(ValueError, match="must include at least one command snippet"):
+        _require_commands("## Workflow\nNo commands here")
+
+
+def test_forbid_placeholders_fails() -> None:
+    with pytest.raises(ValueError, match="placeholder token found: TODO"):
+        _forbid_placeholders("TODO: fill in this skill")

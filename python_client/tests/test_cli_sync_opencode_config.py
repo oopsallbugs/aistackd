@@ -27,6 +27,7 @@ def test_sync_cli_dry_run_prints_payload_and_warnings(monkeypatch, capsys, tmp_p
             "--print",
             "--sync-tools",
             "--sync-agents",
+            "--sync-skills",
         ],
     )
 

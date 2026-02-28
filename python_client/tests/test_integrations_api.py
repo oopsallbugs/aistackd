@@ -38,7 +38,7 @@ def test_register_default_adapters_is_idempotent_and_protocol_compliant() -> Non
     integrations.register_default_adapters()
 
     names = list_adapters()
-    assert names == ["opencode", "tools.readonly_filesystem"]
+    assert names == ["opencode", "openhands", "tools.readonly_filesystem"]
 
     for name in names:
         assert isinstance(get_adapter(name), IntegrationAdapter)
@@ -89,6 +89,7 @@ def test_sync_opencode_global_config_delegates_to_sync_helper(monkeypatch, tmp_p
         global_path=tmp_path / "custom.json",
         sync_tools=True,
         sync_agents=True,
+        sync_skills=True,
         dry_run=True,
     )
 
@@ -96,4 +97,50 @@ def test_sync_opencode_global_config_delegates_to_sync_helper(monkeypatch, tmp_p
     assert called["global_path"] == tmp_path / "custom.json"
     assert called["sync_tools"] is True
     assert called["sync_agents"] is True
+    assert called["sync_skills"] is True
+    assert called["dry_run"] is True
+
+
+def test_sync_openhands_global_config_delegates_to_sync_helper(monkeypatch, tmp_path) -> None:
+    called = {}
+
+    class _Result:
+        config_path = tmp_path / "config.toml"
+        mcp_json_path = tmp_path / "mcp.json"
+        skills_dir = tmp_path / "skills"
+        written = False
+        warnings = []
+        validation_ok = True
+        validation_messages = []
+        config_payload = {}
+        mcp_payload = None
+        skills_written = []
+
+    def _fake_sync(**kwargs):
+        called.update(kwargs)
+        return _Result()
+
+    monkeypatch.setattr(integrations, "register_default_adapters", lambda: None)
+    monkeypatch.setattr(integrations, "build_integration_context", lambda: object())
+    monkeypatch.setattr(integrations, "sync_openhands_global_config_with_defaults", _fake_sync)
+
+    result = integrations.sync_openhands_global_config(
+        global_path=tmp_path / "config.toml",
+        mcp_json_path=tmp_path / "mcp.json",
+        skills_dir=tmp_path / "skills",
+        sync_tools=True,
+        sync_agents=True,
+        sync_skills=True,
+        emit_mcp_json=True,
+        dry_run=True,
+    )
+
+    assert result.config_path == tmp_path / "config.toml"
+    assert called["global_path"] == tmp_path / "config.toml"
+    assert called["mcp_json_path"] == tmp_path / "mcp.json"
+    assert called["skills_dir"] == tmp_path / "skills"
+    assert called["sync_tools"] is True
+    assert called["sync_agents"] is True
+    assert called["sync_skills"] is True
+    assert called["emit_mcp_json"] is True
     assert called["dry_run"] is True
