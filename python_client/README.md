@@ -60,13 +60,29 @@ Repo-hosted agent skills live at repo root in `skills/`:
 - `skills/ai-stack-opencode-sync/SKILL.md`
 - `skills/find-skills/SKILL.md`
 
-Install locally for Codex:
+Install locally for Codex (or other agents eg --agent opencode, --agent openhands etc):
 ```bash
 npx skills add ./skills/ai-stack-runtime-setup --agent codex
 npx skills add ./skills/ai-stack-model-operations --agent codex
 npx skills add ./skills/ai-stack-opencode-sync --agent codex
 npx skills add ./skills/find-skills --agent codex
 ```
+
+Install project-local for multiple frontends with one command:
+```bash
+npx skills add ./skills/find-skills --agent codex opencode openhands
+```
+
+Optional global install (only if needed):
+```bash
+npx skills add ./skills/find-skills --agent codex -g
+```
+`-g` is optional and only for global installs.
+
+Install path checks:
+- project-local Codex/OpenCode: `ls ./.agents/skills`
+- project-local OpenHands (if installed): `ls ./.openhands/skills`
+- global `-g` installs only: `ls ~/.codex/skills`
 
 Static catalog checks are enforced by:
 - `python_client/tests/test_skills_catalog.py`

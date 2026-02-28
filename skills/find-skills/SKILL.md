@@ -20,14 +20,34 @@ Use this skill to discover project-relevant skills on `skills.sh` and avoid bloa
 - Optional: OpenCode global skills sync has been run:
   - `sync-opencode-config --sync-skills`
 
+## Command Policy (Local-First)
+- Local-first recommendation order for install commands:
+  1. Project-local single-agent (default):
+     - `npx skills add <owner/repo@skill> --agent codex`
+  2. Project-local multi-frontend:
+     - `npx skills add <owner/repo@skill> --agent codex opencode openhands`
+  3. Optional global install (only when explicitly requested):
+     - `npx skills add <owner/repo@skill> --agent codex -g`
+- Do not recommend `-g` as the default path.
+- Warning: omitting `--agent` can install to many agents/frontends unintentionally.
+
 ## Workflow
 1. Inspect the published skill page:
    - `xdg-open https://skills.sh/vercel-labs/skills/find-skills`
-2. Install the skill for Codex usage:
+2. Install the skill for project-local Codex usage:
    - `npx skills add vercel-labs/skills/find-skills --agent codex`
-3. Verify installation:
+3. Verify project-local installation:
+   - `ls ./.agents/skills/find-skills`
+4. Optional: install for multiple frontends in one command:
+   - `npx skills add vercel-labs/skills/find-skills --agent codex opencode openhands`
+5. Verify multi-frontend project-local paths as needed:
+   - `ls ./.agents/skills/find-skills`
+   - `ls ./.openhands/skills/find-skills`
+6. Optional global install (only when explicitly requested):
+   - `npx skills add vercel-labs/skills/find-skills --agent codex -g`
+7. Verify global installation only for `-g` installs:
    - `ls ~/.codex/skills/find-skills`
-4. Use the installed skill to discover and shortlist project-relevant skills.
+8. Use the installed skill to discover and shortlist project-relevant skills.
 
 ## Failure Triage
 - `npx: command not found`:
@@ -35,7 +55,9 @@ Use this skill to discover project-relevant skills on `skills.sh` and avoid bloa
 - Install fails due to network:
   - retry on a stable network and verify skills.sh is reachable.
 - Skill installed but not recognized:
-  - restart the agent host process and re-check `~/.codex/skills/find-skills`.
+  - restart the agent host process and re-check the install target path:
+    - project-local: `./.agents/skills/find-skills` (or `./.openhands/skills/find-skills` for OpenHands)
+    - global (`-g` only): `~/.codex/skills/find-skills`
 
 ## Boundaries
 - Do not auto-install large bundles of skills globally.

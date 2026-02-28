@@ -33,16 +33,27 @@ server-status
 - `sync-opencode-config`: intentionally sync global OpenCode config from ai-stack runtime and managed skills.
 - `sync-openhands-config`: intentionally sync global OpenHands config from ai-stack runtime.
 
-## Agent Skills (Optional, Codex-First)
+## Agent Skills (Optional, Codex examples)
 This repo now ships a local skills catalog under `skills/` for use with `skills.sh`. https://skills.sh/
 
-Install from repo root:
+Install from repo root: Codex (or other agents via --agent opencode, --agent openhands etc):
 ```bash
 npx skills add ./skills/ai-stack-runtime-setup --agent codex
 npx skills add ./skills/ai-stack-model-operations --agent codex
 npx skills add ./skills/ai-stack-opencode-sync --agent codex
 npx skills add ./skills/find-skills --agent codex
 ```
+
+Install project-local for multiple frontends with one command:
+```bash
+npx skills add ./skills/find-skills --agent codex opencode openhands
+```
+
+Optional global install (only if you want user-level skills):
+```bash
+npx skills add ./skills/find-skills --agent codex -g
+```
+`-g` is optional and only for global installs.
 
 Install from a repo URL:
 ```bash
@@ -51,7 +62,9 @@ npx skills add <repo_or_path>/skills/ai-stack-runtime-setup --agent codex
 
 Manual verification checklist:
 1. Confirm skill install location contains the new folders:
-   - `ls ~/.codex/skills`
+   - project-local Codex/OpenCode: `ls ./.agents/skills`
+   - project-local OpenHands (if installed): `ls ./.openhands/skills`
+   - global `-g` installs only: `ls ~/.codex/skills`
 2. Execute one workflow from each installed skill:
    - runtime setup skill: `check-deps` or `setup-stack`
    - model operations skill: `download-model <namespace/repo> --list --cache-diagnostics`

@@ -114,6 +114,11 @@ def test_skills_include_expected_key_commands() -> None:
 
     text_find = (SKILLS_ROOT / "find-skills" / "SKILL.md").read_text(encoding="utf-8")
     assert "npx skills add" in text_find
+    assert "Local-first recommendation order" in text_find
+    assert "npx skills add <owner/repo@skill> --agent codex" in text_find
+    assert "npx skills add <owner/repo@skill> --agent codex opencode openhands" in text_find
+    assert "npx skills add <owner/repo@skill> --agent codex -g" in text_find
+    assert ".agents/skills" in text_find
 
 
 def test_parse_frontmatter_missing_frontmatter_fails() -> None:
