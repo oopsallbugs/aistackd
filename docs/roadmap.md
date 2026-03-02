@@ -6,7 +6,7 @@
 | Phase A | Complete | Layered architecture, manifest ownership, HF transport/resolver split |
 | Phase B | Complete | HF snapshot cache, quant-aware resolver, metadata derivation, URL normalization |
 | Phase C | Complete | Hardening: reliability, observability, UX, and performance |
-| Phase D | Active | Integration contracts + first adapters (API-first) |
+| Phase D | Complete | Integration contracts + first adapters (API-first) |
 
 ## Phase A (Done)
 - Manifest introduced and owned by `ModelRegistry`.
@@ -44,7 +44,7 @@
   - serialized registry writes
   - diagnostics visibility (`workers`, `elapsed_s`)
 
-## Phase D (Active, API-First)
+## Phase D (Complete, API-First)
 Milestone D1 (Complete):
 - Integration core contracts added under `ai_stack.integrations.core`:
   - typed context/result dataclasses
@@ -70,7 +70,7 @@ Milestone D3 (Complete):
 Milestone D4 (Complete):
 - Phase D docs set added/updated:
   - `docs/phase-d-plan.md`
-  - `docs/phase-d-exit-report.md` (template)
+  - `docs/phase-d-exit-report.md`
   - architecture/roadmap updates for integration boundaries.
 - Added intentional OpenCode sync command surface:
   - `sync-opencode-config`
@@ -112,7 +112,7 @@ Milestone D7 (Complete, OpenCode managed skills sync):
   - `docs/skills-refresh.md`
 - OpenCode sync keeps non-destructive behavior for unrelated user skill folders.
 
-Deferred beyond current Phase D scope:
+Deferred beyond Phase D scope (moved to next-phase planning):
 - RAG implementation.
 - Model tiering/runtime policy engine.
 - Generic multi-frontend sync orchestration command.

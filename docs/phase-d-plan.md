@@ -1,7 +1,7 @@
 # Phase D Plan
 
 Date: 2026-02-19
-Status: Active (current scoped milestone set implemented)
+Status: Complete (milestone set exited on 2026-03-02)
 
 ## Scope
 Phase D delivers an integration framework plus targeted first integrations while preserving current architecture boundaries and public API stability.
@@ -55,7 +55,8 @@ Status: Complete.
 Status: Complete.
 - Updated `docs/architecture.md` with integration layer and boundary rules.
 - Updated `docs/roadmap.md` with Phase D milestone status.
-- Added `docs/phase-d-exit-report.md` template.
+- Added `docs/phase-d-exit-report.md`.
+- Added intentional OpenCode sync command surface (`sync-opencode-config`).
 
 ### D5: In-repo skills catalog
 Status: Complete.
@@ -73,6 +74,11 @@ Status: Complete.
   - `SharedSkillSpec`
   - `ai_stack.integrations.shared.skills`
 - Seeded starter shared catalogs (tools, agents, skills).
+- Added OpenHands sync capability flags:
+  - `--sync-tools`
+  - `--sync-agents`
+  - `--sync-skills`
+  - `--emit-mcp-json`
 
 ### D7: OpenCode managed skills sync reset
 Status: Complete.
@@ -101,6 +107,11 @@ Status: Complete.
 - OpenHands adapter and sync command implemented and tested.
 - No architecture boundary violations introduced.
 - Existing public APIs remain stable (`ai_stack.llm`, existing CLI scripts).
+
+## Exit Decision
+- Phase D is complete for its scoped milestone set (D1-D7).
+- Deferred items remain explicitly deferred and are not regressions in Phase D delivery.
+- See `docs/phase-d-exit-report.md` for closure summary and follow-up direction.
 
 ## Risks and Mitigations
 - Risk: integration code absorbs orchestration concerns.
