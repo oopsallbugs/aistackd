@@ -1,13 +1,12 @@
 # AI Stack
 
-Local LLM orchestration for `llama.cpp` with Hugging Face model discovery/download.
+Local LLM orchestration for `llama.cpp` with an `llmfit`-first bootstrap flow.
 
 ## What It Does
-- Builds and runs `llama.cpp` for local inference.
-- Discovers GGUF files from Hugging Face via metadata APIs.
-- Selects model files with quant-aware resolver logic.
-- Tracks installed models in a manifest registry.
-- Caches HF snapshots in local runtime cache.
+- Installs a pinned `llmfit` release and detects hardware capability.
+- Builds pinned `llama.cpp` from source using mapped backend flags.
+- Selects and installs a recommended model via `llmfit`.
+- Verifies runtime health and persists bootstrap state for integrations.
 
 ## Quick Start
 ```bash
@@ -15,23 +14,27 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e python_client
 
-setup-stack
-download-model Qwen/Qwen2.5-7B-Instruct-GGUF --quant Q5_K_M
-download-model https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF --list --cache-diagnostics
-server-start qwen2.5-7b-instruct-q5_k_m.gguf
-server-status
+bootstrap-stack --non-interactive
+sync-opencode-config --dry-run --print
+sync-openhands-config --dry-run --print
 ```
 
 ## Commands
-- `setup-stack`: dependency check + clone/build `llama.cpp`.
-- `download-model`: list/select/download GGUF (+ optional mmproj).
-- `server-start`: start model server (foreground or detached).
-- `server-status`: show runtime status and model/context info.
-- `server-stop`: stop managed detached server.
-- `check-deps`: print dependency readiness.
+- `bootstrap-stack`: end-to-end Linux bootstrap (llmfit install, hw detect, llama.cpp build, model install, smoke test, state write).
 - `uninstall-stack`: remove repo-local runtime artifacts.
 - `sync-opencode-config`: intentionally sync global OpenCode config from ai-stack runtime and managed skills.
 - `sync-openhands-config`: intentionally sync global OpenHands config from ai-stack runtime.
+
+## Migration Note
+The previous runtime commands were removed in this release:
+- `setup-stack`
+- `download-model`
+- `server-start`
+- `server-status`
+- `server-stop`
+- `check-deps`
+
+Use `bootstrap-stack` for runtime provisioning and keep sync commands for OpenCode/OpenHands integration config export.
 
 ## Agent Skills (Optional, Codex examples)
 This repo now ships a local skills catalog under `skills/` for use with `skills.sh`. https://skills.sh/
@@ -66,8 +69,8 @@ Manual verification checklist:
    - project-local OpenHands (if installed): `ls ./.openhands/skills`
    - global `-g` installs only: `ls ~/.codex/skills`
 2. Execute one workflow from each installed skill:
-   - runtime setup skill: `check-deps` or `setup-stack`
-   - model operations skill: `download-model <namespace/repo> --list --cache-diagnostics`
+   - runtime setup skill: `bootstrap-stack --non-interactive --skip-smoke-test`
+   - model operations skill: verify selected model in `.ai_stack/runtime/bootstrap_state.json`
    - opencode sync skill: `sync-opencode-config --sync-tools --sync-agents --sync-skills --dry-run --print`
 3. Confirm no runtime behavior changed; these skills are procedural guidance only.
 
@@ -81,12 +84,12 @@ Managed OpenCode skill sync:
 - Unrelated user-installed skill folders are preserved.
 
 ## Runtime State Paths
-- Models and manifest: `./models/`
-- HF snapshot cache: `./.ai_stack/huggingface/cache.json`
-- Detached server runtime metadata: `./.ai_stack/server/`
+- Bootstrap runtime state: `./.ai_stack/runtime/bootstrap_state.json`
+- Managed `llmfit` binary: `./.ai_stack/bin/llmfit`
+- Pinned `llama.cpp` checkout/build: `./.ai_stack/llama.cpp/`
 
 ## Diagnostics
-- Set `AI_STACK_LOG_EVENTS=1` to emit structured JSON event lines to stderr for setup/download/server flows.
+- Set `AI_STACK_LOG_EVENTS=1` to emit structured JSON event lines to stderr for bootstrap/sync flows.
 
 ## Python Module Entry Points
 - Config: `ai_stack.core.config`

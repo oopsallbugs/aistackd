@@ -1,5 +1,7 @@
 # Hugging Face Snapshot Cache Spec
 
+> Legacy note (March 2, 2026): runtime commands that consumed this cache directly were removed from the primary CLI surface. Use `bootstrap-stack` for runtime provisioning.
+
 ## Goal
 Avoid repeated full snapshot fetches while remaining correct when repo revisions change.
 

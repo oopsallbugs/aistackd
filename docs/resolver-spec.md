@@ -1,5 +1,7 @@
 # Resolver Spec
 
+> Legacy note (March 2, 2026): the public runtime CLI moved to `bootstrap-stack`. This document remains reference material for the prior direct HF resolver flow.
+
 ## Scope
 Resolver logic is implemented in `python_client/src/ai_stack/huggingface/resolver.py`.
 

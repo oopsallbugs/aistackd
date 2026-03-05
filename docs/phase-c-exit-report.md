@@ -1,5 +1,7 @@
 # Phase C Exit Report
 
+> Historical note (March 2, 2026): this report references the old runtime command surface (`download-model`, etc.), which has since been replaced by `bootstrap-stack`.
+
 Date: 2026-02-19
 Scope: `python_client` reliability/observability/performance hardening completion audit.
 
