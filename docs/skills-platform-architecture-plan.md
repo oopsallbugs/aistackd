@@ -9,6 +9,8 @@ Supersedes: prior skills-only platform plan
 
 This document defines the frontend integration slice of the v1 product.
 
+Naming conventions for all new implementation work are defined in `docs/naming-conventions.md`.
+
 The repo is not a pure skill platform. Frontend sync exists to make the runtime plane usable from supported agent frontends with minimal extra operator work.
 
 For v1, frontend sync covers:

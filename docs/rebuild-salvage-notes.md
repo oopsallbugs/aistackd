@@ -18,6 +18,8 @@ It records the ideas in the current repo that still align with the new v1 direct
 
 Anything not called out here can be treated as safe to delete from a design perspective.
 
+Historical identifiers in this document such as `ai-stack`, `ai_stack`, and `.ai_stack` refer to the deleted implementation only and are not naming guidance for the rebuild.
+
 ## 1. Runtime Concepts Worth Keeping
 
 ### Structured run state, not ad hoc logs

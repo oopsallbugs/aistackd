@@ -15,6 +15,8 @@ The runtime plane is responsible for taking a prepared machine from documented p
 
 This plan is the canonical repo direction for v1.
 
+Naming conventions for all new implementation work are defined in `docs/naming-conventions.md`.
+
 ## 2. Product Goal
 
 Deliver a system that supports these operator stories:
@@ -154,12 +156,12 @@ Responsibilities:
 
 Initial command groups:
 
-1. `ai-stack host`
-2. `ai-stack client`
-3. `ai-stack profiles`
-4. `ai-stack models`
-5. `ai-stack sync`
-6. `ai-stack doctor`
+1. `aistackd host`
+2. `aistackd client`
+3. `aistackd profiles`
+4. `aistackd models`
+5. `aistackd sync`
+6. `aistackd doctor`
 
 ### Profile Model
 
