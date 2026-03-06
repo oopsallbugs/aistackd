@@ -1,0 +1,17 @@
+"""Model-layer exports."""
+
+from aistackd.models.sources import (
+    BACKEND_ACQUISITION_POLICY,
+    FALLBACK_MODEL_SOURCE,
+    MODEL_SOURCE_POLICY,
+    PRIMARY_BACKEND,
+    PRIMARY_MODEL_SOURCE,
+)
+
+__all__ = [
+    "BACKEND_ACQUISITION_POLICY",
+    "FALLBACK_MODEL_SOURCE",
+    "MODEL_SOURCE_POLICY",
+    "PRIMARY_BACKEND",
+    "PRIMARY_MODEL_SOURCE",
+]

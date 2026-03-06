@@ -1,0 +1,15 @@
+"""Shared skill catalog exports."""
+
+from aistackd.skills.catalog import (
+    PLANNED_BASELINE_SKILLS,
+    PLANNED_BASELINE_TOOLS,
+    SHARED_SKILLS_DIRECTORY_NAME,
+    SHARED_TOOLS_DIRECTORY_NAME,
+)
+
+__all__ = [
+    "PLANNED_BASELINE_SKILLS",
+    "PLANNED_BASELINE_TOOLS",
+    "SHARED_SKILLS_DIRECTORY_NAME",
+    "SHARED_TOOLS_DIRECTORY_NAME",
+]

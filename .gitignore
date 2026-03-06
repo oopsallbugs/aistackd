@@ -2,6 +2,7 @@
 .env
 
 # Runtime artifacts at repo root
+/.aistackd/
 /llama.cpp/
 /llama-cpp/
 /.ai_stack/
