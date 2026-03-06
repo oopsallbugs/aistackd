@@ -1,6 +1,6 @@
 # aistackd
 
-`aistackd` is a Python-first local AI platform rebuild currently in Phase 0 scaffolding.
+`aistackd` is a Python-first local AI platform rebuild currently at Phase 0 scaffold plus the first Phase 1 contract slice.
 
 The current repo state provides:
 
@@ -24,6 +24,13 @@ Run the test suite:
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
+Create and validate a profile:
+
+```bash
+PYTHONPATH=src python -m aistackd profiles add local --base-url http://127.0.0.1:8000 --api-key-env AISTACKD_API_KEY --role-hint host --activate
+PYTHONPATH=src python -m aistackd profiles validate
+```
+
 ## Current Scope
 
-This scaffold is intentionally thin. It establishes naming, package boundaries, and the documented command surface without claiming that runtime, profile, model, or sync behavior is implemented yet.
+The repo is still intentionally thin overall. Runtime, model, and frontend sync behavior are still placeholder surfaces, but profile storage, activation, and validation are now implemented.

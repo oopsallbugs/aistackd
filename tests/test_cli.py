@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest.mock import patch
 
 from aistackd.cli.main import build_parser, main
 from aistackd.state.layout import COMMAND_GROUPS
@@ -49,10 +52,95 @@ class CLITests(unittest.TestCase):
         self.assertIn("targets: codex", stdout)
         self.assertIn("dry_run: enabled", stdout)
 
-    def test_profiles_reports_reserved_state_locations(self) -> None:
-        exit_code, stdout, stderr = invoke(["profiles"])
+    def test_profiles_add_list_show_and_activate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exit_code, stdout, stderr = invoke(
+                [
+                    "profiles",
+                    "add",
+                    "local",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_API_KEY",
+                    "--role-hint",
+                    "host",
+                    "--activate",
+                ]
+            )
 
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(stderr, "")
-        self.assertIn(".aistackd/profiles", stdout)
-        self.assertIn(".aistackd/active_profile", stdout)
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("created profile 'local'", stdout)
+            self.assertIn("active_profile: local", stdout)
+
+            exit_code, stdout, stderr = invoke(["profiles", "list", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("* local: http://127.0.0.1:8000", stdout)
+            self.assertIn("api_key_env=AISTACKD_API_KEY", stdout)
+
+            exit_code, stdout, stderr = invoke(["profiles", "show", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("name: local", stdout)
+            self.assertIn("active: yes", stdout)
+            self.assertIn("role_hint: host", stdout)
+
+    def test_profiles_validate_reports_missing_api_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exit_code, stdout, stderr = invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote-host",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://10.0.0.50:8080",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("AISTACKD_REMOTE_API_KEY", None)
+                exit_code, stdout, stderr = invoke(["profiles", "validate", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(stderr, "")
+            self.assertIn("profile: remote-host", stdout)
+            self.assertIn("status: invalid", stdout)
+            self.assertIn("readiness_error: api key environment variable 'AISTACKD_REMOTE_API_KEY' is not set or empty", stdout)
+
+    def test_profiles_validate_succeeds_when_api_key_is_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "local",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_API_KEY",
+                    "--activate",
+                ]
+            )
+
+            with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                exit_code, stdout, stderr = invoke(["profiles", "validate", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("profile: local", stdout)
+            self.assertIn("status: ok", stdout)
