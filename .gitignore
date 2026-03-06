@@ -45,4 +45,5 @@ __pycache__/
 htmlcov/
 .ruff_cache/
 
-.salvage # Salvage files
+# Salvage files
+.salvage/ 
