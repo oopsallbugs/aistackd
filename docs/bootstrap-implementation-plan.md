@@ -89,8 +89,7 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 
 1. base contract: Open Responses
 2. support `type: "function"` tool calling on streaming and non-streaming Responses requests
-3. support an explicit repo-owned `tool_execution: "server"` mode for non-streaming Responses requests, limited to a small read-only function-tool registry
-4. repo-owned extensions:
+3. repo-owned extensions:
    - `GET /health`
    - `GET /v1/models`
    - authenticated admin endpoints for model management and runtime state
@@ -107,11 +106,8 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 2. serve one active model per host process
 3. active-model changes happen through controlled restart or process swap
 4. support the basic function-call loop on the northbound Responses surface for both streaming and non-streaming requests
-5. support a small repo-owned read-only tool registry for server-side execution:
-   - `list_installed_models`
-   - `get_runtime_status`
-   - `search_models`
-6. defer non-function tools, streaming server-side tool execution, and broader orchestration beyond the basic function-call loop
+5. keep function-tool execution client-managed in v1; the host transports tool calls but does not execute or advertise repo-owned server tools
+6. defer non-function tools and broader orchestration beyond the basic function-call loop
 
 ### Backend Acquisition
 
@@ -226,6 +222,7 @@ The control plane must expose:
 2. health inspection
 3. active model and installed model listing
 4. authenticated admin operations for search, download, activate, and runtime inspection
+5. authenticated tool discovery for repo-owned function-tool exposure and execution policy
 
 ## 8. Frontend Sync Contract
 

@@ -12,19 +12,10 @@ from typing import Any, Iterator
 from urllib import error, request
 from uuid import uuid4
 
-from aistackd.control_plane.tools import (
-    RepoOwnedToolInvocationError,
-    canonical_repo_owned_tools,
-    execute_repo_owned_tool_call,
-    get_repo_owned_tool,
-)
 from aistackd.runtime.host import HostServiceConfig
 from aistackd.state.host import HostRuntimeState, HostStateStore
 
 CHAT_COMPLETIONS_ENDPOINT = "/v1/chat/completions"
-SERVER_TOOL_EXECUTION_MODE = "server"
-CLIENT_TOOL_EXECUTION_MODE = "client"
-MAX_SERVER_TOOL_EXECUTION_STEPS = 8
 
 
 @dataclass(frozen=True)
@@ -77,7 +68,6 @@ class PreparedResponseTools:
     response_tool_choice: str | dict[str, object]
     backend_tool_choice: str | dict[str, object] | None
     parallel_tool_calls: bool
-    tool_execution: str
 
 
 @dataclass
@@ -404,16 +394,6 @@ def proxy_responses_request(
         parallel_tool_calls=prepared_tools.parallel_tool_calls,
     )
     backend_response = _invoke_backend_chat_completion(runtime, service, backend_payload)
-    if prepared_tools.tool_execution == SERVER_TOOL_EXECUTION_MODE:
-        backend_messages, backend_response = _continue_with_repo_owned_tool_execution(
-            runtime=runtime,
-            service=service,
-            payload=payload,
-            prepared_tools=prepared_tools,
-            backend_messages=backend_messages,
-            initial_backend_response=backend_response,
-            store=store,
-        )
     response_payload = _build_open_responses_payload(
         payload,
         model_name=model_name,
@@ -446,11 +426,6 @@ def open_responses_stream(
     runtime = store.load_runtime_state()
     model_name = _resolve_requested_model(runtime, payload)
     prepared_tools = _prepare_response_tools(payload)
-    if prepared_tools.tool_execution == SERVER_TOOL_EXECUTION_MODE:
-        raise ResponsesProxyError(
-            HTTPStatus.BAD_REQUEST,
-            "tool_execution='server' is only implemented for non-streaming requests",
-        )
     previous_state = _load_previous_response_state(payload, response_state_cache)
     if previous_state is not None and previous_state.model_name != model_name:
         raise ResponsesProxyError(
@@ -715,22 +690,8 @@ def _extract_text_content(value: object) -> str | None:
 
 
 def _prepare_response_tools(payload: dict[str, object]) -> PreparedResponseTools:
-    tool_execution = _normalize_tool_execution_mode(payload.get("tool_execution"))
     tools_value = payload.get("tools")
     response_tools, backend_tools = _normalize_function_tools(tools_value)
-
-    if tool_execution == SERVER_TOOL_EXECUTION_MODE:
-        if not response_tools:
-            raise ResponsesProxyError(
-                HTTPStatus.BAD_REQUEST,
-                "tool_execution='server' requires at least one repo-owned function tool",
-            )
-        repo_owned_names = [str(tool["name"]) for tool in response_tools]
-        try:
-            canonical_tools = list(canonical_repo_owned_tools(repo_owned_names))
-        except RepoOwnedToolInvocationError as exc:
-            raise ResponsesProxyError(exc.status, exc.message, error_type=exc.error_type) from exc
-        response_tools, backend_tools = _normalize_function_tools(canonical_tools)
 
     parallel_tool_calls_value = payload.get("parallel_tool_calls")
     if parallel_tool_calls_value is None:
@@ -757,25 +718,7 @@ def _prepare_response_tools(payload: dict[str, object]) -> PreparedResponseTools
         response_tool_choice=response_tool_choice,
         backend_tool_choice=backend_tool_choice,
         parallel_tool_calls=parallel_tool_calls,
-        tool_execution=tool_execution,
     )
-
-
-def _normalize_tool_execution_mode(value: object) -> str:
-    if value is None:
-        return CLIENT_TOOL_EXECUTION_MODE
-    if not isinstance(value, str) or not value.strip():
-        raise ResponsesProxyError(
-            HTTPStatus.BAD_REQUEST,
-            "tool_execution must be 'client' or 'server' when provided",
-        )
-    normalized = value.strip().lower()
-    if normalized not in {CLIENT_TOOL_EXECUTION_MODE, SERVER_TOOL_EXECUTION_MODE}:
-        raise ResponsesProxyError(
-            HTTPStatus.BAD_REQUEST,
-            "tool_execution must be 'client' or 'server' when provided",
-        )
-    return normalized
 
 
 def _normalize_function_tools(value: object) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
@@ -922,90 +865,6 @@ def _load_previous_response_state(
             f"unknown previous_response_id '{previous_response_id.strip()}'",
         )
     return state
-
-
-def _continue_with_repo_owned_tool_execution(
-    *,
-    runtime: HostRuntimeState,
-    service: HostServiceConfig,
-    payload: dict[str, object],
-    prepared_tools: PreparedResponseTools,
-    backend_messages: list[dict[str, object]],
-    initial_backend_response: dict[str, object],
-    store: HostStateStore,
-) -> tuple[list[dict[str, object]], dict[str, object]]:
-    current_messages = [_clone_message(message) for message in backend_messages]
-    current_response = initial_backend_response
-    model_name = _resolve_requested_model(runtime, payload)
-
-    for _ in range(MAX_SERVER_TOOL_EXECUTION_STEPS):
-        assistant_message = _build_backend_assistant_message(current_response)
-        tool_calls = _extract_backend_tool_calls(assistant_message)
-        if not tool_calls:
-            return current_messages, current_response
-
-        executed_tool_messages = _execute_repo_owned_tool_calls(
-            tool_calls,
-            store=store,
-            service=service,
-            execution_mode=prepared_tools.tool_execution,
-        )
-        current_messages.append(assistant_message)
-        current_messages.extend(executed_tool_messages)
-        current_response = _invoke_backend_chat_completion(
-            runtime,
-            service,
-            _build_backend_chat_payload(
-                payload,
-                model_name=model_name,
-                stream=False,
-                messages=current_messages,
-                backend_tools=prepared_tools.backend_tools,
-                backend_tool_choice=prepared_tools.backend_tool_choice,
-                parallel_tool_calls=prepared_tools.parallel_tool_calls,
-            ),
-        )
-
-    raise ResponsesProxyError(
-        HTTPStatus.BAD_GATEWAY,
-        f"repo-owned tool execution exceeded the step limit of {MAX_SERVER_TOOL_EXECUTION_STEPS}",
-        error_type="server_error",
-    )
-
-
-def _execute_repo_owned_tool_calls(
-    tool_calls: list[dict[str, str]],
-    *,
-    store: HostStateStore,
-    service: HostServiceConfig,
-    execution_mode: str,
-) -> list[dict[str, object]]:
-    tool_messages: list[dict[str, object]] = []
-    for tool_call in tool_calls:
-        if execution_mode != SERVER_TOOL_EXECUTION_MODE:
-            raise ResponsesProxyError(
-                HTTPStatus.BAD_REQUEST,
-                "repo-owned tool execution is not enabled for this request",
-            )
-        tool_name = tool_call["name"]
-        if get_repo_owned_tool(tool_name) is None:
-            raise ResponsesProxyError(
-                HTTPStatus.BAD_REQUEST,
-                f"tool_execution='server' does not support tool '{tool_name}'",
-            )
-        try:
-            tool_messages.append(
-                execute_repo_owned_tool_call(
-                    name=tool_name,
-                    arguments_json=tool_call["arguments"],
-                    call_id=tool_call["id"],
-                    store=store,
-                    service=service,
-                )
-            )
-        except RepoOwnedToolInvocationError as exc:
-            raise ResponsesProxyError(exc.status, exc.message, error_type=exc.error_type) from exc
-    return tool_messages
 
 
 def _build_assistant_tool_call_message(
@@ -1374,7 +1233,6 @@ def _build_open_responses_payload(
         "text": request_payload.get("text") if isinstance(request_payload.get("text"), dict) else None,
         "tool_choice": response_tool_choice,
         "tools": list(response_tools),
-        "tool_execution": _normalize_tool_execution_mode(request_payload.get("tool_execution")),
         "top_p": request_payload.get("top_p"),
         "truncation": "disabled",
     }
@@ -1600,7 +1458,6 @@ def _build_in_progress_responses_payload(
         "text": request_payload.get("text") if isinstance(request_payload.get("text"), dict) else None,
         "tool_choice": response_tool_choice,
         "tools": list(response_tools),
-        "tool_execution": _normalize_tool_execution_mode(request_payload.get("tool_execution")),
         "top_p": request_payload.get("top_p"),
         "truncation": "disabled",
     }
