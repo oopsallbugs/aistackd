@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -248,6 +249,72 @@ class ControlPlaneTests(unittest.TestCase):
                 backend_server.server_close()
                 backend_thread.join(timeout=1)
 
+    def test_control_plane_admin_runtime_and_model_operations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            gguf_path = _create_fake_gguf(project_root, "Admin-Installed-Model-Q4_K_M.gguf")
+
+            with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                with patch(
+                    "aistackd.models.llmfit.subprocess.run",
+                    side_effect=_fake_admin_llmfit_search_subprocess_run,
+                ):
+                    server = create_control_plane_server(
+                        project_root,
+                        HostServiceConfig(bind_host="127.0.0.1", port=0, api_key_env="AISTACKD_API_KEY"),
+                    )
+
+                    try:
+                        thread = threading.Thread(target=server.serve_forever, daemon=True)
+                        thread.start()
+                        time.sleep(0.02)
+                        port = server.server_address[1]
+
+                        runtime_payload = _request_json(
+                            f"http://127.0.0.1:{port}/admin/runtime",
+                            token="test-key",
+                        )
+                        self.assertEqual(runtime_payload["service"]["responses_base_url"], "http://127.0.0.1:0/v1")
+                        self.assertEqual(runtime_payload["runtime"]["backend"], "llama.cpp")
+                        self.assertEqual(runtime_payload["runtime"]["installed_models"], [])
+
+                        search_payload = _request_json(
+                            f"http://127.0.0.1:{port}/admin/models/search",
+                            token="test-key",
+                            method="POST",
+                            payload={"query": "glm"},
+                        )
+                        self.assertEqual(search_payload["source"], "llmfit")
+                        self.assertEqual(search_payload["models"][0]["name"], "glm-4.7-flash-claude-4.5-opus-q4-k-m")
+
+                        install_payload = _request_json(
+                            f"http://127.0.0.1:{port}/admin/models/install",
+                            token="test-key",
+                            method="POST",
+                            payload={
+                                "gguf_path": str(gguf_path),
+                                "activate": False,
+                            },
+                        )
+                        self.assertEqual(install_payload["action"], "installed")
+                        self.assertEqual(install_payload["model"]["source"], "local")
+                        self.assertTrue(Path(install_payload["model"]["artifact_path"]).exists())
+                        self.assertIsNone(install_payload["active_model"])
+
+                        activate_payload = _request_json(
+                            f"http://127.0.0.1:{port}/admin/models/activate",
+                            token="test-key",
+                            method="POST",
+                            payload={"model": "admin-installed-model-q4-k-m"},
+                        )
+                        self.assertEqual(activate_payload["action"], "activated")
+                        self.assertEqual(activate_payload["runtime"]["active_model"], "admin-installed-model-q4-k-m")
+                        self.assertEqual(activate_payload["runtime"]["activation_state"], "ready")
+                    finally:
+                        server.shutdown()
+                        server.server_close()
+                        thread.join(timeout=1)
+
 
 def _request_json(
     url: str,
@@ -416,6 +483,30 @@ def _create_fake_backend_server() -> _FakeBackendServer:
         },
     ]
     return server
+
+
+def _fake_admin_llmfit_search_subprocess_run(
+    command: list[str] | tuple[str, ...],
+    *,
+    check: bool = False,
+    capture_output: bool = True,
+    text: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    args = tuple(command)
+    if Path(args[0]).name != "llmfit" or args[1] != "search":
+        raise AssertionError(f"unexpected llmfit command: {args}")
+    payload = {
+        "models": [
+            {
+                "name": "glm-4.7-flash-claude-4.5-opus-q4_k_m",
+                "summary": "GLM admin search result",
+                "context_window": 65536,
+                "quantization": "q4_k_m",
+                "tags": ["glm", "reasoning"],
+            }
+        ]
+    }
+    return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(payload), stderr="")
 
 
 def _create_ready_host_state(project_root: Path, *, backend_port: int) -> HostStateStore:

@@ -9,7 +9,25 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
 
-from aistackd.control_plane import HEALTH_ENDPOINT, MODELS_ENDPOINT, RESPONSES_ENDPOINT
+from aistackd.control_plane import (
+    ADMIN_MODELS_ACTIVATE_ENDPOINT,
+    ADMIN_MODELS_INSTALL_ENDPOINT,
+    ADMIN_MODELS_RECOMMEND_ENDPOINT,
+    ADMIN_MODELS_SEARCH_ENDPOINT,
+    ADMIN_RUNTIME_ENDPOINT,
+    HEALTH_ENDPOINT,
+    MODELS_ENDPOINT,
+    RESPONSES_ENDPOINT,
+)
+from aistackd.control_plane.admin import (
+    AdminApiError,
+    activate_model_admin,
+    build_runtime_admin_payload,
+    install_model_admin,
+    parse_optional_json_request_body,
+    recommend_models_admin,
+    search_models_admin,
+)
 from aistackd.control_plane.responses import (
     ResponsesProxyError,
     is_streaming_request,
@@ -57,6 +75,9 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == MODELS_ENDPOINT:
             self._handle_models(server)
             return
+        if path == ADMIN_RUNTIME_ENDPOINT:
+            self._handle_admin_runtime(server)
+            return
 
         self._write_json(
             HTTPStatus.NOT_FOUND,
@@ -77,6 +98,18 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
 
         if path == RESPONSES_ENDPOINT:
             self._handle_responses(server)
+            return
+        if path == ADMIN_MODELS_SEARCH_ENDPOINT:
+            self._handle_admin_models_search()
+            return
+        if path == ADMIN_MODELS_RECOMMEND_ENDPOINT:
+            self._handle_admin_models_recommend()
+            return
+        if path == ADMIN_MODELS_INSTALL_ENDPOINT:
+            self._handle_admin_models_install(server)
+            return
+        if path == ADMIN_MODELS_ACTIVATE_ENDPOINT:
+            self._handle_admin_models_activate(server)
             return
 
         self._write_json(
@@ -132,17 +165,13 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
         }
         self._write_json(HTTPStatus.OK, payload)
 
-    def _handle_responses(self, server: ControlPlaneServer) -> None:
-        try:
-            content_length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {"error": {"message": "Content-Length must be a valid integer", "type": "invalid_request_error"}},
-            )
-            return
+    def _handle_admin_runtime(self, server: ControlPlaneServer) -> None:
+        self._write_json(HTTPStatus.OK, build_runtime_admin_payload(server.store, server.service_config))
 
-        request_body = self.rfile.read(max(content_length, 0))
+    def _handle_responses(self, server: ControlPlaneServer) -> None:
+        request_body = self._read_request_body()
+        if request_body is None:
+            return
         try:
             request_payload = parse_json_request_body(request_body)
             if is_streaming_request(request_payload):
@@ -165,6 +194,50 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
 
         self._write_json(HTTPStatus.OK, response_payload)
+
+    def _handle_admin_models_search(self) -> None:
+        request_payload = self._read_optional_json_body()
+        if request_payload is None:
+            return
+        try:
+            payload = search_models_admin(request_payload)
+        except AdminApiError as exc:
+            self._write_json(exc.status, exc.to_payload())
+            return
+        self._write_json(HTTPStatus.OK, payload)
+
+    def _handle_admin_models_recommend(self) -> None:
+        request_payload = self._read_optional_json_body()
+        if request_payload is None:
+            return
+        try:
+            payload = recommend_models_admin(request_payload)
+        except AdminApiError as exc:
+            self._write_json(exc.status, exc.to_payload())
+            return
+        self._write_json(HTTPStatus.OK, payload)
+
+    def _handle_admin_models_install(self, server: ControlPlaneServer) -> None:
+        request_payload = self._read_optional_json_body()
+        if request_payload is None:
+            return
+        try:
+            payload = install_model_admin(server.store.project_root, request_payload)
+        except AdminApiError as exc:
+            self._write_json(exc.status, exc.to_payload())
+            return
+        self._write_json(HTTPStatus.OK, payload)
+
+    def _handle_admin_models_activate(self, server: ControlPlaneServer) -> None:
+        request_payload = self._read_optional_json_body()
+        if request_payload is None:
+            return
+        try:
+            payload = activate_model_admin(server.store.project_root, request_payload)
+        except AdminApiError as exc:
+            self._write_json(exc.status, exc.to_payload())
+            return
+        self._write_json(HTTPStatus.OK, payload)
 
     def _is_authorized(self, api_key: str) -> bool:
         authorization = self.headers.get("Authorization", "")
@@ -198,6 +271,27 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
         body = f"data: {json.dumps(payload)}\n\n".encode("utf-8")
         self.wfile.write(body)
         self.wfile.flush()
+
+    def _read_request_body(self) -> bytes | None:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._write_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": {"message": "Content-Length must be a valid integer", "type": "invalid_request_error"}},
+            )
+            return None
+        return self.rfile.read(max(content_length, 0))
+
+    def _read_optional_json_body(self) -> dict[str, object] | None:
+        request_body = self._read_request_body()
+        if request_body is None:
+            return None
+        try:
+            return parse_optional_json_request_body(request_body)
+        except AdminApiError as exc:
+            self._write_json(exc.status, exc.to_payload())
+            return None
 
 
 def create_control_plane_server(project_root: Path, service: HostServiceConfig) -> ControlPlaneServer:

@@ -55,10 +55,24 @@ curl -N http://127.0.0.1:8000/v1/responses \
   -H "Authorization: Bearer test-key" \
   -H "Content-Type: application/json" \
   -d '{"input":"say hello","stream":true}'
+curl -s http://127.0.0.1:8000/admin/runtime \
+  -H "Authorization: Bearer test-key"
+curl -s http://127.0.0.1:8000/admin/models/search \
+  -H "Authorization: Bearer test-key" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"glm"}'
+curl -s http://127.0.0.1:8000/admin/models/install \
+  -H "Authorization: Bearer test-key" \
+  -H "Content-Type: application/json" \
+  -d '{"gguf_path":"/path/to/model.gguf"}'
+curl -s http://127.0.0.1:8000/admin/models/activate \
+  -H "Authorization: Bearer test-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"your-model-name"}'
 PYTHONPATH=src python -m aistackd sync --target codex --dry-run
 PYTHONPATH=src python -m aistackd sync --write
 ```
 
 ## Current Scope
 
-The repo is still intentionally thin overall. Tool use and direct noninteractive `llmfit` download-provider wiring are still not implemented, but profile-scoped target model selection, live `llmfit` search/recommend, native `llmfit` TUI browse, managed import of `llmfit`-downloaded GGUFs, a managed host-side model store, explicit local GGUF import, common-root local GGUF discovery, Hugging Face CLI fallback including file-URL install, host-side installed/active model state, prerequisite inspection, `llmfit`-backed hardware detection, `llama.cpp` acquisition planning, managed prebuilt install import, managed source-build fallback, adoption of an existing `llama.cpp` installation, local host validation, managed `llama-server` process launch and persisted process state, authenticated `GET /health`, `GET /v1/models`, and text-only `POST /v1/responses` control-plane endpoints with streaming and non-streaming support, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests are now implemented.
+The repo is still intentionally thin overall. Tool use and direct noninteractive `llmfit` download-provider wiring are still not implemented, but profile-scoped target model selection, live `llmfit` search/recommend, native `llmfit` TUI browse, managed import of `llmfit`-downloaded GGUFs, a managed host-side model store, explicit local GGUF import, common-root local GGUF discovery, Hugging Face CLI fallback including file-URL install, host-side installed/active model state, prerequisite inspection, `llmfit`-backed hardware detection, `llama.cpp` acquisition planning, managed prebuilt install import, managed source-build fallback, adoption of an existing `llama.cpp` installation, local host validation, managed `llama-server` process launch and persisted process state, authenticated `GET /health`, `GET /v1/models`, text-only `POST /v1/responses` control-plane endpoints with streaming and non-streaming support, and authenticated admin endpoints for runtime inspection plus model search, recommendation, install, and activate are now implemented, alongside active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests.
