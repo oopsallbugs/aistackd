@@ -29,8 +29,10 @@ Create and validate a profile:
 ```bash
 PYTHONPATH=src python -m aistackd profiles add local --base-url http://127.0.0.1:8000 --api-key-env AISTACKD_API_KEY --role-hint host --activate
 PYTHONPATH=src python -m aistackd profiles validate
+PYTHONPATH=src python -m aistackd client
+PYTHONPATH=src python -m aistackd sync --target codex --dry-run
 ```
 
 ## Current Scope
 
-The repo is still intentionally thin overall. Runtime, model, and frontend sync behavior are still placeholder surfaces, but profile storage, activation, and validation are now implemented.
+The repo is still intentionally thin overall. Model management and frontend writes are still placeholder surfaces, but profile storage, active-profile-derived client config, and sync manifest preview are now implemented.

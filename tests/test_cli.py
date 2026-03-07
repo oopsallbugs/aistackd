@@ -44,14 +44,6 @@ class CLITests(unittest.TestCase):
         self.assertTrue(scaffold_checks["shared_skills"])
         self.assertTrue(scaffold_checks["shared_tools"])
 
-    def test_sync_accepts_target_selection(self) -> None:
-        exit_code, stdout, stderr = invoke(["sync", "--target", "codex", "--dry-run"])
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(stderr, "")
-        self.assertIn("targets: codex", stdout)
-        self.assertIn("dry_run: enabled", stdout)
-
     def test_profiles_add_list_show_and_activate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             exit_code, stdout, stderr = invoke(
@@ -144,3 +136,71 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             self.assertIn("profile: local", stdout)
             self.assertIn("status: ok", stdout)
+
+    def test_client_reports_active_runtime_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "local",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_API_KEY",
+                    "--role-hint",
+                    "host",
+                    "--activate",
+                ]
+            )
+
+            exit_code, stdout, stderr = invoke(["client", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("client runtime config", stdout)
+            self.assertIn("active_profile: local", stdout)
+            self.assertIn("responses_base_url: http://127.0.0.1:8000/v1", stdout)
+            self.assertIn("frontend_targets: codex, opencode", stdout)
+
+    def test_sync_preview_uses_active_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "local",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_API_KEY",
+                    "--activate",
+                ]
+            )
+
+            exit_code, stdout, stderr = invoke(
+                ["sync", "--project-root", tmpdir, "--target", "codex", "--format", "json"]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+
+            payload = json.loads(stdout)
+            self.assertEqual(payload["active_profile"], "local")
+            self.assertEqual(payload["mode"], "client")
+            self.assertTrue(payload["dry_run"])
+            self.assertEqual(len(payload["targets"]), 1)
+            self.assertEqual(payload["targets"][0]["frontend"], "codex")
+            self.assertEqual(payload["targets"][0]["provider_base_url"], "http://127.0.0.1:8000/v1")
+
+    def test_sync_requires_active_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exit_code, stdout, stderr = invoke(["sync", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(stdout, "")
+            self.assertIn("no active profile is set", stderr)
