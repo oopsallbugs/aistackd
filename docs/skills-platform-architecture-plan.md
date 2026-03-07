@@ -75,6 +75,13 @@ Initial tool categories:
 2. runtime inspection helpers
 3. safe sync or validation helpers where frontend-specific tooling needs them
 
+Initial baseline tools:
+
+1. `runtime-status`
+2. `model-admin`
+
+V1 sync should render baseline tool templates with the active profile defaults and place managed executable copies into the supported frontend-specific tool roots.
+
 ### Agents
 
 Canonical shared agents are deferred until:

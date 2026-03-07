@@ -1,5 +1,10 @@
 # Shared Tools
 
-This directory is reserved for repo-owned baseline tools.
+This directory contains repo-owned baseline tool templates.
 
-The scaffold does not ship managed tool content yet. Phase 4 and Phase 5 will define adapter-specific sync behavior and ownership.
+Current baseline tools:
+
+- `runtime-status.py`: inspect `health`, `models`, and `admin/runtime`
+- `model-admin.py`: search, recommend, install, and activate models through the control plane
+
+Frontend sync renders these templates with the active profile's base URL and API key env, then writes managed executable copies into supported frontend-specific tool roots.

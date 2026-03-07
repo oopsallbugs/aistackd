@@ -12,11 +12,13 @@ from aistackd.state.files import (
     load_toml_object,
     prune_empty_directories,
     write_toml_atomic,
+    write_executable_text_atomic,
     write_text_atomic,
 )
 
 CODEX_PROVIDER_CONFIG_PATH = Path(".codex") / "config.toml"
 CODEX_SKILLS_ROOT = Path(".codex") / "skills"
+CODEX_TOOLS_ROOT = Path(".codex") / "tools"
 CODEX_PROFILE_NAME = "aistackd"
 CODEX_PROVIDER_ID = "aistackd"
 CODEX_WIRE_API = "responses"
@@ -37,7 +39,11 @@ class CodexAdapter:
             ManagedPath("skill", str(CODEX_SKILLS_ROOT / skill_name / "SKILL.md"))
             for skill_name in baseline_skills
         )
-        managed_paths = (ManagedPath("provider_config", str(CODEX_PROVIDER_CONFIG_PATH)),) + skill_paths
+        tool_paths = tuple(
+            ManagedPath("tool", str(CODEX_TOOLS_ROOT / f"{tool_name}.py"))
+            for tool_name in baseline_tools
+        )
+        managed_paths = (ManagedPath("provider_config", str(CODEX_PROVIDER_CONFIG_PATH)),) + skill_paths + tool_paths
         provider_payload = {
             "profile": CODEX_PROFILE_NAME,
             "profiles": {
@@ -89,6 +95,12 @@ class CodexAdapter:
 
         for managed_path in plan.managed_paths:
             if managed_path.kind != "skill":
+                if managed_path.kind != "tool":
+                    continue
+                tool_name = Path(managed_path.path).stem
+                target_path = project_root / managed_path.path
+                write_executable_text_atomic(target_path, tool_contents[tool_name])
+                written_paths.append(str(target_path))
                 continue
             skill_name = Path(managed_path.path).parts[-2]
             target_path = project_root / managed_path.path

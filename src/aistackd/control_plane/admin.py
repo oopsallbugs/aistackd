@@ -105,6 +105,8 @@ def install_model_admin(project_root: Path, payload: dict[str, object]) -> dict[
     local_roots = _path_list(payload.get("local_roots"), field_name="local_roots")
     hugging_face_cli = _string_or_default(payload.get("hf_cli"), default=DEFAULT_HUGGING_FACE_CLI)
     llmfit_binary = _string_or_default(payload.get("llmfit_binary"), default=LLMFIT_BINARY_NAME)
+    llmfit_quant = _optional_string(payload, "quant")
+    llmfit_budget_gb = _optional_positive_number(payload.get("budget_gb"), field_name="budget_gb")
     activate = _bool_or_default(payload.get("activate"), field_name="activate", default=False)
 
     try:
@@ -130,6 +132,9 @@ def install_model_admin(project_root: Path, payload: dict[str, object]) -> dict[
             hugging_face_repo=hf_repo,
             hugging_face_file=hf_file,
             hugging_face_cli=hugging_face_cli,
+            llmfit_binary=llmfit_binary,
+            llmfit_quant=llmfit_quant,
+            llmfit_budget_gb=llmfit_budget_gb,
         )
         store = HostStateStore(project_root)
         record, created = store.install_model(
@@ -282,3 +287,14 @@ def _bool_or_default(value: object, *, field_name: str, default: bool) -> bool:
     if not isinstance(value, bool):
         raise AdminApiError(HTTPStatus.BAD_REQUEST, f"{field_name} must be a boolean when provided")
     return value
+
+
+def _optional_positive_number(value: object, *, field_name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise AdminApiError(HTTPStatus.BAD_REQUEST, f"{field_name} must be a positive number when provided")
+    numeric_value = float(value)
+    if numeric_value <= 0:
+        raise AdminApiError(HTTPStatus.BAD_REQUEST, f"{field_name} must be a positive number when provided")
+    return numeric_value

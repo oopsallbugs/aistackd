@@ -73,6 +73,72 @@ class ControlPlaneAdminTests(unittest.TestCase):
             self.assertEqual(activation_payload["action"], "activated")
             self.assertEqual(activation_payload["runtime"]["active_model"], "admin-model-q4-k-m")
 
+    def test_install_model_admin_supports_llmfit_download_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            llmfit_download_root = project_root / "llmfit-downloads"
+
+            def fake_llmfit_download(
+                command: list[str] | tuple[str, ...],
+                *,
+                check: bool = False,
+                capture_output: bool = True,
+                text: bool = True,
+            ) -> subprocess.CompletedProcess[str]:
+                if command[1] == "search":
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "models": [
+                                    {
+                                        "name": "admin-glm-q4-k-m",
+                                        "summary": "admin llmfit model",
+                                        "context_window": 32768,
+                                        "quantization": "q4_k_m",
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
+                self.assertIn("--quant", command)
+                self.assertIn("Q4_K_M", command)
+                self.assertIn("--budget", command)
+                self.assertIn("12", command)
+                artifact_path = _create_fake_gguf(llmfit_download_root, "Admin-GLM.Q4_K_M.gguf")
+                return subprocess.CompletedProcess(
+                    args=command,
+                    returncode=0,
+                    stdout=json.dumps({"artifact_path": str(artifact_path)}),
+                    stderr="",
+                )
+
+            with patch("aistackd.models.llmfit.subprocess.run", side_effect=fake_llmfit_download):
+                install_payload = install_model_admin(
+                    project_root,
+                    {
+                        "model": "admin-glm-q4-k-m",
+                        "quant": "Q4_K_M",
+                        "budget_gb": 12,
+                    },
+                )
+
+            self.assertEqual(install_payload["action"], "installed")
+            self.assertEqual(install_payload["model"]["source"], "llmfit")
+            self.assertEqual(install_payload["model"]["acquisition_method"], "llmfit_download")
+            self.assertEqual(install_payload["acquisition"]["source"], "llmfit")
+            self.assertTrue(Path(install_payload["model"]["artifact_path"]).exists())
+
+    def test_install_model_admin_rejects_nonpositive_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(AdminApiError) as excinfo:
+                install_model_admin(Path(tmpdir), {"model": "admin-glm-q4-k-m", "budget_gb": 0})
+
+        self.assertEqual(excinfo.exception.status.value, 400)
+        self.assertIn("budget_gb must be a positive number", excinfo.exception.message)
+
     def test_activate_model_admin_rejects_missing_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.assertRaises(AdminApiError) as excinfo:

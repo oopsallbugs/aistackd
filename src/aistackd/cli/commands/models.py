@@ -108,6 +108,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     install_parser.add_argument("--hf-url", help="Hugging Face model/file URL to use for fallback acquisition")
     install_parser.add_argument("--hf-repo", help="Hugging Face repo to use for fallback acquisition")
     install_parser.add_argument("--hf-file", help="GGUF filename to use for Hugging Face fallback")
+    install_parser.add_argument("--quant", help="preferred llmfit quantization for direct downloads")
+    install_parser.add_argument("--budget", dest="budget_gb", type=float, help="llmfit memory budget in GB")
     install_parser.add_argument(
         "--hf-cli",
         default=DEFAULT_HUGGING_FACE_CLI,
@@ -347,6 +349,8 @@ def handle_installed(args: argparse.Namespace) -> int:
 def handle_install(args: argparse.Namespace) -> int:
     """Install one model into host state."""
     try:
+        if args.budget_gb is not None and args.budget_gb <= 0:
+            return _exit_with_error("--budget must be positive when provided")
         hf_repo, hf_file = _resolve_hugging_face_inputs(args)
         if bool(hf_repo) != bool(hf_file):
             return _exit_with_error("Hugging Face fallback requires both --hf-repo and --hf-file")
@@ -367,6 +371,9 @@ def handle_install(args: argparse.Namespace) -> int:
             hugging_face_repo=hf_repo,
             hugging_face_file=hf_file,
             hugging_face_cli=args.hf_cli,
+            llmfit_binary=args.llmfit_binary,
+            llmfit_quant=args.quant,
+            llmfit_budget_gb=args.budget_gb,
         )
         store = HostStateStore(args.project_root)
         record, created = store.install_model(

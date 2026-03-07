@@ -52,6 +52,12 @@ def write_text_atomic(path: Path, contents: str) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
+def write_executable_text_atomic(path: Path, contents: str) -> None:
+    """Write text atomically and mark the resulting file executable."""
+    write_text_atomic(path, contents)
+    path.chmod(0o755)
+
+
 def write_json_atomic(path: Path, payload: dict[str, object]) -> None:
     """Write a JSON object atomically."""
     write_text_atomic(path, json.dumps(payload, indent=2) + "\n")

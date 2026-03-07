@@ -11,6 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from aistackd.models.llmfit import (
+    LlmfitCommandError,
+    extract_downloaded_gguf_path,
+    run_llmfit_download,
+)
 from aistackd.models.selection import (
     derive_model_name_from_artifact_name,
     frontend_model_key,
@@ -18,6 +23,7 @@ from aistackd.models.selection import (
 )
 from aistackd.models.sources import (
     FALLBACK_MODEL_SOURCE,
+    LLMFIT_BINARY_NAME,
     LOCAL_MODEL_SOURCE,
     PRIMARY_MODEL_SOURCE,
     SourceModel,
@@ -191,10 +197,19 @@ def acquire_managed_model_artifact(
     hugging_face_repo: str | None = None,
     hugging_face_file: str | None = None,
     hugging_face_cli: str = DEFAULT_HUGGING_FACE_CLI,
+    llmfit_binary: str = LLMFIT_BINARY_NAME,
+    llmfit_quant: str | None = None,
+    llmfit_budget_gb: float | None = None,
+    llmfit_watch_roots: tuple[Path, ...] = (),
 ) -> ModelAcquisitionResult:
     """Acquire a managed model artifact using the configured policy order."""
     paths = HostStatePaths.from_project_root(project_root.resolve())
     attempts: list[ModelAcquisitionAttempt] = []
+    if llmfit_quant is not None and not llmfit_quant.strip():
+        raise ModelAcquisitionError("llmfit quantization must be a non-empty string when provided")
+    if llmfit_budget_gb is not None and llmfit_budget_gb <= 0:
+        raise ModelAcquisitionError("llmfit budget must be positive when provided")
+    can_try_hugging_face = bool(hugging_face_repo and hugging_face_file)
 
     if explicit_gguf_path is not None:
         try:
@@ -267,15 +282,45 @@ def acquire_managed_model_artifact(
 
     for provider in model_source_order(preferred_source):
         if provider == PRIMARY_MODEL_SOURCE:
+            try:
+                artifact_path, size_bytes, sha256, source_path = _acquire_from_llmfit(
+                    paths,
+                    source_model.name,
+                    llmfit_binary=llmfit_binary,
+                    quant=llmfit_quant,
+                    budget_gb=llmfit_budget_gb,
+                    watch_roots=llmfit_watch_roots,
+                )
+            except ModelAcquisitionError as exc:
+                attempts.append(
+                    ModelAcquisitionAttempt(
+                        provider=PRIMARY_MODEL_SOURCE,
+                        strategy="provider_download",
+                        ok=False,
+                        detail=str(exc),
+                    )
+                )
+                if can_try_hugging_face:
+                    continue
+                raise ModelAcquisitionError(str(exc)) from exc
+
             attempts.append(
                 ModelAcquisitionAttempt(
                     provider=PRIMARY_MODEL_SOURCE,
                     strategy="provider_download",
-                    ok=False,
-                    detail="llmfit model acquisition is not wired yet; use models browse/import-llmfit, --gguf-path, --local-root, or Hugging Face fallback",
+                    ok=True,
+                    detail=f"downloaded GGUF with llmfit from '{source_path}'",
+                    artifact_path=str(artifact_path),
                 )
             )
-            continue
+            return ModelAcquisitionResult(
+                source=PRIMARY_MODEL_SOURCE,
+                acquisition_method="llmfit_download",
+                artifact_path=str(artifact_path),
+                size_bytes=size_bytes,
+                sha256=sha256,
+                attempts=tuple(attempts),
+            )
 
         if provider == FALLBACK_MODEL_SOURCE:
             try:
@@ -585,6 +630,46 @@ def _copy_local_gguf_into_managed_store(
     size_bytes = managed_path.stat().st_size
     sha256 = _file_sha256(managed_path)
     return managed_path, size_bytes, sha256
+
+
+def _acquire_from_llmfit(
+    paths: HostStatePaths,
+    model_name: str,
+    *,
+    llmfit_binary: str,
+    quant: str | None,
+    budget_gb: float | None,
+    watch_roots: tuple[Path, ...],
+) -> tuple[Path, int, str, Path]:
+    effective_watch_roots = iter_llmfit_watch_roots(watch_roots)
+    before = snapshot_gguf_roots(effective_watch_roots)
+    try:
+        invocation = run_llmfit_download(
+            model_name,
+            llmfit_binary=llmfit_binary,
+            quant=quant,
+            budget_gb=budget_gb,
+        )
+    except LlmfitCommandError as exc:
+        raise ModelAcquisitionError(str(exc)) from exc
+
+    source_path = extract_downloaded_gguf_path(invocation.payload)
+    if source_path is None:
+        after = snapshot_gguf_roots(effective_watch_roots)
+        changed_paths = diff_gguf_snapshots(before, after)
+        if len(changed_paths) == 1:
+            source_path = changed_paths[0]
+        elif len(changed_paths) == 0:
+            raise ModelAcquisitionError(
+                "llmfit download did not identify a GGUF artifact; use models browse/import-llmfit, --gguf-path, or an explicit Hugging Face file install"
+            )
+        else:
+            raise ModelAcquisitionError(
+                "llmfit download produced multiple GGUF candidates; use models browse/import-llmfit, --gguf-path, or an explicit Hugging Face file install"
+            )
+
+    artifact_path, size_bytes, sha256 = _copy_local_gguf_into_managed_store(paths, model_name, source_path)
+    return artifact_path, size_bytes, sha256, source_path
 
 
 def _acquire_from_hugging_face(

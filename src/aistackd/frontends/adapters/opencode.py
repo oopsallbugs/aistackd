@@ -11,6 +11,7 @@ from aistackd.state.files import (
     delete_file_if_exists,
     load_json_object,
     prune_empty_directories,
+    write_executable_text_atomic,
     write_json_atomic,
     write_text_atomic,
 )
@@ -20,6 +21,7 @@ OPENCODE_PROVIDER_KEY = "aistackd"
 OPENCODE_PROVIDER_NPM = "@ai-sdk/openai-compatible"
 OPENCODE_PROVIDER_CONFIG_PATH = Path("opencode.json")
 OPENCODE_SKILLS_ROOT = Path(".opencode") / "skills"
+OPENCODE_TOOLS_ROOT = Path(".opencode") / "tools"
 
 
 class OpenCodeAdapter:
@@ -37,7 +39,11 @@ class OpenCodeAdapter:
             ManagedPath("skill", str(OPENCODE_SKILLS_ROOT / skill_name / "SKILL.md"))
             for skill_name in baseline_skills
         )
-        managed_paths = (ManagedPath("provider_config", str(OPENCODE_PROVIDER_CONFIG_PATH)),) + skill_paths
+        tool_paths = tuple(
+            ManagedPath("tool", str(OPENCODE_TOOLS_ROOT / f"{tool_name}.py"))
+            for tool_name in baseline_tools
+        )
+        managed_paths = (ManagedPath("provider_config", str(OPENCODE_PROVIDER_CONFIG_PATH)),) + skill_paths + tool_paths
         provider_payload = {
             "$schema": OPENCODE_SCHEMA_URL,
             "provider": {
@@ -90,6 +96,12 @@ class OpenCodeAdapter:
 
         for managed_path in plan.managed_paths:
             if managed_path.kind != "skill":
+                if managed_path.kind != "tool":
+                    continue
+                tool_name = Path(managed_path.path).stem
+                target_path = project_root / managed_path.path
+                write_executable_text_atomic(target_path, tool_contents[tool_name])
+                written_paths.append(str(target_path))
                 continue
             skill_name = Path(managed_path.path).parts[-2]
             target_path = project_root / managed_path.path

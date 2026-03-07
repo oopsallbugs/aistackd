@@ -1,4 +1,4 @@
-"""llmfit-backed model discovery and operator workflow helpers."""
+"""llmfit-backed model discovery, download, and operator workflow helpers."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,14 @@ LLMFIT_BINARY_NAME = "llmfit"
 
 class LlmfitCommandError(RuntimeError):
     """Raised when llmfit discovery commands cannot be executed successfully."""
+
+
+@dataclass(frozen=True)
+class LlmfitDownloadInvocation:
+    """One llmfit download command invocation and its parsed payload."""
+
+    command: tuple[str, ...]
+    payload: object | None
 
 
 def resolve_llmfit_binary(llmfit_binary: str = LLMFIT_BINARY_NAME) -> str:
@@ -78,6 +87,54 @@ def launch_llmfit_browser(*, llmfit_binary: str = LLMFIT_BINARY_NAME) -> tuple[t
     except OSError as exc:
         raise LlmfitCommandError(f"failed to launch llmfit browser: {exc}") from exc
     return command, int(completed.returncode)
+
+
+def run_llmfit_download(
+    model_name: str,
+    *,
+    llmfit_binary: str = LLMFIT_BINARY_NAME,
+    quant: str | None = None,
+    budget_gb: float | None = None,
+) -> LlmfitDownloadInvocation:
+    """Run one llmfit download command and return its parsed payload."""
+    resolved_binary = resolve_llmfit_binary(llmfit_binary)
+    command: list[str] = [resolved_binary, "download", model_name, "--json"]
+    if quant is not None:
+        command.extend(["--quant", quant])
+    if budget_gb is not None:
+        command.extend(["--budget", format(budget_gb, "g")])
+
+    try:
+        completed = subprocess.run(
+            tuple(command),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise LlmfitCommandError(f"failed to run llmfit download: {exc}") from exc
+
+    raw_output = _combine_output(completed.stdout, completed.stderr)
+    payload = parse_json_first_value(raw_output)
+    if completed.returncode != 0:
+        detail = _summarize_output(raw_output)
+        message = f"llmfit command 'download {model_name}' exited with code {completed.returncode}"
+        if detail:
+            message += f": {detail}"
+        raise LlmfitCommandError(message)
+    return LlmfitDownloadInvocation(command=tuple(command), payload=payload)
+
+
+def extract_downloaded_gguf_path(payload: object) -> Path | None:
+    """Extract one existing downloaded GGUF path from an llmfit payload."""
+    for candidate in _iter_downloaded_path_strings(payload):
+        path = Path(candidate).expanduser()
+        resolved = path.resolve(strict=False)
+        if resolved.suffix.lower() != ".gguf":
+            continue
+        if resolved.exists() and resolved.is_file():
+            return resolved
+    return None
 
 
 def parse_json_first_value(payload_text: str) -> object | None:
@@ -222,6 +279,12 @@ def _combine_output(stdout: str, stderr: str) -> str:
     return "\n".join(parts)
 
 
+def _summarize_output(text: str) -> str:
+    if not text:
+        return ""
+    return text.splitlines()[0].strip()[:400]
+
+
 def _looks_like_model_entry(payload: dict[str, object]) -> bool:
     return model_name_from_entry(payload) is not None
 
@@ -237,6 +300,33 @@ def _flatten_strings(value: Any) -> Iterable[str]:
     if isinstance(value, (list, tuple)):
         for nested in value:
             yield from _flatten_strings(nested)
+
+
+def _iter_downloaded_path_strings(payload: object) -> Iterable[str]:
+    if isinstance(payload, str):
+        yield payload
+        return
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            normalized_key = str(key).strip().lower()
+            if normalized_key in {
+                "path",
+                "file",
+                "filepath",
+                "file_path",
+                "local_path",
+                "downloaded_path",
+                "output_path",
+                "artifact_path",
+                "gguf_path",
+                "model_path",
+            } and isinstance(value, str):
+                yield value
+            yield from _iter_downloaded_path_strings(value)
+        return
+    if isinstance(payload, (list, tuple)):
+        for nested in payload:
+            yield from _iter_downloaded_path_strings(nested)
 
 
 def _parse_human_context_window(value: str) -> int:

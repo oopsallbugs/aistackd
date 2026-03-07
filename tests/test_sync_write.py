@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import tomllib
 import unittest
@@ -30,13 +31,16 @@ class SyncWriteTests(unittest.TestCase):
             first_result = apply_sync_manifest(project_root, manifest)
             first_opencode = (project_root / "opencode.json").read_text(encoding="utf-8")
             first_codex = (project_root / ".codex" / "config.toml").read_text(encoding="utf-8")
+            first_codex_tool = (project_root / ".codex" / "tools" / "runtime-status.py").read_text(encoding="utf-8")
 
             second_result = apply_sync_manifest(project_root, manifest)
             second_opencode = (project_root / "opencode.json").read_text(encoding="utf-8")
             second_codex = (project_root / ".codex" / "config.toml").read_text(encoding="utf-8")
+            second_codex_tool = (project_root / ".codex" / "tools" / "runtime-status.py").read_text(encoding="utf-8")
 
             self.assertEqual(first_opencode, second_opencode)
             self.assertEqual(first_codex, second_codex)
+            self.assertEqual(first_codex_tool, second_codex_tool)
             self.assertEqual(
                 first_result.ownership_manifest_path,
                 second_result.ownership_manifest_path,
@@ -61,6 +65,7 @@ class SyncWriteTests(unittest.TestCase):
             payload = result.to_dict()
             self.assertEqual(payload["manifest"]["active_profile"], "lab-host")
             self.assertIn("opencode.json", "\n".join(payload["written_paths"]))
+            self.assertIn(".opencode/tools/runtime-status.py", "\n".join(payload["written_paths"]))
             self.assertEqual(
                 payload["manifest"]["targets"][0]["provider_payload"]["provider"]["aistackd"]["models"]["lab-model"]["name"],
                 "lab-model",
@@ -111,7 +116,9 @@ class SyncWriteTests(unittest.TestCase):
             self.assertEqual(cleaned_opencode_payload["provider"], {"existing": {"name": "keep"}})
             self.assertNotIn("model", cleaned_opencode_payload)
             self.assertFalse((project_root / ".opencode" / "skills" / "find-skills" / "SKILL.md").exists())
+            self.assertFalse((project_root / ".opencode" / "tools" / "runtime-status.py").exists())
             self.assertTrue((project_root / ".codex" / "skills" / "find-skills" / "SKILL.md").exists())
+            self.assertTrue((project_root / ".codex" / "tools" / "runtime-status.py").exists())
             self.assertIn(str(opencode_path), result.removed_paths)
 
             ownership_manifest = SyncOwnershipManifest.load(project_root)
@@ -174,9 +181,37 @@ class SyncWriteTests(unittest.TestCase):
             )
             self.assertNotIn("aistackd", cleaned_codex_payload["model_providers"])
             self.assertFalse((project_root / ".codex" / "skills" / "find-skills" / "SKILL.md").exists())
+            self.assertFalse((project_root / ".codex" / "tools" / "runtime-status.py").exists())
             self.assertIn(str(codex_path), result.removed_paths)
 
             ownership_manifest = SyncOwnershipManifest.load(project_root)
             self.assertIsNotNone(ownership_manifest)
             assert ownership_manifest is not None
             self.assertEqual(tuple(target.frontend for target in ownership_manifest.targets), ("opencode",))
+
+    def test_sync_write_renders_executable_tools_with_runtime_defaults(self) -> None:
+        profile = Profile(
+            name="local",
+            base_url="http://127.0.0.1:8000",
+            api_key_env="AISTACKD_API_KEY",
+            model="local-model",
+        )
+        runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode"))
+        manifest = SyncManifest.create(
+            runtime_config,
+            SyncRequest.create(runtime_config.frontend_targets, dry_run=False),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            apply_sync_manifest(project_root, manifest)
+
+            codex_tool = project_root / ".codex" / "tools" / "runtime-status.py"
+            opencode_tool = project_root / ".opencode" / "tools" / "model-admin.py"
+
+            self.assertTrue(codex_tool.exists())
+            self.assertTrue(opencode_tool.exists())
+            self.assertTrue(os.access(codex_tool, os.X_OK))
+            self.assertTrue(os.access(opencode_tool, os.X_OK))
+            self.assertIn('DEFAULT_BASE_URL = "http://127.0.0.1:8000"', codex_tool.read_text(encoding="utf-8"))
+            self.assertIn('DEFAULT_API_KEY_ENV = "AISTACKD_API_KEY"', opencode_tool.read_text(encoding="utf-8"))

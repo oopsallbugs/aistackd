@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -9,11 +10,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aistackd.models.acquisition import (
+    ModelAcquisitionError,
     acquire_managed_model_artifact,
     discover_local_gguf,
     import_managed_gguf_candidates,
     parse_hugging_face_url,
 )
+from aistackd.models.llmfit import LlmfitCommandError
 from aistackd.models.sources import local_source_model
 
 
@@ -52,15 +55,98 @@ class ModelAcquisitionTests(unittest.TestCase):
 
             self.assertEqual(result, expected_path.resolve())
 
+    def test_acquire_managed_model_from_llmfit_download_payload_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "project"
+            project_root.mkdir()
+            source_model = local_source_model("glm-4.7-flash-claude-opus-q4-k-m", source="llmfit")
+
+            with patch(
+                "aistackd.models.llmfit.subprocess.run",
+                side_effect=lambda command, **kwargs: _fake_llmfit_download_subprocess_run(
+                    command,
+                    artifact_root=Path(tmpdir) / "llmfit-downloads",
+                    include_artifact_path=True,
+                ),
+            ):
+                result = acquire_managed_model_artifact(
+                    project_root,
+                    source_model,
+                    llmfit_quant="Q4_K_M",
+                    llmfit_budget_gb=16,
+                )
+
+            self.assertEqual(result.source, "llmfit")
+            self.assertEqual(result.acquisition_method, "llmfit_download")
+            self.assertTrue(Path(result.artifact_path).exists())
+            self.assertEqual(result.attempts[1].provider, "llmfit")
+            self.assertTrue(result.attempts[1].ok)
+
+    def test_acquire_managed_model_from_llmfit_watch_root_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "project"
+            project_root.mkdir()
+            watch_root = Path(tmpdir) / "watch-root"
+            source_model = local_source_model("glm-4.7-flash-claude-opus-q4-k-m", source="llmfit")
+
+            with patch(
+                "aistackd.models.llmfit.subprocess.run",
+                side_effect=lambda command, **kwargs: _fake_llmfit_download_subprocess_run(
+                    command,
+                    artifact_root=watch_root,
+                    include_artifact_path=False,
+                ),
+            ):
+                result = acquire_managed_model_artifact(
+                    project_root,
+                    source_model,
+                    llmfit_watch_roots=(watch_root,),
+                )
+
+            self.assertEqual(result.source, "llmfit")
+            self.assertEqual(result.acquisition_method, "llmfit_download")
+            self.assertTrue(Path(result.artifact_path).exists())
+
+    def test_acquire_managed_model_from_llmfit_fails_on_ambiguous_watch_root_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "project"
+            project_root.mkdir()
+            watch_root = Path(tmpdir) / "watch-root"
+            source_model = local_source_model("glm-4.7-flash-claude-opus-q4-k-m", source="llmfit")
+
+            with patch(
+                "aistackd.models.llmfit.subprocess.run",
+                side_effect=lambda command, **kwargs: _fake_llmfit_download_subprocess_run(
+                    command,
+                    artifact_root=watch_root,
+                    include_artifact_path=False,
+                    extra_artifact=True,
+                ),
+            ):
+                with self.assertRaises(ModelAcquisitionError) as excinfo:
+                    acquire_managed_model_artifact(
+                        project_root,
+                        source_model,
+                        llmfit_watch_roots=(watch_root,),
+                    )
+
+            self.assertIn("multiple GGUF candidates", str(excinfo.exception))
+
     def test_hugging_face_fallback_runs_after_llmfit_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir) / "project"
             project_root.mkdir()
             source_model = local_source_model("qwen2.5-coder-7b-instruct-q4-k-m", source="llmfit")
 
-            with patch(
-                "aistackd.models.acquisition.subprocess.run",
-                side_effect=_fake_hf_download_subprocess_run,
+            with (
+                patch(
+                    "aistackd.models.acquisition.run_llmfit_download",
+                    side_effect=LlmfitCommandError("llmfit command 'download qwen2.5-coder-7b-instruct-q4-k-m' exited with code 2"),
+                ),
+                patch(
+                    "aistackd.models.acquisition.subprocess.run",
+                    side_effect=_fake_hf_download_subprocess_run,
+                ),
             ):
                 result = acquire_managed_model_artifact(
                     project_root,
@@ -78,6 +164,21 @@ class ModelAcquisitionTests(unittest.TestCase):
             self.assertEqual(result.attempts[2].provider, "hugging_face")
             self.assertTrue(result.attempts[2].ok)
             self.assertTrue(Path(result.artifact_path).exists())
+
+    def test_llmfit_failure_does_not_fallback_without_explicit_hugging_face_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "project"
+            project_root.mkdir()
+            source_model = local_source_model("qwen2.5-coder-7b-instruct-q4-k-m", source="llmfit")
+
+            with patch(
+                "aistackd.models.acquisition.run_llmfit_download",
+                side_effect=LlmfitCommandError("llmfit command 'download qwen2.5-coder-7b-instruct-q4-k-m' exited with code 2"),
+            ):
+                with self.assertRaises(ModelAcquisitionError) as excinfo:
+                    acquire_managed_model_artifact(project_root, source_model)
+
+            self.assertIn("llmfit command 'download qwen2.5-coder-7b-instruct-q4-k-m' exited with code 2", str(excinfo.exception))
 
     def test_import_managed_gguf_candidates_skips_duplicates_and_suffixes_hash_collisions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -150,3 +251,26 @@ def _fake_hf_download_subprocess_run(command: list[str], **kwargs: object) -> su
         stdout=str(downloaded_path),
         stderr="",
     )
+
+
+def _fake_llmfit_download_subprocess_run(
+    command: list[str] | tuple[str, ...],
+    *,
+    artifact_root: Path,
+    include_artifact_path: bool,
+    extra_artifact: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    filename = "GLM-4.7-Flash-Claude-4.5-Opus.Q4_K_M.gguf"
+    downloaded_path = _create_fake_gguf(artifact_root, filename)
+    payload: dict[str, object] = {"status": "ok"}
+    if include_artifact_path:
+        payload["artifact_path"] = str(downloaded_path)
+    if extra_artifact:
+        _create_fake_gguf(artifact_root, "Qwen2.5-Coder-7B-Instruct.Q4_K_M.gguf", payload=b"GGUF\x00qwen\n")
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=0,
+        stdout=json.dumps(payload),
+        stderr="",
+    )
+

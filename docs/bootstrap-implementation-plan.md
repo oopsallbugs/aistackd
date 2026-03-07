@@ -237,6 +237,8 @@ Baseline content policy:
 1. ship `find-skills`
 2. ship a small baseline of generic reusable skills
 3. ship baseline tools that help supported frontends use the configured backend
+   - initial baseline tools are `runtime-status` and `model-admin`
+   - sync must render these with the active profile defaults and write managed executable copies into frontend-specific tool roots
 4. defer canonical agent definitions to a later phase
 
 ## 9. External Design Inputs

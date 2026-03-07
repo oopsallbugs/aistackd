@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from aistackd.cli.main import build_parser, main
+from aistackd.models.llmfit import LlmfitCommandError
 from aistackd.runtime.hardware import CURRENT_HARDWARE_PROFILE_SCHEMA_VERSION, HardwareProfile, LlmfitDetectionResult
 from aistackd.state.layout import COMMAND_GROUPS
 
@@ -549,11 +550,177 @@ class CLITests(unittest.TestCase):
             payload = json.loads(stdout)
             self.assertEqual(payload["imports"]["imported_count"], 2)
 
-    def test_models_install_supports_hugging_face_url_without_model_name(self) -> None:
+    def test_models_install_uses_llmfit_download_with_quant_and_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            llmfit_root = Path(tmpdir) / "llmfit-downloads"
+
+            def fake_llmfit_run(
+                command: tuple[str, ...],
+                **kwargs: object,
+            ) -> subprocess.CompletedProcess[str]:
+                if command[1] == "search":
+                    return _fake_llmfit_search_result(
+                        command,
+                        model_name="glm-4.7-flash-claude-4.5-opus-q4-k-m",
+                    )
+                if command[1] == "download":
+                    self.assertIn("--quant", command)
+                    self.assertIn("Q4_K_M", command)
+                    self.assertIn("--budget", command)
+                    self.assertIn("12", command)
+                    artifact_path = _create_fake_gguf(llmfit_root, "GLM-4.7-Flash-Claude-4.5-Opus.Q4_K_M.gguf")
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout=json.dumps({"artifact_path": str(artifact_path)}),
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected llmfit command: {command}")
+
+            with patch("aistackd.models.llmfit.subprocess.run", side_effect=fake_llmfit_run):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "models",
+                        "install",
+                        "glm-4.7-flash-claude-4.5-opus-q4-k-m",
+                        "--project-root",
+                        tmpdir,
+                        "--quant",
+                        "Q4_K_M",
+                        "--budget",
+                        "12",
+                        "--format",
+                        "json",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["model"]["source"], "llmfit")
+            self.assertEqual(payload["model"]["acquisition_method"], "llmfit_download")
+            self.assertEqual(payload["acquisition"]["source"], "llmfit")
+            self.assertTrue(Path(payload["model"]["artifact_path"]).exists())
+
+    def test_models_install_fails_when_llmfit_download_finds_no_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            watch_root = Path(tmpdir) / "llmfit-watch"
+
+            def fake_llmfit_run(
+                command: tuple[str, ...],
+                **kwargs: object,
+            ) -> subprocess.CompletedProcess[str]:
+                if command[1] == "search":
+                    return _fake_llmfit_search_result(
+                        command,
+                        model_name="glm-4.7-flash-claude-4.5-opus-q4-k-m",
+                    )
+                if command[1] == "download":
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout=json.dumps({"status": "ok"}),
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected llmfit command: {command}")
+
+            with (
+                patch("aistackd.models.llmfit.subprocess.run", side_effect=fake_llmfit_run),
+                patch(
+                    "aistackd.models.acquisition.iter_llmfit_watch_roots",
+                    return_value=(watch_root.resolve(),),
+                ),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "models",
+                        "install",
+                        "glm-4.7-flash-claude-4.5-opus-q4-k-m",
+                        "--project-root",
+                        tmpdir,
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(stdout, "")
+            self.assertIn("llmfit download did not identify a GGUF artifact", stderr)
+
+    def test_models_install_fails_when_llmfit_download_is_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            watch_root = Path(tmpdir) / "llmfit-watch"
+
+            def fake_llmfit_run(
+                command: tuple[str, ...],
+                **kwargs: object,
+            ) -> subprocess.CompletedProcess[str]:
+                if command[1] == "search":
+                    return _fake_llmfit_search_result(
+                        command,
+                        model_name="glm-4.7-flash-claude-4.5-opus-q4-k-m",
+                    )
+                if command[1] == "download":
+                    _create_fake_gguf(watch_root, "GLM-4.7-Flash-Claude-4.5-Opus.Q4_K_M.gguf")
+                    _create_fake_gguf(watch_root, "Qwen2.5-Coder-7B-Instruct.Q4_K_M.gguf", payload=b"GGUF\x00qwen\n")
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout=json.dumps({"status": "ok"}),
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected llmfit command: {command}")
+
+            with (
+                patch("aistackd.models.llmfit.subprocess.run", side_effect=fake_llmfit_run),
+                patch(
+                    "aistackd.models.acquisition.iter_llmfit_watch_roots",
+                    return_value=(watch_root.resolve(),),
+                ),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "models",
+                        "install",
+                        "glm-4.7-flash-claude-4.5-opus-q4-k-m",
+                        "--project-root",
+                        tmpdir,
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(stdout, "")
+            self.assertIn("llmfit download produced multiple GGUF candidates", stderr)
+
+    def test_models_install_fails_when_llmfit_download_fails_without_explicit_hf(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch(
-                "aistackd.models.acquisition.subprocess.run",
-                side_effect=_fake_hf_download_subprocess_run,
+                "aistackd.models.llmfit.subprocess.run",
+                side_effect=_fake_failed_llmfit_download_after_search_subprocess_run,
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "models",
+                        "install",
+                        "glm-4.7-flash-claude-4.5-opus-q4-k-m",
+                        "--project-root",
+                        tmpdir,
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(stdout, "")
+            self.assertIn("llmfit command 'download glm-4.7-flash-claude-4.5-opus-q4-k-m' exited with code 2", stderr)
+
+    def test_models_install_supports_hugging_face_url_without_model_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch(
+                    "aistackd.models.acquisition.run_llmfit_download",
+                    side_effect=LlmfitCommandError("llmfit command 'download glm-4.7-flash-claude-4.5-opus.q4-k-m' exited with code 2"),
+                ),
+                patch(
+                    "aistackd.models.acquisition.subprocess.run",
+                    side_effect=_fake_hf_download_subprocess_run,
+                ),
             ):
                 exit_code, stdout, stderr = invoke(
                     [
@@ -577,6 +744,10 @@ class CLITests(unittest.TestCase):
             payload = json.loads(stdout)
             self.assertEqual(payload["model"]["source"], "hugging_face")
             self.assertEqual(payload["acquisition"]["source"], "hugging_face")
+            self.assertEqual(payload["acquisition"]["attempts"][1]["provider"], "llmfit")
+            self.assertFalse(payload["acquisition"]["attempts"][1]["ok"])
+            self.assertEqual(payload["acquisition"]["attempts"][2]["provider"], "hugging_face")
+            self.assertTrue(payload["acquisition"]["attempts"][2]["ok"])
             self.assertTrue(payload["model"]["model"].startswith("glm-4.7-flash-claude-4.5-opus"))
 
     def test_host_acquire_backend_plans_from_llmfit_when_backend_is_missing(self) -> None:
@@ -680,8 +851,9 @@ class CLITests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
-            self.assertIn("change_summary: create=2", stdout)
+            self.assertIn("change_summary: create=4", stdout)
             self.assertIn("change: create frontend=codex kind=provider_config path=.codex/config.toml", stdout)
+            self.assertIn("change: create frontend=codex kind=tool path=.codex/tools/runtime-status.py", stdout)
 
     def test_sync_requires_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -761,9 +933,15 @@ class CLITests(unittest.TestCase):
 
             opencode_skill = Path(tmpdir) / ".opencode" / "skills" / "find-skills" / "SKILL.md"
             codex_skill = Path(tmpdir) / ".codex" / "skills" / "find-skills" / "SKILL.md"
+            opencode_tool = Path(tmpdir) / ".opencode" / "tools" / "runtime-status.py"
+            codex_tool = Path(tmpdir) / ".codex" / "tools" / "model-admin.py"
             self.assertTrue(opencode_skill.exists())
             self.assertTrue(codex_skill.exists())
+            self.assertTrue(opencode_tool.exists())
+            self.assertTrue(codex_tool.exists())
             self.assertIn("name: find-skills", opencode_skill.read_text(encoding="utf-8"))
+            self.assertIn('DEFAULT_BASE_URL = "http://127.0.0.1:8000"', opencode_tool.read_text(encoding="utf-8"))
+            self.assertIn('DEFAULT_API_KEY_ENV = "AISTACKD_API_KEY"', codex_tool.read_text(encoding="utf-8"))
 
             ownership_manifest_path = (
                 Path(tmpdir) / ".aistackd" / "sync" / "ownership_manifest.json"
@@ -843,6 +1021,44 @@ def _fake_llmfit_search_subprocess_run(
         ]
     }
     return subprocess.CompletedProcess(args=command, returncode=0, stdout=json.dumps(payload), stderr="")
+
+
+def _fake_llmfit_search_result(
+    command: tuple[str, ...],
+    *,
+    model_name: str,
+) -> subprocess.CompletedProcess[str]:
+    payload = {
+        "models": [
+            {
+                "name": model_name,
+                "description": "llmfit search result",
+                "context_length": 131072,
+                "best_quant": "Q4_K_M",
+                "provider": "llmfit",
+                "runtime": "llama.cpp",
+            }
+        ]
+    }
+    return subprocess.CompletedProcess(args=command, returncode=0, stdout=json.dumps(payload), stderr="")
+
+
+def _fake_failed_llmfit_download_subprocess_run(
+    command: tuple[str, ...],
+    **kwargs: object,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=command, returncode=2, stdout="", stderr="llmfit download failed")
+
+
+def _fake_failed_llmfit_download_after_search_subprocess_run(
+    command: tuple[str, ...],
+    **kwargs: object,
+) -> subprocess.CompletedProcess[str]:
+    if command[1] == "search":
+        return _fake_llmfit_search_result(command, model_name="glm-4.7-flash-claude-4.5-opus-q4-k-m")
+    if command[1] == "download":
+        return _fake_failed_llmfit_download_subprocess_run(command)
+    raise AssertionError(f"unexpected llmfit command: {command}")
 
 
 def _fake_hf_download_subprocess_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:

@@ -10,7 +10,12 @@ from aistackd.frontends.adapters import get_frontend_adapter
 from aistackd.frontends.adapters.base import FrontendAdapterPlan, ManagedPath
 from aistackd.frontends.catalog import normalize_frontend_targets
 from aistackd.runtime.config import RuntimeConfig
-from aistackd.skills.catalog import BASELINE_SKILLS, BASELINE_TOOLS, load_baseline_skill_contents
+from aistackd.skills.catalog import (
+    BASELINE_SKILLS,
+    BASELINE_TOOLS,
+    load_baseline_skill_contents,
+    load_baseline_tool_contents,
+)
 from aistackd.state.files import load_json_object, write_json_atomic
 from aistackd.state.sync import SyncStatePaths
 
@@ -286,8 +291,16 @@ def apply_sync_manifest(project_root: Path, manifest: SyncManifest) -> SyncWrite
         skill_names = sorted(
             {skill_name for target in manifest.targets for skill_name in target.baseline_skills}
         )
+        tool_names = sorted(
+            {tool_name for target in manifest.targets for tool_name in target.baseline_tools}
+        )
         skill_contents = load_baseline_skill_contents(skill_names)
-        tool_contents: dict[str, str] = {}
+        tool_contents = load_baseline_tool_contents(
+            tool_names,
+            base_url=_derive_tool_base_url(manifest),
+            responses_base_url=_derive_tool_responses_base_url(manifest),
+            api_key_env=_derive_tool_api_key_env(manifest),
+        )
 
         removed_paths = _prune_stale_managed_paths(root, manifest, current_ownership)
         written_paths: list[str] = []
@@ -338,3 +351,22 @@ def _prune_stale_managed_paths(
         removed_paths.extend(adapter.cleanup(project_root, tuple(managed_paths)))
 
     return removed_paths
+
+
+def _derive_tool_base_url(manifest: SyncManifest) -> str:
+    responses_base_url = _derive_tool_responses_base_url(manifest)
+    if responses_base_url.endswith("/v1"):
+        return responses_base_url[: -len("/v1")]
+    return responses_base_url
+
+
+def _derive_tool_responses_base_url(manifest: SyncManifest) -> str:
+    if not manifest.targets:
+        raise SyncError("cannot render baseline tools without at least one frontend target")
+    return manifest.targets[0].provider_base_url
+
+
+def _derive_tool_api_key_env(manifest: SyncManifest) -> str:
+    if not manifest.targets:
+        raise SyncError("cannot render baseline tools without at least one frontend target")
+    return manifest.targets[0].api_key_env
