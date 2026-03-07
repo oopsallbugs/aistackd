@@ -31,8 +31,9 @@ PYTHONPATH=src python -m aistackd profiles add local --base-url http://127.0.0.1
 PYTHONPATH=src python -m aistackd profiles validate
 PYTHONPATH=src python -m aistackd client
 PYTHONPATH=src python -m aistackd sync --target codex --dry-run
+PYTHONPATH=src python -m aistackd sync --write
 ```
 
 ## Current Scope
 
-The repo is still intentionally thin overall. Model management and frontend writes are still placeholder surfaces, but profile storage, active-profile-derived client config, and sync manifest preview are now implemented.
+The repo is still intentionally thin overall. Model management remains placeholder, but profile storage, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex staged adapter writes, baseline skill sync, and ownership manifests are now implemented.

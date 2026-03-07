@@ -44,3 +44,4 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(len(manifest.targets), 2)
         self.assertEqual(manifest.targets[0].provider_base_url, "http://10.0.0.25:8000/v1")
         self.assertEqual(manifest.targets[0].api_key_env, "AISTACKD_LAB_HOST_API_KEY")
+        self.assertTrue(manifest.targets[0].managed_paths)

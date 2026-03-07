@@ -1,5 +1,9 @@
 # Shared Skills
 
-This directory is reserved for repo-owned baseline skills.
+This directory contains repo-owned baseline skills.
 
-The scaffold does not ship managed skill content yet. Phase 5 is where baseline skill inventory, ownership, and provenance become concrete.
+The current baseline catalog ships:
+
+- `find-skills`
+
+Additional baseline catalog and provenance work still belongs to later phases.

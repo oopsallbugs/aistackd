@@ -1,4 +1,4 @@
-"""CLI tests for the Phase 0 scaffold."""
+"""CLI tests for scaffold and contract slices."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from aistackd.cli.main import build_parser, main
@@ -196,6 +197,8 @@ class CLITests(unittest.TestCase):
             self.assertEqual(len(payload["targets"]), 1)
             self.assertEqual(payload["targets"][0]["frontend"], "codex")
             self.assertEqual(payload["targets"][0]["provider_base_url"], "http://127.0.0.1:8000/v1")
+            self.assertEqual(payload["targets"][0]["provider_config_path"], ".codex/aistackd.json")
+            self.assertEqual(payload["targets"][0]["activation_mode"], "staged")
 
     def test_sync_requires_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -204,3 +207,69 @@ class CLITests(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             self.assertEqual(stdout, "")
             self.assertIn("no active profile is set", stderr)
+
+    def test_sync_write_creates_managed_files_and_ownership_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            opencode_path = Path(tmpdir) / "opencode.json"
+            opencode_path.write_text(
+                json.dumps(
+                    {
+                        "custom": {"keep": True},
+                        "provider": {"existing": {"name": "keep"}},
+                        "model": "existing/default",
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "local",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_API_KEY",
+                    "--activate",
+                ]
+            )
+
+            exit_code, stdout, stderr = invoke(["sync", "--project-root", tmpdir, "--write"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("sync write", stdout)
+            self.assertIn("ownership_manifest:", stdout)
+
+            opencode_payload = json.loads(opencode_path.read_text(encoding="utf-8"))
+            self.assertEqual(opencode_payload["custom"], {"keep": True})
+            self.assertIn("existing", opencode_payload["provider"])
+            self.assertIn("aistackd", opencode_payload["provider"])
+            self.assertEqual(opencode_payload["model"], "aistackd/default")
+
+            codex_payload = json.loads(
+                (Path(tmpdir) / ".codex" / "aistackd.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(codex_payload["active_profile"], "local")
+            self.assertEqual(
+                codex_payload["provider"]["base_url"],
+                "http://127.0.0.1:8000/v1",
+            )
+
+            opencode_skill = Path(tmpdir) / ".opencode" / "skills" / "find-skills" / "SKILL.md"
+            codex_skill = Path(tmpdir) / ".codex" / "skills" / "find-skills" / "SKILL.md"
+            self.assertTrue(opencode_skill.exists())
+            self.assertTrue(codex_skill.exists())
+            self.assertIn("name: find-skills", opencode_skill.read_text(encoding="utf-8"))
+
+            ownership_manifest_path = (
+                Path(tmpdir) / ".aistackd" / "sync" / "ownership_manifest.json"
+            )
+            ownership_payload = json.loads(ownership_manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(ownership_payload["active_profile"], "local")
+            self.assertEqual(len(ownership_payload["targets"]), 2)

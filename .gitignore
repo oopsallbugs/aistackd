@@ -3,6 +3,9 @@
 
 # Runtime artifacts at repo root
 /.aistackd/
+/.codex/
+/.opencode/
+/opencode.json
 /llama.cpp/
 /llama-cpp/
 /.ai_stack/

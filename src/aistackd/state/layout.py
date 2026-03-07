@@ -8,8 +8,9 @@ from pathlib import Path
 from aistackd.frontends.catalog import SUPPORTED_FRONTENDS
 from aistackd.models.sources import BACKEND_ACQUISITION_POLICY, MODEL_SOURCE_POLICY, PRIMARY_BACKEND
 from aistackd.runtime.modes import all_runtime_modes
-from aistackd.skills.catalog import PLANNED_BASELINE_SKILLS, SHARED_SKILLS_DIRECTORY_NAME, SHARED_TOOLS_DIRECTORY_NAME
+from aistackd.skills.catalog import BASELINE_SKILLS, SHARED_SKILLS_DIRECTORY_NAME, SHARED_TOOLS_DIRECTORY_NAME
 from aistackd.state.profiles import ProfileStatePaths
+from aistackd.state.sync import SyncStatePaths
 
 COMMAND_GROUPS = ("host", "client", "profiles", "models", "sync", "doctor")
 
@@ -45,6 +46,7 @@ class ProjectLayout:
         root = project_root.resolve()
         package_root = root / "src" / "aistackd"
         profile_paths = ProfileStatePaths.from_project_root(root)
+        sync_paths = SyncStatePaths.from_project_root(root)
 
         scaffold_paths = (
             PathCheck("package_root", str(package_root), package_root.exists()),
@@ -65,6 +67,8 @@ class ProjectLayout:
             PathCheck("runtime_state_root", str(profile_paths.runtime_state_root), profile_paths.runtime_state_root.exists()),
             PathCheck("profile_store", str(profile_paths.profiles_dir), profile_paths.profiles_dir.exists()),
             PathCheck("active_profile_file", str(profile_paths.active_profile_path), profile_paths.active_profile_path.exists()),
+            PathCheck("sync_state_dir", str(sync_paths.sync_dir), sync_paths.sync_dir.exists()),
+            PathCheck("ownership_manifest_file", str(sync_paths.ownership_manifest_path), sync_paths.ownership_manifest_path.exists()),
         )
 
         return cls(
@@ -76,7 +80,7 @@ class ProjectLayout:
             command_groups=COMMAND_GROUPS,
             runtime_modes=all_runtime_modes(),
             frontends=SUPPORTED_FRONTENDS,
-            planned_baseline_skills=PLANNED_BASELINE_SKILLS,
+            planned_baseline_skills=BASELINE_SKILLS,
             scaffold_paths=scaffold_paths,
             reserved_paths=reserved_paths,
         )
