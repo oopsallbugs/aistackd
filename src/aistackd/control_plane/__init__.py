@@ -3,6 +3,7 @@
 OPEN_RESPONSES_BASE_PATH = "/v1"
 HEALTH_ENDPOINT = "/health"
 MODELS_ENDPOINT = "/v1/models"
+RESPONSES_ENDPOINT = "/v1/responses"
 
 from aistackd.control_plane.app import (  # noqa: E402
     ControlPlaneError,
@@ -17,6 +18,7 @@ __all__ = [
     "HEALTH_ENDPOINT",
     "MODELS_ENDPOINT",
     "OPEN_RESPONSES_BASE_PATH",
+    "RESPONSES_ENDPOINT",
     "create_control_plane_server",
     "serve_control_plane",
 ]

@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
 
-from aistackd.control_plane import HEALTH_ENDPOINT, MODELS_ENDPOINT
+from aistackd.control_plane import HEALTH_ENDPOINT, MODELS_ENDPOINT, RESPONSES_ENDPOINT
+from aistackd.control_plane.responses import (
+    ResponsesProxyError,
+    parse_json_request_body,
+    proxy_responses_request,
+)
 from aistackd.runtime.host import HostServiceConfig, resolve_api_key
 from aistackd.state.files import load_json_object
 from aistackd.state.host import HostStateStore
@@ -57,9 +62,24 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:  # noqa: N802
+        server = cast(ControlPlaneServer, self.server)
+        path = urlsplit(self.path).path
+
+        if not self._is_authorized(server.api_key):
+            self._write_json(
+                HTTPStatus.UNAUTHORIZED,
+                {"error": {"message": "missing or invalid API key", "type": "authentication_error"}},
+                extra_headers={"WWW-Authenticate": 'Bearer realm="aistackd"'},
+            )
+            return
+
+        if path == RESPONSES_ENDPOINT:
+            self._handle_responses(server)
+            return
+
         self._write_json(
-            HTTPStatus.METHOD_NOT_ALLOWED,
-            {"error": {"message": "method not allowed", "type": "invalid_request_error"}},
+            HTTPStatus.NOT_FOUND,
+            {"error": {"message": f"unknown path '{path}'", "type": "invalid_request_error"}},
         )
 
     def log_message(self, format: str, *args: object) -> None:
@@ -109,6 +129,26 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
             "data": [_model_payload(record, runtime.active_model) for record in runtime.installed_models],
         }
         self._write_json(HTTPStatus.OK, payload)
+
+    def _handle_responses(self, server: ControlPlaneServer) -> None:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._write_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": {"message": "Content-Length must be a valid integer", "type": "invalid_request_error"}},
+            )
+            return
+
+        request_body = self.rfile.read(max(content_length, 0))
+        try:
+            request_payload = parse_json_request_body(request_body)
+            response_payload = proxy_responses_request(server.store, server.service_config, request_payload)
+        except ResponsesProxyError as exc:
+            self._write_json(exc.status, exc.to_payload())
+            return
+
+        self._write_json(HTTPStatus.OK, response_payload)
 
     def _is_authorized(self, api_key: str) -> bool:
         authorization = self.headers.get("Authorization", "")
