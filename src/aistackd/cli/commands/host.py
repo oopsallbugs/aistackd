@@ -99,7 +99,7 @@ def handle_status(args: argparse.Namespace) -> int:
             active_marker = "*" if record.model == runtime_state.active_model else " "
             print(
                 f"{active_marker} {record.model}: source={record.source} "
-                f"status={record.status} installed_at={record.installed_at}"
+                f"method={record.acquisition_method} status={record.status} installed_at={record.installed_at}"
             )
     return 0
 

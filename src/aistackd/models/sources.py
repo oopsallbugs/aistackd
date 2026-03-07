@@ -10,6 +10,7 @@ from aistackd.models.selection import normalize_model_name
 PRIMARY_BACKEND = "llama.cpp"
 PRIMARY_MODEL_SOURCE = "llmfit"
 FALLBACK_MODEL_SOURCE = "hugging_face"
+LOCAL_MODEL_SOURCE = "local"
 BACKEND_ACQUISITION_POLICY = "prebuilt_first_source_fallback"
 MODEL_SOURCE_POLICY = "llmfit_first_hugging_face_fallback"
 SUPPORTED_MODEL_SOURCES = (PRIMARY_MODEL_SOURCE, FALLBACK_MODEL_SOURCE)
@@ -198,6 +199,26 @@ def resolve_source_model(model_name: str, *, source: str | None = None) -> Sourc
         if match is not None:
             return match
     return None
+
+
+def local_source_model(
+    model_name: str,
+    *,
+    summary: str = "local GGUF import",
+    quantization: str = "unknown",
+    context_window: int = 0,
+    tags: Sequence[str] = ("local",),
+) -> SourceModel:
+    """Build a synthetic local model descriptor for explicit GGUF installs."""
+    return SourceModel(
+        name=normalize_model_name(model_name),
+        source=LOCAL_MODEL_SOURCE,
+        backend=PRIMARY_BACKEND,
+        summary=summary,
+        context_window=context_window,
+        quantization=quantization,
+        tags=tuple(tags),
+    )
 
 
 def _search_sort_key(model: SourceModel) -> tuple[int, int, str]:

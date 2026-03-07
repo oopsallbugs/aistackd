@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -26,7 +27,15 @@ class ControlPlaneTests(unittest.TestCase):
             store = HostStateStore(Path(tmpdir))
             source_model = resolve_source_model("qwen2.5-coder-7b-instruct-q4-k-m")
             self.assertIsNotNone(source_model)
-            record, _ = store.install_model(source_model)
+            artifact_path = _create_fake_gguf(Path(tmpdir), "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
+            record, _ = store.install_model(
+                source_model,
+                acquisition_source="local",
+                acquisition_method="explicit_local_gguf",
+                artifact_path=artifact_path,
+                size_bytes=artifact_path.stat().st_size,
+                sha256=_sha256(artifact_path),
+            )
             store.activate_model(record.model)
             backend_root = _create_fake_backend_root(Path(tmpdir))
             store.save_backend_installation(
@@ -63,7 +72,9 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertEqual(models_payload["active_model"], record.model)
                 self.assertEqual(models_payload["data"][0]["id"], record.model)
                 self.assertTrue(models_payload["data"][0]["active"])
-                self.assertEqual(models_payload["data"][0]["source"], "llmfit")
+                self.assertEqual(models_payload["data"][0]["source"], "local")
+                self.assertEqual(models_payload["data"][0]["acquisition_method"], "explicit_local_gguf")
+                self.assertEqual(models_payload["data"][0]["catalog_source"], "llmfit")
 
                 with self.assertRaises(urllib.error.HTTPError) as excinfo:
                     _request_json(f"http://127.0.0.1:{port}/health")
@@ -93,3 +104,15 @@ def _create_fake_backend_root(root: Path) -> Path:
         path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         path.chmod(0o755)
     return backend_root
+
+
+def _create_fake_gguf(root: Path, filename: str) -> Path:
+    artifact_root = root / "artifacts"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_root / filename
+    artifact_path.write_bytes(b"GGUF\x00test-model\n")
+    return artifact_path
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()

@@ -233,6 +233,7 @@ class CLITests(unittest.TestCase):
 
     def test_models_search_install_activate_and_host_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            gguf_path = _create_fake_gguf(Path(tmpdir), "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
             exit_code, stdout, stderr = invoke(["models", "recommend", "--project-root", tmpdir, "--format", "json"])
 
             self.assertEqual(exit_code, 0)
@@ -248,6 +249,8 @@ class CLITests(unittest.TestCase):
                     "qwen2.5-coder-7b-instruct-q4-k-m",
                     "--project-root",
                     tmpdir,
+                    "--gguf-path",
+                    str(gguf_path),
                     "--format",
                     "json",
                 ]
@@ -257,15 +260,19 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             payload = json.loads(stdout)
             self.assertEqual(payload["action"], "installed")
-            self.assertEqual(payload["model"]["source"], "llmfit")
+            self.assertEqual(payload["model"]["source"], "local")
+            self.assertEqual(payload["model"]["acquisition_method"], "explicit_local_gguf")
+            self.assertTrue(Path(payload["model"]["artifact_path"]).exists())
             self.assertIsNone(payload["active_model"])
+            self.assertEqual(payload["acquisition"]["source"], "local")
 
             exit_code, stdout, stderr = invoke(["models", "installed", "--project-root", tmpdir])
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
             self.assertIn("installed_models: 1", stdout)
-            self.assertIn("qwen2.5-coder-7b-instruct-q4-k-m: source=llmfit", stdout)
+            self.assertIn("qwen2.5-coder-7b-instruct-q4-k-m: source=local", stdout)
+            self.assertIn("method=explicit_local_gguf", stdout)
 
             exit_code, stdout, stderr = invoke(
                 [
@@ -293,6 +300,7 @@ class CLITests(unittest.TestCase):
             self.assertIn("host runtime state", stdout)
             self.assertIn("backend_status: missing", stdout)
             self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
+            self.assertIn("source=local method=explicit_local_gguf", stdout)
             self.assertIn("installed_models: 1", stdout)
 
             exit_code, stdout, stderr = invoke(["host", "validate", "--project-root", tmpdir, "--format", "json"])
@@ -382,6 +390,34 @@ class CLITests(unittest.TestCase):
             self.assertIn("server_binary:", stdout)
             self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
             serve_mock.assert_called_once()
+
+    def test_models_install_discovers_local_gguf_for_uncatalogued_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local_models_root = Path(tmpdir) / "models"
+            local_models_root.mkdir(parents=True, exist_ok=True)
+            discovered_path = _create_fake_gguf(local_models_root, "custom-local-model.Q5_K_M.gguf")
+
+            exit_code, stdout, stderr = invoke(
+                [
+                    "models",
+                    "install",
+                    "custom-local-model",
+                    "--project-root",
+                    tmpdir,
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["model"]["source"], "local")
+            self.assertEqual(payload["model"]["acquisition_method"], "discovered_local_gguf")
+            self.assertNotEqual(Path(payload["model"]["artifact_path"]), discovered_path)
+            self.assertTrue(Path(payload["model"]["artifact_path"]).exists())
+            self.assertEqual(payload["acquisition"]["attempts"][0]["strategy"], "local_search")
+            self.assertTrue(payload["acquisition"]["attempts"][0]["ok"])
 
     def test_host_acquire_backend_plans_from_llmfit_when_backend_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -586,6 +622,13 @@ def _create_fake_backend_root(root: Path) -> Path:
         path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         path.chmod(0o755)
     return backend_root
+
+
+def _create_fake_gguf(root: Path, filename: str) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    artifact_path = root / filename
+    artifact_path.write_bytes(b"GGUF\x00test-model\n")
+    return artifact_path
 
 
 def _fake_llmfit_detection(

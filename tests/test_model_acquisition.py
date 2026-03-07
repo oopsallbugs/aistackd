@@ -1,0 +1,96 @@
+"""Managed model acquisition tests."""
+
+from __future__ import annotations
+
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from aistackd.models.acquisition import acquire_managed_model_artifact, discover_local_gguf
+from aistackd.models.sources import resolve_source_model
+
+
+class ModelAcquisitionTests(unittest.TestCase):
+    def test_acquire_managed_model_from_explicit_gguf_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "project"
+            project_root.mkdir()
+            artifact_path = _create_fake_gguf(Path(tmpdir) / "imports", "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
+            source_model = resolve_source_model("qwen2.5-coder-7b-instruct-q4-k-m")
+            self.assertIsNotNone(source_model)
+
+            result = acquire_managed_model_artifact(
+                project_root,
+                source_model,
+                explicit_gguf_path=artifact_path,
+            )
+
+            self.assertEqual(result.source, "local")
+            self.assertEqual(result.acquisition_method, "explicit_local_gguf")
+            self.assertTrue(Path(result.artifact_path).exists())
+            self.assertEqual(result.attempts[0].strategy, "explicit_path")
+            self.assertTrue(result.attempts[0].ok)
+
+    def test_discover_local_gguf_prefers_matching_filename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            models_root = project_root / "models"
+            nested_root = models_root / "nested"
+            _create_fake_gguf(models_root, "something-else.gguf")
+            expected_path = _create_fake_gguf(nested_root, "custom-local-model.Q5_K_M.gguf")
+
+            result = discover_local_gguf(
+                "custom-local-model",
+                project_root=project_root,
+            )
+
+            self.assertEqual(result, expected_path.resolve())
+
+    def test_hugging_face_fallback_runs_after_llmfit_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "project"
+            project_root.mkdir()
+            source_model = resolve_source_model("qwen2.5-coder-7b-instruct-q4-k-m")
+            self.assertIsNotNone(source_model)
+
+            with patch(
+                "aistackd.models.acquisition.subprocess.run",
+                side_effect=_fake_hf_download_subprocess_run,
+            ):
+                result = acquire_managed_model_artifact(
+                    project_root,
+                    source_model,
+                    hugging_face_repo="unsloth/Qwen2.5-Coder-7B-Instruct-GGUF",
+                    hugging_face_file="Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+                )
+
+            self.assertEqual(result.source, "hugging_face")
+            self.assertEqual(result.acquisition_method, "hugging_face_download")
+            self.assertEqual(result.attempts[0].provider, "local")
+            self.assertFalse(result.attempts[0].ok)
+            self.assertEqual(result.attempts[1].provider, "llmfit")
+            self.assertFalse(result.attempts[1].ok)
+            self.assertEqual(result.attempts[2].provider, "hugging_face")
+            self.assertTrue(result.attempts[2].ok)
+            self.assertTrue(Path(result.artifact_path).exists())
+
+
+def _create_fake_gguf(root: Path, filename: str) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    artifact_path = root / filename
+    artifact_path.write_bytes(b"GGUF\x00test-model\n")
+    return artifact_path
+
+
+def _fake_hf_download_subprocess_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    local_dir = Path(command[command.index("--local-dir") + 1])
+    filename = command[3]
+    downloaded_path = _create_fake_gguf(local_dir, filename)
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=0,
+        stdout=str(downloaded_path),
+        stderr="",
+    )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,6 +23,7 @@ INSTALLED_MODELS_FILE_NAME = "installed_models.json"
 MODEL_RECEIPTS_DIRECTORY_NAME = "model_receipts"
 BACKEND_INSTALLATION_FILE_NAME = "backend_installation.json"
 MANAGED_BACKENDS_DIRECTORY_NAME = "backends"
+MANAGED_MODELS_DIRECTORY_NAME = "models"
 CURRENT_HOST_STATE_SCHEMA_VERSION = "v1alpha1"
 
 
@@ -45,6 +46,7 @@ class HostStatePaths:
     model_receipts_dir: Path
     backend_installation_path: Path
     managed_backends_dir: Path
+    managed_models_dir: Path
 
     @classmethod
     def from_project_root(cls, project_root: Path) -> "HostStatePaths":
@@ -60,6 +62,7 @@ class HostStatePaths:
             model_receipts_dir=host_dir / MODEL_RECEIPTS_DIRECTORY_NAME,
             backend_installation_path=host_dir / BACKEND_INSTALLATION_FILE_NAME,
             managed_backends_dir=host_dir / MANAGED_BACKENDS_DIRECTORY_NAME,
+            managed_models_dir=host_dir / MANAGED_MODELS_DIRECTORY_NAME,
         )
 
     def receipt_path(self, model_name: str) -> Path:
@@ -85,6 +88,14 @@ class HostStatePaths:
     def backend_build_dir(self, backend_name: str = PRIMARY_BACKEND) -> Path:
         """Return the managed build root for one backend."""
         return self.backend_workspace_dir(backend_name) / "build"
+
+    def model_workspace_dir(self, model_name: str) -> Path:
+        """Return the managed workspace root for one installed model."""
+        return self.managed_models_dir / frontend_model_key(model_name)
+
+    def model_artifact_dir(self, model_name: str) -> Path:
+        """Return the managed artifact directory for one installed model."""
+        return self.model_workspace_dir(model_name) / "artifact"
 
 
 @dataclass(frozen=True)
@@ -131,6 +142,10 @@ class InstalledModelRecord:
     model: str
     source: str
     backend: str
+    acquisition_method: str
+    artifact_path: str
+    size_bytes: int
+    sha256: str
     installed_at: str
     receipt_path: str
     status: str = "installed"
@@ -142,6 +157,10 @@ class InstalledModelRecord:
             model=_require_string(payload, "model"),
             source=_require_string(payload, "source"),
             backend=_require_string(payload, "backend"),
+            acquisition_method=_require_string(payload, "acquisition_method"),
+            artifact_path=_require_string(payload, "artifact_path"),
+            size_bytes=_require_int(payload, "size_bytes"),
+            sha256=_require_string(payload, "sha256"),
             installed_at=_require_string(payload, "installed_at"),
             receipt_path=_require_string(payload, "receipt_path"),
             status=_require_string(payload, "status"),
@@ -153,6 +172,10 @@ class InstalledModelRecord:
             "model": self.model,
             "source": self.source,
             "backend": self.backend,
+            "acquisition_method": self.acquisition_method,
+            "artifact_path": self.artifact_path,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
             "installed_at": self.installed_at,
             "receipt_path": self.receipt_path,
             "status": self.status,
@@ -206,6 +229,7 @@ class HostStateStore:
         self.paths.host_dir.mkdir(parents=True, exist_ok=True)
         self.paths.model_receipts_dir.mkdir(parents=True, exist_ok=True)
         self.paths.managed_backends_dir.mkdir(parents=True, exist_ok=True)
+        self.paths.managed_models_dir.mkdir(parents=True, exist_ok=True)
 
     def list_installed_models(self) -> tuple[InstalledModelRecord, ...]:
         """Return installed models sorted by name."""
@@ -215,19 +239,37 @@ class HostStateStore:
         records_payload = payload.get("models")
         if not isinstance(records_payload, list):
             raise HostStateError(f"{self.paths.installed_models_path} must contain a 'models' list")
-        records = [InstalledModelRecord.from_dict(entry) for entry in records_payload if isinstance(entry, dict)]
+        records = [
+            _refresh_installed_model_record(InstalledModelRecord.from_dict(entry))
+            for entry in records_payload
+            if isinstance(entry, dict)
+        ]
         return tuple(sorted(records, key=lambda record: record.model))
 
-    def install_model(self, source_model: SourceModel) -> tuple[InstalledModelRecord, bool]:
+    def install_model(
+        self,
+        source_model: SourceModel,
+        *,
+        acquisition_source: str,
+        acquisition_method: str,
+        artifact_path: Path,
+        size_bytes: int,
+        sha256: str,
+    ) -> tuple[InstalledModelRecord, bool]:
         """Persist an installed-model receipt and inventory record."""
         self.ensure_storage()
         existing_records = {record.model: record for record in self.list_installed_models()}
         installed_at = datetime.now(UTC).replace(microsecond=0).isoformat()
         receipt_path = self.paths.receipt_path(source_model.name)
+        normalized_artifact_path = artifact_path.expanduser().resolve()
         record = InstalledModelRecord(
             model=source_model.name,
-            source=source_model.source,
+            source=acquisition_source,
             backend=source_model.backend,
+            acquisition_method=acquisition_method,
+            artifact_path=str(normalized_artifact_path),
+            size_bytes=size_bytes,
+            sha256=sha256,
             installed_at=installed_at,
             receipt_path=str(receipt_path),
         )
@@ -235,15 +277,21 @@ class HostStateStore:
         receipt_payload = {
             "schema_version": CURRENT_HOST_STATE_SCHEMA_VERSION,
             "model": source_model.name,
-            "source": source_model.source,
+            "source": acquisition_source,
             "backend": source_model.backend,
             "summary": source_model.summary,
             "context_window": source_model.context_window,
             "quantization": source_model.quantization,
             "tags": list(source_model.tags),
+            "acquisition_method": acquisition_method,
+            "artifact_path": str(normalized_artifact_path),
+            "size_bytes": size_bytes,
+            "sha256": sha256,
             "installed_at": installed_at,
             "status": record.status,
         }
+        if source_model.source != acquisition_source:
+            receipt_payload["catalog_source"] = source_model.source
         write_json_atomic(receipt_path, receipt_payload)
 
         created = source_model.name not in existing_records
@@ -300,14 +348,19 @@ class HostStateStore:
         runtime_payload = load_json_object(self.paths.runtime_state_path)
         active_model = _optional_string(runtime_payload, "active_model")
         active_source = _optional_string(runtime_payload, "active_source")
+        active_record = next((record for record in installed_models if record.model == active_model), None)
 
         if active_model is None:
             activation_state = "inactive"
             active_source = None
-        elif any(record.model == active_model for record in installed_models):
-            activation_state = "ready"
-        else:
+        elif active_record is None:
             activation_state = "missing_installation"
+        elif not Path(active_record.artifact_path).exists():
+            activation_state = "missing_artifact"
+            active_source = active_record.source
+        else:
+            activation_state = "ready"
+            active_source = active_record.source
 
         backend_status = _backend_status(backend_installation)
         return HostRuntimeState(
@@ -334,6 +387,13 @@ def _backend_status(installation: HostBackendInstallation | None) -> str:
     return "configured"
 
 
+def _refresh_installed_model_record(record: InstalledModelRecord) -> InstalledModelRecord:
+    status = "installed" if Path(record.artifact_path).exists() else "missing_artifact"
+    if status == record.status:
+        return record
+    return replace(record, status=status)
+
+
 def _require_string(payload: dict[str, object], field_name: str) -> str:
     value = payload.get(field_name)
     if not isinstance(value, str) or not value:
@@ -349,3 +409,10 @@ def _optional_string(payload: dict[str, object], field_name: str) -> str | None:
         raise HostStateError(f"expected string for field '{field_name}'")
     normalized = value.strip()
     return normalized or None
+
+
+def _require_int(payload: dict[str, object], field_name: str) -> int:
+    value = payload.get(field_name)
+    if not isinstance(value, int) or value < 0:
+        raise HostStateError(f"expected non-negative integer for field '{field_name}'")
+    return value

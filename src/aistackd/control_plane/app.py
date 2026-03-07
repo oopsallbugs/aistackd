@@ -160,10 +160,14 @@ def _model_payload(record: object, active_model: str | None) -> dict[str, object
         "active": installed_record.model == active_model,
         "source": installed_record.source,
         "backend": installed_record.backend,
+        "acquisition_method": installed_record.acquisition_method,
+        "artifact_path": installed_record.artifact_path,
+        "size_bytes": installed_record.size_bytes,
+        "sha256": installed_record.sha256,
         "status": installed_record.status,
         "installed_at": installed_record.installed_at,
     }
-    for field_name in ("summary", "context_window", "quantization", "tags"):
+    for field_name in ("summary", "context_window", "quantization", "tags", "catalog_source"):
         if field_name in receipt_payload:
             payload[field_name] = receipt_payload[field_name]
     return payload

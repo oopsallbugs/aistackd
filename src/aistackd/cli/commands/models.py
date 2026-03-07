@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
+from aistackd.models.acquisition import (
+    DEFAULT_HUGGING_FACE_CLI,
+    ModelAcquisitionError,
+    acquire_managed_model_artifact,
+)
 from aistackd.models.sources import (
     SUPPORTED_MODEL_SOURCES,
     SourceModel,
+    local_source_model,
     recommend_models,
     resolve_source_model,
     search_models,
@@ -69,6 +76,22 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _add_common_arguments(install_parser)
     install_parser.add_argument("model", help="model identifier to install")
     install_parser.add_argument("--source", choices=SUPPORTED_MODEL_SOURCES, help="force one model source")
+    install_parser.add_argument("--gguf-path", type=Path, help="explicit path to a local GGUF to import")
+    install_parser.add_argument(
+        "--local-root",
+        dest="local_roots",
+        action="append",
+        type=Path,
+        default=[],
+        help="additional local root to scan for matching GGUF files",
+    )
+    install_parser.add_argument("--hf-repo", help="Hugging Face repo to use for fallback acquisition")
+    install_parser.add_argument("--hf-file", help="GGUF filename to use for Hugging Face fallback")
+    install_parser.add_argument(
+        "--hf-cli",
+        default=DEFAULT_HUGGING_FACE_CLI,
+        help=f"Hugging Face CLI executable used for fallback downloads (default: {DEFAULT_HUGGING_FACE_CLI})",
+    )
     install_parser.add_argument("--activate", action="store_true", help="activate the model after installing it")
     install_parser.set_defaults(handler=handle_install)
 
@@ -227,7 +250,7 @@ def handle_installed(args: argparse.Namespace) -> int:
         active_marker = "*" if record.model == runtime_state.active_model else " "
         print(
             f"{active_marker} {record.model}: source={record.source} "
-            f"status={record.status} installed_at={record.installed_at}"
+            f"method={record.acquisition_method} status={record.status} installed_at={record.installed_at}"
         )
     return 0
 
@@ -235,13 +258,30 @@ def handle_installed(args: argparse.Namespace) -> int:
 def handle_install(args: argparse.Namespace) -> int:
     """Install one model into host state."""
     try:
-        source_model = resolve_source_model(args.model, source=args.source)
-        if source_model is None:
-            return _exit_with_error(f"model '{args.model}' was not found in the configured sources")
+        if bool(args.hf_repo) != bool(args.hf_file):
+            return _exit_with_error("Hugging Face fallback requires both --hf-repo and --hf-file")
+        source_model = _resolve_install_source_model(args.model, source=args.source, gguf_path=args.gguf_path)
+        acquisition = acquire_managed_model_artifact(
+            args.project_root,
+            source_model,
+            explicit_gguf_path=args.gguf_path,
+            local_roots=tuple(args.local_roots),
+            preferred_source=args.source,
+            hugging_face_repo=args.hf_repo,
+            hugging_face_file=args.hf_file,
+            hugging_face_cli=args.hf_cli,
+        )
         store = HostStateStore(args.project_root)
-        record, created = store.install_model(source_model)
+        record, created = store.install_model(
+            source_model,
+            acquisition_source=acquisition.source,
+            acquisition_method=acquisition.acquisition_method,
+            artifact_path=Path(acquisition.artifact_path),
+            size_bytes=acquisition.size_bytes,
+            sha256=acquisition.sha256,
+        )
         runtime_state = store.activate_model(record.model) if args.activate else store.load_runtime_state()
-    except (HostStateError, InstalledModelNotFoundError, ValueError) as exc:
+    except (HostStateError, InstalledModelNotFoundError, ModelAcquisitionError, ValueError) as exc:
         return _exit_with_error(str(exc))
 
     action = "installed" if created else "updated"
@@ -250,12 +290,19 @@ def handle_install(args: argparse.Namespace) -> int:
         "model": record.as_dict(),
         "active_model": runtime_state.active_model,
         "activation_state": runtime_state.activation_state,
+        "acquisition": acquisition.to_dict(),
     }
     if args.format == "json":
         print(json.dumps(payload, indent=2))
         return 0
 
     print(f"{action} model '{record.model}' from {record.source}")
+    print(f"acquisition_method: {record.acquisition_method}")
+    print(f"artifact_path: {record.artifact_path}")
+    print(f"size_bytes: {record.size_bytes}")
+    for attempt in acquisition.attempts:
+        status = "ok" if attempt.ok else "failed"
+        print(f"attempt: {attempt.provider}/{attempt.strategy} status={status} detail={attempt.detail}")
     if args.activate:
         print(f"active_model: {runtime_state.active_model}")
     return 0
@@ -319,8 +366,31 @@ def _format_source_model_line(model: SourceModel) -> str:
     return " ".join(parts)
 
 
+def _resolve_install_source_model(
+    model_name: str,
+    *,
+    source: str | None,
+    gguf_path: Path | None,
+) -> SourceModel:
+    match = resolve_source_model(model_name, source=source)
+    if match is not None:
+        return match
+    quantization = _infer_quantization_from_filename(gguf_path.name) if gguf_path is not None else "unknown"
+    return local_source_model(model_name, quantization=quantization)
+
+
+def _infer_quantization_from_filename(filename: str) -> str:
+    normalized = Path(filename).stem.upper().replace("-", "_")
+    match = re.search(r"(Q\d+(?:_[A-Z0-9]+)+)", normalized)
+    if match is not None:
+        return match.group(1).lower()
+    for token in re.split(r"[._]+", normalized):
+        if token.startswith("Q") and any(character.isdigit() for character in token):
+            return token.lower()
+    return "unknown"
+
+
 def _exit_with_error(message: str) -> int:
     """Print an error message and return a failing exit code."""
     print(message, file=sys.stderr)
     return 1
-

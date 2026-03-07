@@ -33,7 +33,8 @@ PYTHONPATH=src python -m aistackd client
 PYTHONPATH=src python -m aistackd models
 PYTHONPATH=src python -m aistackd models set refined-model
 PYTHONPATH=src python -m aistackd models recommend
-PYTHONPATH=src python -m aistackd models install qwen2.5-coder-7b-instruct-q4-k-m --activate
+PYTHONPATH=src python -m aistackd models install qwen2.5-coder-7b-instruct-q4-k-m --gguf-path /path/to/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf --activate
+PYTHONPATH=src python -m aistackd models install custom-local-model --local-root /path/to/local-models
 PYTHONPATH=src python -m aistackd host inspect --backend-root /path/to/llama.cpp
 PYTHONPATH=src python -m aistackd host acquire-backend
 PYTHONPATH=src python -m aistackd host acquire-backend --prebuilt-root /path/to/llama.cpp-prebuilt
@@ -48,4 +49,4 @@ PYTHONPATH=src python -m aistackd sync --write
 
 ## Current Scope
 
-The repo is still intentionally thin overall. Network-backed backend downloads, backend process management, and inference execution are still not implemented, but profile-scoped target model selection, deterministic model-source search/recommendation, host-side installed/active model state, prerequisite inspection, `llmfit`-backed hardware detection, `llama.cpp` acquisition planning, managed prebuilt install import, managed source-build fallback, adoption of an existing `llama.cpp` installation, local host validation, authenticated `GET /health` and `GET /v1/models` control-plane endpoints, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests are now implemented.
+The repo is still intentionally thin overall. Network-backed backend downloads, backend process management, inference execution, and remote `llmfit` model download wiring are still not implemented, but profile-scoped target model selection, deterministic model-source search/recommendation, a managed host-side model store, explicit local GGUF import, common-root local GGUF discovery, optional Hugging Face CLI fallback, host-side installed/active model state, prerequisite inspection, `llmfit`-backed hardware detection, `llama.cpp` acquisition planning, managed prebuilt install import, managed source-build fallback, adoption of an existing `llama.cpp` installation, local host validation, authenticated `GET /health` and `GET /v1/models` control-plane endpoints, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests are now implemented.
