@@ -297,9 +297,11 @@ def apply_sync_manifest(project_root: Path, manifest: SyncManifest) -> SyncWrite
         skill_contents = load_baseline_skill_contents(skill_names)
         tool_contents = load_baseline_tool_contents(
             tool_names,
+            active_profile=manifest.active_profile,
             base_url=_derive_tool_base_url(manifest),
             responses_base_url=_derive_tool_responses_base_url(manifest),
             api_key_env=_derive_tool_api_key_env(manifest),
+            model=_derive_tool_model(manifest),
         )
 
         removed_paths = _prune_stale_managed_paths(root, manifest, current_ownership)
@@ -370,3 +372,34 @@ def _derive_tool_api_key_env(manifest: SyncManifest) -> str:
     if not manifest.targets:
         raise SyncError("cannot render baseline tools without at least one frontend target")
     return manifest.targets[0].api_key_env
+
+
+def _derive_tool_model(manifest: SyncManifest) -> str:
+    if not manifest.targets:
+        raise SyncError("cannot render baseline tools without at least one frontend target")
+
+    provider_payload = manifest.targets[0].provider_payload
+    if not isinstance(provider_payload, dict):
+        raise SyncError("frontend provider payload must be an object")
+
+    profiles_value = provider_payload.get("profiles")
+    if isinstance(profiles_value, dict):
+        managed_profile = profiles_value.get("aistackd")
+        if isinstance(managed_profile, dict):
+            model = managed_profile.get("model")
+            if isinstance(model, str) and model:
+                return model
+
+    provider_value = provider_payload.get("provider")
+    if isinstance(provider_value, dict):
+        managed_provider = provider_value.get("aistackd")
+        if isinstance(managed_provider, dict):
+            models_value = managed_provider.get("models")
+            if isinstance(models_value, dict):
+                for entry in models_value.values():
+                    if isinstance(entry, dict):
+                        model = entry.get("name")
+                        if isinstance(model, str) and model:
+                            return model
+
+    raise SyncError("cannot derive tool model from sync manifest")

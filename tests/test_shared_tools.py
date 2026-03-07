@@ -19,6 +19,25 @@ TOOLS_ROOT = Path(__file__).resolve().parents[1] / "tools"
 
 
 class SharedToolsTests(unittest.TestCase):
+    def test_frontend_smoke_succeeds(self) -> None:
+        module = load_tool_module("frontend-smoke.py", "frontend_smoke_tool")
+
+        with (
+            patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False),
+            patch.object(module.request, "urlopen", side_effect=_fake_frontend_smoke_urlopen),
+        ):
+            exit_code, stdout, stderr = invoke_tool(
+                module,
+                ["--base-url", "http://127.0.0.1:8000", "--api-key-env", "AISTACKD_API_KEY", "--format", "json"],
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        payload = json.loads(stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["health"]["status"], "ok")
+        self.assertEqual(payload["responses"]["output_text"], "Hello from llama-server")
+
     def test_responses_smoke_non_stream_succeeds(self) -> None:
         module = load_tool_module("responses-smoke.py", "responses_smoke_tool")
 
@@ -165,6 +184,66 @@ class SharedToolsTests(unittest.TestCase):
         payload = json.loads(stdout)
         self.assertEqual(payload["model"]["acquisition_method"], "llmfit_download")
 
+    def test_tool_call_demo_executes_local_tool_and_sends_follow_up(self) -> None:
+        module = load_tool_module("tool-call-demo.py", "tool_call_demo_tool")
+        captured_requests: list[dict[str, object]] = []
+
+        def fake_urlopen(request_obj: object, timeout: float = 30) -> object:
+            payload = json.loads(getattr(request_obj, "data").decode("utf-8"))
+            captured_requests.append(payload)
+            if len(captured_requests) == 1:
+                return _FakeResponse(
+                    200,
+                    {
+                        "id": "resp_tool",
+                        "model": "local-model",
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "call_id": "call_123",
+                                "name": "get_local_time",
+                                "arguments": "{}",
+                            }
+                        ],
+                        "output_text": "",
+                    },
+                )
+            return _FakeResponse(
+                200,
+                {
+                    "id": "resp_final",
+                    "model": "local-model",
+                    "output": [
+                        {
+                            "type": "message",
+                            "status": "completed",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "It is currently noon UTC.", "annotations": []}],
+                        }
+                    ],
+                    "output_text": "It is currently noon UTC.",
+                },
+            )
+
+        with (
+            patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False),
+            patch.object(module.request, "urlopen", side_effect=fake_urlopen),
+        ):
+            exit_code, stdout, stderr = invoke_tool(
+                module,
+                ["--base-url", "http://127.0.0.1:8000", "--api-key-env", "AISTACKD_API_KEY", "--format", "json"],
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        payload = json.loads(stdout)
+        self.assertEqual(payload["final_output_text"], "It is currently noon UTC.")
+        self.assertEqual(payload["tool_calls"][0]["name"], "get_local_time")
+        self.assertEqual(captured_requests[0]["tools"][0]["name"], "get_local_time")
+        self.assertEqual(captured_requests[1]["previous_response_id"], "resp_tool")
+        self.assertEqual(captured_requests[1]["input"][0]["type"], "function_call_output")
+        self.assertIn("utc_iso8601", captured_requests[1]["input"][0]["output"])
+
 
 def load_tool_module(filename: str, module_name: str) -> ModuleType:
     tool_path = TOOLS_ROOT / filename
@@ -225,6 +304,17 @@ def _fake_responses_smoke_urlopen(request_obj: object, timeout: float = 15) -> _
             "output_text": "Hello from llama-server",
         },
     )
+
+
+def _fake_frontend_smoke_urlopen(request_obj: object, timeout: float = 15) -> _FakeResponse:
+    url = getattr(request_obj, "full_url")
+    if url.endswith("/health"):
+        return _FakeResponse(200, {"status": "ok"})
+    if url.endswith("/admin/runtime"):
+        return _FakeResponse(200, {"runtime": {"active_model": "local-model"}})
+    if url.endswith("/v1/responses"):
+        return _FakeResponse(200, {"output_text": "Hello from llama-server"})
+    raise AssertionError(f"unexpected URL: {url}")
 
 
 def _fake_responses_stream_urlopen(request_obj: object, timeout: float = 15) -> _FakeResponse:

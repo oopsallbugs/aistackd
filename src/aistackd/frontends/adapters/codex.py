@@ -75,6 +75,8 @@ class CodexAdapter:
             activation_mode="project_local",
             notes=(
                 "provider settings are merged into project-local .codex/config.toml while preserving unrelated keys",
+                f"synced operator tools default to profile '{runtime_config.active_profile}' at {runtime_config.base_url}",
+                "tool-calling examples stay client-managed; the host transports function calls but does not execute repo tools",
             ),
         )
 

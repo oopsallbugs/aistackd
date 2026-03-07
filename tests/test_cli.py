@@ -964,11 +964,13 @@ class CLITests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
-            self.assertIn("change_summary: create=6", stdout)
+            self.assertIn("change_summary: create=8", stdout)
             self.assertIn("change: create frontend=codex kind=provider_config path=.codex/config.toml", stdout)
             self.assertIn("change: create frontend=codex kind=tool path=.codex/tools/runtime-status.py", stdout)
             self.assertIn("change: create frontend=codex kind=tool path=.codex/tools/responses-smoke.py", stdout)
             self.assertIn("change: create frontend=codex kind=tool path=.codex/tools/runtime-wait.py", stdout)
+            self.assertIn("change: create frontend=codex kind=tool path=.codex/tools/frontend-smoke.py", stdout)
+            self.assertIn("change: create frontend=codex kind=tool path=.codex/tools/tool-call-demo.py", stdout)
 
     def test_sync_requires_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1052,17 +1054,23 @@ class CLITests(unittest.TestCase):
             codex_tool = Path(tmpdir) / ".codex" / "tools" / "model-admin.py"
             opencode_smoke_tool = Path(tmpdir) / ".opencode" / "tools" / "responses-smoke.py"
             codex_wait_tool = Path(tmpdir) / ".codex" / "tools" / "runtime-wait.py"
+            opencode_frontend_smoke_tool = Path(tmpdir) / ".opencode" / "tools" / "frontend-smoke.py"
+            codex_tool_call_demo = Path(tmpdir) / ".codex" / "tools" / "tool-call-demo.py"
             self.assertTrue(opencode_skill.exists())
             self.assertTrue(codex_skill.exists())
             self.assertTrue(opencode_tool.exists())
             self.assertTrue(codex_tool.exists())
             self.assertTrue(opencode_smoke_tool.exists())
             self.assertTrue(codex_wait_tool.exists())
+            self.assertTrue(opencode_frontend_smoke_tool.exists())
+            self.assertTrue(codex_tool_call_demo.exists())
             self.assertIn("name: find-skills", opencode_skill.read_text(encoding="utf-8"))
             self.assertIn('DEFAULT_BASE_URL = "http://127.0.0.1:8000"', opencode_tool.read_text(encoding="utf-8"))
             self.assertIn('DEFAULT_API_KEY_ENV = "AISTACKD_API_KEY"', codex_tool.read_text(encoding="utf-8"))
             self.assertIn('DEFAULT_BASE_URL = "http://127.0.0.1:8000"', opencode_smoke_tool.read_text(encoding="utf-8"))
             self.assertIn('DEFAULT_API_KEY_ENV = "AISTACKD_API_KEY"', codex_wait_tool.read_text(encoding="utf-8"))
+            self.assertIn('DEFAULT_ACTIVE_PROFILE = "local"', opencode_frontend_smoke_tool.read_text(encoding="utf-8"))
+            self.assertIn('DEFAULT_MODEL = "local-model"', codex_tool_call_demo.read_text(encoding="utf-8"))
 
             ownership_manifest_path = (
                 Path(tmpdir) / ".aistackd" / "sync" / "ownership_manifest.json"

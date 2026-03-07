@@ -8,7 +8,14 @@ from string import Template
 SHARED_SKILLS_DIRECTORY_NAME = "skills"
 SHARED_TOOLS_DIRECTORY_NAME = "tools"
 BASELINE_SKILLS = ("find-skills",)
-BASELINE_TOOLS = ("runtime-status", "model-admin", "responses-smoke", "runtime-wait")
+BASELINE_TOOLS = (
+    "runtime-status",
+    "model-admin",
+    "responses-smoke",
+    "runtime-wait",
+    "frontend-smoke",
+    "tool-call-demo",
+)
 PLANNED_BASELINE_SKILLS = BASELINE_SKILLS
 PLANNED_BASELINE_TOOLS = BASELINE_TOOLS
 SKILL_FILE_NAME = "SKILL.md"
@@ -49,16 +56,20 @@ def baseline_tool_path(tool_name: str) -> Path:
 def load_baseline_tool_contents(
     tool_names: tuple[str, ...] | list[str],
     *,
+    active_profile: str,
     base_url: str,
     responses_base_url: str,
     api_key_env: str,
+    model: str,
 ) -> dict[str, str]:
     """Load and render the requested baseline tool templates."""
     contents: dict[str, str] = {}
     substitutions = {
+        "active_profile": active_profile,
         "base_url": base_url,
         "responses_base_url": responses_base_url,
         "api_key_env": api_key_env,
+        "model": model,
     }
     for tool_name in tool_names:
         tool_path = baseline_tool_path(tool_name)
