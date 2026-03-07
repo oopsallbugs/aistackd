@@ -111,6 +111,29 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 2. model acquisition policy: `llmfit` first, Hugging Face fallback
 3. keep `detect/recommend` and `search/download` behind separate provider boundaries so model-source strategy can change later without a rewrite
 
+### Model Acquisition Shape
+
+1. separate model catalog and recommendation from artifact acquisition
+2. model catalog adapters return normalized model descriptors, not file paths
+3. artifact acquisition must try candidates in this order:
+   - explicit local GGUF path
+   - discovered local model roots
+   - `llmfit` acquisition provider
+   - Hugging Face fallback provider
+4. local GGUF inputs are first-class installs, not a separate legacy path
+5. every successful install must end in one managed artifact root under `.aistackd/host/models/<model-key>/`
+6. the runtime must serve managed artifacts only, never arbitrary external paths directly
+7. each installed-model record must preserve:
+   - model identifier
+   - source provider
+   - acquisition method
+   - managed artifact path
+   - file size
+   - content hash
+   - install timestamp
+   - install status
+8. `models install` is the mutating boundary for model artifacts; search and recommendation remain read-only
+
 ### Frontend Integration
 
 1. first-class targets: Codex and OpenCode
@@ -267,6 +290,7 @@ Acceptance gates:
 
 1. Ubuntu reference host can serve one model through the control plane
 2. source fallback works when prebuilt acquisition is unavailable
+3. explicit local GGUF install works without network access
 
 ### Phase 3: Client Runtime
 
@@ -319,7 +343,8 @@ The implementation is not complete until these scenarios pass:
 4. frontend sync after switching active profiles
 5. `llmfit` download path failure with controlled Hugging Face fallback
 6. prebuilt backend unavailable with successful source fallback
-7. Arch host manual acceptance
+7. explicit local GGUF install succeeds and is activated from managed host state
+8. Arch host manual acceptance
 
 ## 12. Risks And Controls
 

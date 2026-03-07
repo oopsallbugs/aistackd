@@ -188,6 +188,25 @@ Source reference:
 
 1. `ai-stack-core/src/bootstrap/stages/models.py`
 
+### Model acquisition should converge into one managed artifact store
+
+Worth keeping:
+
+1. separate model selection from artifact acquisition
+2. stage all successful installs into one repo-owned model store
+3. copy or adopt external GGUF files into managed storage before runtime use
+4. persist install metadata such as provider, acquisition method, checksum, size, and managed artifact path
+
+Why it still fits:
+
+1. this keeps runtime serving independent from source-specific acquisition details
+2. it lets local files, `llmfit`, and Hugging Face share one install contract
+3. it reduces later rewrite risk when backend lifecycle starts consuming installed model state directly
+
+Source idea:
+
+1. `ai-stack-core/src/bootstrap/stages/models.py`
+
 ### One active model per running backend
 
 Worth keeping:
