@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 from aistackd.control_plane import HEALTH_ENDPOINT, MODELS_ENDPOINT, RESPONSES_ENDPOINT
 from aistackd.control_plane.responses import (
     ResponsesProxyError,
+    is_streaming_request,
+    open_responses_stream,
     parse_json_request_body,
     proxy_responses_request,
 )
@@ -143,9 +145,23 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
         request_body = self.rfile.read(max(content_length, 0))
         try:
             request_payload = parse_json_request_body(request_body)
-            response_payload = proxy_responses_request(server.store, server.service_config, request_payload)
+            if is_streaming_request(request_payload):
+                stream_session = open_responses_stream(server.store, server.service_config, request_payload)
+            else:
+                response_payload = proxy_responses_request(server.store, server.service_config, request_payload)
         except ResponsesProxyError as exc:
             self._write_json(exc.status, exc.to_payload())
+            return
+
+        if is_streaming_request(request_payload):
+            try:
+                self._write_sse_headers()
+                for event in stream_session.iter_events():
+                    self._write_sse_event(event)
+            except OSError:
+                return
+            finally:
+                stream_session.close()
             return
 
         self._write_json(HTTPStatus.OK, response_payload)
@@ -170,6 +186,18 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
+
+    def _write_sse_headers(self) -> None:
+        self.send_response(HTTPStatus.OK.value)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+    def _write_sse_event(self, payload: dict[str, object]) -> None:
+        body = f"data: {json.dumps(payload)}\n\n".encode("utf-8")
+        self.wfile.write(body)
+        self.wfile.flush()
 
 
 def create_control_plane_server(project_root: Path, service: HostServiceConfig) -> ControlPlaneServer:

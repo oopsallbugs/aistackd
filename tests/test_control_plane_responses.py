@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from aistackd.control_plane.responses import (
     ResponsesProxyError,
+    open_responses_stream,
     parse_json_request_body,
     proxy_responses_request,
 )
@@ -114,19 +115,96 @@ class ControlPlaneResponsesTests(unittest.TestCase):
             self.assertEqual(backend_payload["temperature"], 0.1)
             self.assertFalse(backend_payload["stream"])
 
-    def test_proxy_responses_request_rejects_streaming(self) -> None:
+    def test_open_responses_stream_translates_backend_sse_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+            captured_request: dict[str, object] = {}
+            captured_response: dict[str, object] = {}
+
+            class _FakeStreamingResponse:
+                def __init__(self, lines: list[bytes]) -> None:
+                    self._lines = lines
+                    self.closed = False
+
+                def __iter__(self) -> object:
+                    return iter(self._lines)
+
+                def close(self) -> None:
+                    self.closed = True
+
+            def fake_urlopen(request_obj: object, timeout: float = 30) -> _FakeStreamingResponse:
+                from urllib.request import Request
+
+                assert isinstance(request_obj, Request)
+                captured_request["url"] = request_obj.full_url
+                captured_request["payload"] = json.loads(request_obj.data.decode("utf-8"))
+                response = _FakeStreamingResponse(
+                    [
+                        b'data: {"id":"chatcmpl_fake","object":"chat.completion.chunk","created":1741305600,"model":"qwen2.5-coder-7b-instruct-q4-k-m","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n',
+                        b"\n",
+                        b'data: {"id":"chatcmpl_fake","object":"chat.completion.chunk","created":1741305601,"model":"qwen2.5-coder-7b-instruct-q4-k-m","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}\n',
+                        b"\n",
+                        b'data: {"id":"chatcmpl_fake","object":"chat.completion.chunk","created":1741305601,"model":"qwen2.5-coder-7b-instruct-q4-k-m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n',
+                        b"\n",
+                        b"data: [DONE]\n",
+                        b"\n",
+                    ]
+                )
+                captured_response["value"] = response
+                return response
+
+            with patch("aistackd.control_plane.responses.request.urlopen", side_effect=fake_urlopen):
+                session = open_responses_stream(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                        "instructions": "be concise",
+                        "input": "say hello",
+                        "stream": True,
+                    },
+                )
+                events = list(session.iter_events())
+
+            self.assertEqual(captured_request["url"], "http://127.0.0.1:8011/v1/chat/completions")
+            backend_payload = captured_request["payload"]
+            self.assertEqual(backend_payload["model"], "qwen2.5-coder-7b-instruct-q4-k-m")
+            self.assertEqual(backend_payload["messages"][0]["role"], "system")
+            self.assertEqual(backend_payload["messages"][0]["content"], "be concise")
+            self.assertEqual(backend_payload["messages"][1]["role"], "user")
+            self.assertEqual(backend_payload["messages"][1]["content"], "say hello")
+            self.assertTrue(backend_payload["stream"])
+
+            self.assertEqual([event["type"] for event in events], [
+                "response.created",
+                "response.output_text.delta",
+                "response.output_text.delta",
+                "response.output_text.done",
+                "response.completed",
+            ])
+            self.assertEqual(events[1]["delta"], "Hello")
+            self.assertEqual(events[2]["delta"], " world")
+            self.assertEqual(events[3]["text"], "Hello world")
+            self.assertEqual(events[4]["response"]["status"], "completed")
+            self.assertEqual(events[4]["response"]["output_text"], "Hello world")
+            self.assertEqual(events[4]["response"]["usage"]["input_tokens"], 10)
+            self.assertEqual(events[4]["response"]["usage"]["output_tokens"], 2)
+            self.assertEqual(events[4]["response"]["usage"]["total_tokens"], 12)
+            self.assertTrue(captured_response["value"].closed)
+
+    def test_open_responses_stream_rejects_invalid_stream_type(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
 
             with self.assertRaises(ResponsesProxyError) as excinfo:
-                proxy_responses_request(
+                open_responses_stream(
                     store,
                     HostServiceConfig(),
-                    {"input": "hello", "stream": True},
+                    {"input": "hello", "stream": "yes"},
                 )
 
             self.assertEqual(excinfo.exception.status.value, 400)
-            self.assertIn("streaming responses are not implemented yet", excinfo.exception.message)
+            self.assertIn("stream must be a boolean", excinfo.exception.message)
 
 
 def _create_ready_host_state(project_root: Path, *, backend_port: int) -> HostStateStore:

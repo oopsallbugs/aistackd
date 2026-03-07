@@ -177,18 +177,68 @@ class ControlPlaneTests(unittest.TestCase):
                     self.assertEqual(backend_request["max_tokens"], 128)
                     self.assertEqual(backend_request["temperature"], 0.2)
                     self.assertFalse(backend_request["stream"])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=1)
+            finally:
+                backend_server.shutdown()
+                backend_server.server_close()
+                backend_thread.join(timeout=1)
 
-                    with self.assertRaises(urllib.error.HTTPError) as excinfo:
-                        _request_json(
-                            f"http://127.0.0.1:{port}/v1/responses",
-                            token="test-key",
-                            method="POST",
-                            payload={"input": "hello", "stream": True},
-                        )
-                    self.assertEqual(excinfo.exception.code, 400)
-                    error_payload = json.loads(excinfo.exception.read().decode("utf-8"))
-                    self.assertIn("streaming responses are not implemented yet", error_payload["error"]["message"])
-                    excinfo.exception.close()
+    def test_control_plane_streams_responses_events_from_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend_server = _create_fake_backend_server()
+            backend_thread = threading.Thread(target=backend_server.serve_forever, daemon=True)
+            backend_thread.start()
+
+            try:
+                backend_port = backend_server.server_address[1]
+                _create_ready_host_state(Path(tmpdir), backend_port=backend_port)
+
+                with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                    server = create_control_plane_server(
+                        Path(tmpdir),
+                        HostServiceConfig(
+                            bind_host="127.0.0.1",
+                            port=0,
+                            api_key_env="AISTACKD_API_KEY",
+                            backend_bind_host="127.0.0.1",
+                            backend_port=backend_port,
+                        ),
+                    )
+
+                try:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    time.sleep(0.02)
+                    port = server.server_address[1]
+
+                    content_type, events = _request_sse_events(
+                        f"http://127.0.0.1:{port}/v1/responses",
+                        token="test-key",
+                        payload={
+                            "input": "say hello",
+                            "stream": True,
+                        },
+                    )
+
+                    self.assertTrue(content_type.startswith("text/event-stream"))
+                    self.assertEqual([event["type"] for event in events], [
+                        "response.created",
+                        "response.output_text.delta",
+                        "response.output_text.delta",
+                        "response.output_text.done",
+                        "response.completed",
+                    ])
+                    self.assertEqual(events[1]["delta"], "Hello")
+                    self.assertEqual(events[2]["delta"], " from llama-server")
+                    self.assertEqual(events[3]["text"], "Hello from llama-server")
+                    self.assertEqual(events[4]["response"]["output_text"], "Hello from llama-server")
+
+                    backend_request = backend_server.last_request_payload
+                    self.assertIsNotNone(backend_request)
+                    self.assertTrue(backend_request["stream"])
                 finally:
                     server.shutdown()
                     server.server_close()
@@ -218,8 +268,43 @@ def _request_json(
         return json.loads(response.read().decode("utf-8"))
 
 
+def _request_sse_events(
+    url: str,
+    *,
+    token: str,
+    payload: dict[str, object],
+) -> tuple[str, list[dict[str, object]]]:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    request = urllib.request.Request(
+        url,
+        headers=headers,
+        method="POST",
+        data=json.dumps(payload).encode("utf-8"),
+    )
+    with urllib.request.urlopen(request, timeout=2) as response:
+        content_type = response.headers.get("Content-Type", "")
+        events: list[dict[str, object]] = []
+        data_lines: list[str] = []
+        for raw_line in response:
+            line = raw_line.decode("utf-8").rstrip("\r\n")
+            if not line:
+                if data_lines:
+                    events.append(json.loads("\n".join(data_lines)))
+                    data_lines = []
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+        if data_lines:
+            events.append(json.loads("\n".join(data_lines)))
+    return content_type, events
+
+
 class _FakeBackendServer(ThreadingHTTPServer):
     response_payload: dict[str, object]
+    stream_payloads: list[dict[str, object]]
     last_request_payload: dict[str, object] | None
 
 
@@ -235,6 +320,18 @@ class _FakeBackendRequestHandler(BaseHTTPRequestHandler):
         backend_server = self.server
         assert isinstance(backend_server, _FakeBackendServer)
         backend_server.last_request_payload = payload
+
+        if payload.get("stream") is True:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for chunk in backend_server.stream_payloads:
+                body = f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+                self.wfile.write(body)
+                self.wfile.flush()
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            return
 
         response_body = json.dumps(backend_server.response_payload).encode("utf-8")
         self.send_response(200)
@@ -272,6 +369,52 @@ def _create_fake_backend_server() -> _FakeBackendServer:
             "total_tokens": 16,
         },
     }
+    server.stream_payloads = [
+        {
+            "id": "chatcmpl_fake",
+            "object": "chat.completion.chunk",
+            "created": 1741305600,
+            "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": "Hello"},
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "id": "chatcmpl_fake",
+            "object": "chat.completion.chunk",
+            "created": 1741305601,
+            "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": " from llama-server"},
+                    "finish_reason": None,
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 12,
+                "completion_tokens": 4,
+                "total_tokens": 16,
+            },
+        },
+        {
+            "id": "chatcmpl_fake",
+            "object": "chat.completion.chunk",
+            "created": 1741305601,
+            "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop",
+                }
+            ],
+        },
+    ]
     return server
 
 

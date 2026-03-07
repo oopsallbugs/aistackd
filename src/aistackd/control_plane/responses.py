@@ -6,7 +6,7 @@ import json
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Iterator
 from urllib import error, request
 from uuid import uuid4
 
@@ -29,6 +29,99 @@ class ResponsesProxyError(RuntimeError):
         return {"error": {"message": self.message, "type": self.error_type}}
 
 
+@dataclass
+class ResponsesStreamSession:
+    """One live streaming Open Responses proxy session."""
+
+    request_payload: dict[str, object]
+    model_name: str
+    response_id: str
+    message_id: str
+    created_at: int
+    upstream_response: Any
+    _closed: bool = False
+
+    def iter_events(self) -> Iterator[dict[str, object]]:
+        """Yield translated Open Responses SSE events."""
+        yield {
+            "type": "response.created",
+            "response": _build_in_progress_responses_payload(
+                self.request_payload,
+                model_name=self.model_name,
+                response_id=self.response_id,
+                created_at=self.created_at,
+            ),
+        }
+
+        output_parts: list[str] = []
+        usage_value: object = None
+        created_at = self.created_at
+
+        try:
+            for backend_chunk in _iter_backend_chat_completion_stream(self.upstream_response):
+                chunk_created = backend_chunk.get("created")
+                if isinstance(chunk_created, int) and chunk_created > 0:
+                    created_at = chunk_created
+
+                chunk_usage = backend_chunk.get("usage")
+                if isinstance(chunk_usage, dict):
+                    usage_value = chunk_usage
+
+                delta = _extract_backend_delta_text(backend_chunk)
+                if not delta:
+                    continue
+
+                output_parts.append(delta)
+                yield {
+                    "type": "response.output_text.delta",
+                    "response_id": self.response_id,
+                    "item_id": self.message_id,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": delta,
+                }
+        except ResponsesProxyError as exc:
+            yield _stream_error_event(exc)
+            return
+        finally:
+            self.close()
+
+        output_text = "".join(output_parts)
+        yield {
+            "type": "response.output_text.done",
+            "response_id": self.response_id,
+            "item_id": self.message_id,
+            "output_index": 0,
+            "content_index": 0,
+            "text": output_text,
+        }
+        yield {
+            "type": "response.completed",
+            "response": _build_open_responses_payload(
+                self.request_payload,
+                model_name=self.model_name,
+                backend_response=_synthesize_backend_response(
+                    model_name=self.model_name,
+                    created_at=created_at,
+                    output_text=output_text,
+                    usage_value=usage_value,
+                ),
+                response_id=self.response_id,
+                message_id=self.message_id,
+                created_at=created_at,
+            ),
+        }
+
+    def close(self) -> None:
+        """Close the upstream backend response if it is still open."""
+        if self._closed:
+            return
+        close = getattr(self.upstream_response, "close", None)
+        if callable(close):
+            close()
+        self._closed = True
+
+
 def proxy_responses_request(
     store: HostStateStore,
     service: HostServiceConfig,
@@ -37,9 +130,37 @@ def proxy_responses_request(
     """Proxy one Open Responses request to the running llama-server backend."""
     runtime = store.load_runtime_state()
     model_name = _resolve_requested_model(runtime, payload)
-    backend_payload = _build_backend_chat_payload(payload, model_name=model_name)
+    if is_streaming_request(payload):
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "streaming requests must use the streaming control-plane path",
+        )
+    backend_payload = _build_backend_chat_payload(payload, model_name=model_name, stream=False)
     backend_response = _invoke_backend_chat_completion(runtime, service, backend_payload)
     return _build_open_responses_payload(payload, model_name=model_name, backend_response=backend_response)
+
+
+def open_responses_stream(
+    store: HostStateStore,
+    service: HostServiceConfig,
+    payload: dict[str, object],
+) -> ResponsesStreamSession:
+    """Open one streaming Responses session against the running backend."""
+    if not is_streaming_request(payload):
+        raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "streaming request must set stream=true")
+
+    runtime = store.load_runtime_state()
+    model_name = _resolve_requested_model(runtime, payload)
+    backend_payload = _build_backend_chat_payload(payload, model_name=model_name, stream=True)
+    upstream_response = _open_backend_chat_completion_stream(runtime, service, backend_payload)
+    return ResponsesStreamSession(
+        request_payload=payload,
+        model_name=model_name,
+        response_id=f"resp_{uuid4().hex}",
+        message_id=f"msg_{uuid4().hex}",
+        created_at=int(time.time()),
+        upstream_response=upstream_response,
+    )
 
 
 def parse_json_request_body(body: bytes) -> dict[str, object]:
@@ -51,6 +172,16 @@ def parse_json_request_body(body: bytes) -> dict[str, object]:
     if not isinstance(decoded, dict):
         raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "request body must be a JSON object")
     return decoded
+
+
+def is_streaming_request(payload: dict[str, object]) -> bool:
+    """Validate and return whether one Responses request is streaming."""
+    stream = payload.get("stream")
+    if stream is None or stream is False:
+        return False
+    if stream is True:
+        return True
+    raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "stream must be a boolean when provided")
 
 
 def _resolve_requested_model(runtime: HostRuntimeState, payload: dict[str, object]) -> str:
@@ -92,14 +223,8 @@ def _build_backend_chat_payload(
     payload: dict[str, object],
     *,
     model_name: str,
+    stream: bool,
 ) -> dict[str, object]:
-    stream = payload.get("stream")
-    if stream not in (None, False):
-        raise ResponsesProxyError(
-            HTTPStatus.BAD_REQUEST,
-            "streaming responses are not implemented yet; resend the request with stream=false or omitted",
-        )
-
     messages = _build_chat_messages(payload)
     if not messages:
         raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "input or instructions must produce at least one text message")
@@ -107,7 +232,7 @@ def _build_backend_chat_payload(
     backend_payload: dict[str, object] = {
         "model": model_name,
         "messages": messages,
-        "stream": False,
+        "stream": stream,
     }
 
     for field_name in ("temperature", "top_p"):
@@ -292,6 +417,55 @@ def _invoke_backend_chat_completion(
     return decoded
 
 
+def _open_backend_chat_completion_stream(
+    runtime: HostRuntimeState,
+    service: HostServiceConfig,
+    payload: dict[str, object],
+) -> Any:
+    backend_request = _build_backend_request(runtime, service, payload)
+    try:
+        return request.urlopen(backend_request, timeout=30)
+    except error.HTTPError as exc:
+        detail = _read_upstream_error(exc)
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_GATEWAY,
+            f"backend chat completion request failed with status {exc.code}: {detail}",
+            error_type="server_error",
+        ) from exc
+    except error.URLError as exc:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_GATEWAY,
+            f"failed to reach backend inference service: {exc.reason}",
+            error_type="server_error",
+        ) from exc
+    except OSError as exc:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_GATEWAY,
+            f"backend inference request failed: {exc}",
+            error_type="server_error",
+        ) from exc
+
+
+def _build_backend_request(
+    runtime: HostRuntimeState,
+    service: HostServiceConfig,
+    payload: dict[str, object],
+) -> request.Request:
+    backend_base_url = (
+        runtime.backend_process.base_url
+        if runtime.backend_process is not None
+        else service.normalized().backend_base_url
+    )
+    url = f"{backend_base_url}{CHAT_COMPLETIONS_ENDPOINT}"
+    body = json.dumps(payload).encode("utf-8")
+    return request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+
+
 def _read_upstream_error(exc: error.HTTPError) -> str:
     try:
         body = exc.read().decode("utf-8")
@@ -312,27 +486,84 @@ def _read_upstream_error(exc: error.HTTPError) -> str:
     return body.strip().splitlines()[0][:400]
 
 
+def _iter_backend_chat_completion_stream(upstream_response: Any) -> Iterator[dict[str, object]]:
+    for data in _iter_sse_data_frames(upstream_response):
+        if data == "[DONE]":
+            return
+        try:
+            decoded = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_GATEWAY,
+                f"backend returned invalid streaming JSON: {exc}",
+                error_type="server_error",
+            ) from exc
+        if not isinstance(decoded, dict):
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_GATEWAY,
+                "backend returned a non-object JSON stream chunk",
+                error_type="server_error",
+            )
+        yield decoded
+
+
+def _iter_sse_data_frames(upstream_response: Any) -> Iterator[str]:
+    pending_data: list[str] = []
+    try:
+        iterator = iter(upstream_response)
+        for raw_line in iterator:
+            try:
+                line = raw_line.decode("utf-8").rstrip("\r\n")
+            except UnicodeDecodeError as exc:
+                raise ResponsesProxyError(
+                    HTTPStatus.BAD_GATEWAY,
+                    f"backend returned invalid UTF-8 in streaming response: {exc}",
+                    error_type="server_error",
+                ) from exc
+
+            if not line:
+                if pending_data:
+                    yield "\n".join(pending_data)
+                    pending_data = []
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                pending_data.append(line[5:].lstrip())
+        if pending_data:
+            yield "\n".join(pending_data)
+    except OSError as exc:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_GATEWAY,
+            f"failed while reading backend streaming response: {exc}",
+            error_type="server_error",
+        ) from exc
+
+
 def _build_open_responses_payload(
     request_payload: dict[str, object],
     *,
     model_name: str,
     backend_response: dict[str, object],
+    response_id: str | None = None,
+    message_id: str | None = None,
+    created_at: int | None = None,
 ) -> dict[str, object]:
     output_text = _extract_backend_output_text(backend_response)
     usage_payload = _translate_usage_payload(backend_response.get("usage"))
-    response_id = f"resp_{uuid4().hex}"
-    message_id = f"msg_{uuid4().hex}"
-    created_at = _response_timestamp(backend_response.get("created"))
+    resolved_response_id = response_id or f"resp_{uuid4().hex}"
+    resolved_message_id = message_id or f"msg_{uuid4().hex}"
+    resolved_created_at = created_at or _response_timestamp(backend_response.get("created"))
 
     payload: dict[str, object] = {
-        "id": response_id,
+        "id": resolved_response_id,
         "object": "response",
-        "created_at": created_at,
+        "created_at": resolved_created_at,
         "status": "completed",
         "model": model_name,
         "output": [
             {
-                "id": message_id,
+                "id": resolved_message_id,
                 "type": "message",
                 "status": "completed",
                 "role": "assistant",
@@ -395,6 +626,105 @@ def _extract_backend_output_text(payload: dict[str, object]) -> str:
         "backend response did not contain assistant text output",
         error_type="server_error",
     )
+
+
+def _extract_backend_delta_text(payload: dict[str, object]) -> str | None:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        if isinstance(payload.get("usage"), dict):
+            return None
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_GATEWAY,
+            "backend stream chunk did not contain any completion choices",
+            error_type="server_error",
+        )
+
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_GATEWAY,
+            "backend stream choice had an invalid shape",
+            error_type="server_error",
+        )
+
+    delta = first_choice.get("delta")
+    if isinstance(delta, dict):
+        content = _extract_text_content(delta.get("content"))
+        if content is not None:
+            return content
+
+    message = first_choice.get("message")
+    if isinstance(message, dict):
+        content = _extract_text_content(message.get("content"))
+        if content is not None:
+            return content
+
+    text = first_choice.get("text")
+    if isinstance(text, str):
+        return text
+
+    return None
+
+
+def _build_in_progress_responses_payload(
+    request_payload: dict[str, object],
+    *,
+    model_name: str,
+    response_id: str,
+    created_at: int,
+) -> dict[str, object]:
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": created_at,
+        "status": "in_progress",
+        "model": model_name,
+        "output": [],
+        "output_text": "",
+        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "error": None,
+        "incomplete_details": None,
+        "instructions": request_payload.get("instructions"),
+        "max_output_tokens": request_payload.get("max_output_tokens"),
+        "metadata": request_payload.get("metadata") if isinstance(request_payload.get("metadata"), dict) else {},
+        "parallel_tool_calls": False,
+        "temperature": request_payload.get("temperature"),
+        "text": request_payload.get("text") if isinstance(request_payload.get("text"), dict) else None,
+        "tool_choice": "none",
+        "tools": [],
+        "top_p": request_payload.get("top_p"),
+        "truncation": "disabled",
+    }
+
+
+def _synthesize_backend_response(
+    *,
+    model_name: str,
+    created_at: int,
+    output_text: str,
+    usage_value: object,
+) -> dict[str, object]:
+    return {
+        "object": "chat.completion",
+        "model": model_name,
+        "created": created_at,
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": output_text},
+            }
+        ],
+        "usage": usage_value if isinstance(usage_value, dict) else {},
+    }
+
+
+def _stream_error_event(exc: ResponsesProxyError) -> dict[str, object]:
+    payload = exc.to_payload()
+    return {
+        "type": "error",
+        "error": payload["error"],
+    }
 
 
 def _translate_usage_payload(value: object) -> dict[str, int]:
