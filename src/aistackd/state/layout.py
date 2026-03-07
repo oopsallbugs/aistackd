@@ -9,6 +9,7 @@ from aistackd.frontends.catalog import SUPPORTED_FRONTENDS
 from aistackd.models.sources import BACKEND_ACQUISITION_POLICY, MODEL_SOURCE_POLICY, PRIMARY_BACKEND
 from aistackd.runtime.modes import all_runtime_modes
 from aistackd.skills.catalog import BASELINE_SKILLS, SHARED_SKILLS_DIRECTORY_NAME, SHARED_TOOLS_DIRECTORY_NAME
+from aistackd.state.host import HostStatePaths
 from aistackd.state.profiles import ProfileStatePaths
 from aistackd.state.sync import SyncStatePaths
 
@@ -46,6 +47,7 @@ class ProjectLayout:
         root = project_root.resolve()
         package_root = root / "src" / "aistackd"
         profile_paths = ProfileStatePaths.from_project_root(root)
+        host_paths = HostStatePaths.from_project_root(root)
         sync_paths = SyncStatePaths.from_project_root(root)
 
         scaffold_paths = (
@@ -67,6 +69,9 @@ class ProjectLayout:
             PathCheck("runtime_state_root", str(profile_paths.runtime_state_root), profile_paths.runtime_state_root.exists()),
             PathCheck("profile_store", str(profile_paths.profiles_dir), profile_paths.profiles_dir.exists()),
             PathCheck("active_profile_file", str(profile_paths.active_profile_path), profile_paths.active_profile_path.exists()),
+            PathCheck("host_state_dir", str(host_paths.host_dir), host_paths.host_dir.exists()),
+            PathCheck("host_runtime_file", str(host_paths.runtime_state_path), host_paths.runtime_state_path.exists()),
+            PathCheck("installed_models_file", str(host_paths.installed_models_path), host_paths.installed_models_path.exists()),
             PathCheck("sync_state_dir", str(sync_paths.sync_dir), sync_paths.sync_dir.exists()),
             PathCheck("ownership_manifest_file", str(sync_paths.ownership_manifest_path), sync_paths.ownership_manifest_path.exists()),
         )

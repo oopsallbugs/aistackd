@@ -230,6 +230,99 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["model"], "refined-model")
             self.assertTrue(payload["active"])
 
+    def test_models_search_install_activate_and_host_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exit_code, stdout, stderr = invoke(["models", "recommend", "--project-root", tmpdir, "--format", "json"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertGreaterEqual(len(payload["models"]), 2)
+            self.assertEqual(payload["models"][0]["source"], "llmfit")
+
+            exit_code, stdout, stderr = invoke(
+                [
+                    "models",
+                    "install",
+                    "qwen2.5-coder-7b-instruct-q4-k-m",
+                    "--project-root",
+                    tmpdir,
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "installed")
+            self.assertEqual(payload["model"]["source"], "llmfit")
+            self.assertIsNone(payload["active_model"])
+
+            exit_code, stdout, stderr = invoke(["models", "installed", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("installed_models: 1", stdout)
+            self.assertIn("qwen2.5-coder-7b-instruct-q4-k-m: source=llmfit", stdout)
+
+            exit_code, stdout, stderr = invoke(
+                [
+                    "models",
+                    "activate",
+                    "qwen2.5-coder-7b-instruct-q4-k-m",
+                    "--project-root",
+                    tmpdir,
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "activated")
+            self.assertEqual(payload["runtime"]["active_model"], "qwen2.5-coder-7b-instruct-q4-k-m")
+            self.assertEqual(payload["runtime"]["activation_state"], "ready")
+
+            exit_code, stdout, stderr = invoke(["host", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("host runtime state", stdout)
+            self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
+            self.assertIn("installed_models: 1", stdout)
+
+            exit_code, stdout, stderr = invoke(["host", "validate", "--project-root", tmpdir, "--format", "json"])
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertFalse(payload["ok"])
+            self.assertIn(
+                "api key environment variable 'AISTACKD_API_KEY' is not set or empty",
+                payload["errors"],
+            )
+
+            with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                exit_code, stdout, stderr = invoke(["host", "validate", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("host validation", stdout)
+            self.assertIn("status: ok", stdout)
+            self.assertIn("base_url: http://127.0.0.1:8000", stdout)
+
+            with patch("aistackd.cli.commands.host.serve_control_plane") as serve_mock:
+                with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                    exit_code, stdout, stderr = invoke(["host", "serve", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("control plane serving", stdout)
+            self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
+            serve_mock.assert_called_once()
+
     def test_sync_preview_uses_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             invoke(

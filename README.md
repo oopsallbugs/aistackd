@@ -6,7 +6,7 @@ The current repo state provides:
 
 - a `src/aistackd` package skeleton
 - a minimal CLI surface for `host`, `client`, `profiles`, `models`, `sync`, and `doctor`
-- early contract modules for runtime, profiles, models, frontend sync, skills, and state
+- early contract modules for runtime, profiles, host model state, frontend sync, skills, and state
 - shared content roots under `skills/` and `tools/`
 - stdlib-only tests and a basic GitHub Actions workflow
 
@@ -32,10 +32,15 @@ PYTHONPATH=src python -m aistackd profiles validate
 PYTHONPATH=src python -m aistackd client
 PYTHONPATH=src python -m aistackd models
 PYTHONPATH=src python -m aistackd models set refined-model
+PYTHONPATH=src python -m aistackd models recommend
+PYTHONPATH=src python -m aistackd models install qwen2.5-coder-7b-instruct-q4-k-m --activate
+PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host validate
+PYTHONPATH=src python -m aistackd host
+PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host serve
 PYTHONPATH=src python -m aistackd sync --target codex --dry-run
 PYTHONPATH=src python -m aistackd sync --write
 ```
 
 ## Current Scope
 
-The repo is still intentionally thin overall. Model acquisition and host-side activation remain placeholder, but profile-scoped model selection, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests are now implemented.
+The repo is still intentionally thin overall. Actual downloads, hardware detection, backend process management, and inference execution are still not implemented, but profile-scoped target model selection, deterministic model-source search/recommendation, host-side installed/active model state, local host validation, authenticated `GET /health` and `GET /v1/models` control-plane endpoints, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests are now implemented.
