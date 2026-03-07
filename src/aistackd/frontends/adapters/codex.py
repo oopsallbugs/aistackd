@@ -19,7 +19,6 @@ CODEX_PROVIDER_CONFIG_PATH = Path(".codex") / "config.toml"
 CODEX_SKILLS_ROOT = Path(".codex") / "skills"
 CODEX_PROFILE_NAME = "aistackd"
 CODEX_PROVIDER_ID = "aistackd"
-CODEX_DEFAULT_MODEL = "default"
 CODEX_WIRE_API = "responses"
 
 
@@ -44,7 +43,7 @@ class CodexAdapter:
             "profiles": {
                 CODEX_PROFILE_NAME: {
                     "model_provider": CODEX_PROVIDER_ID,
-                    "model": CODEX_DEFAULT_MODEL,
+                    "model": runtime_config.model,
                 }
             },
             "model_providers": {

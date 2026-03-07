@@ -19,6 +19,7 @@ class SyncWriteTests(unittest.TestCase):
             name="local",
             base_url="http://127.0.0.1:8000",
             api_key_env="AISTACKD_API_KEY",
+            model="local-model",
         )
         runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode"))
         manifest = SyncManifest.create(runtime_config, SyncRequest.create(runtime_config.frontend_targets))
@@ -46,6 +47,7 @@ class SyncWriteTests(unittest.TestCase):
             name="lab-host",
             base_url="http://10.0.0.25:8000",
             api_key_env="AISTACKD_API_KEY",
+            model="lab-model",
         )
         runtime_config = RuntimeConfig.for_client(profile, ("opencode",))
         manifest = SyncManifest.create(
@@ -59,6 +61,10 @@ class SyncWriteTests(unittest.TestCase):
             payload = result.to_dict()
             self.assertEqual(payload["manifest"]["active_profile"], "lab-host")
             self.assertIn("opencode.json", "\n".join(payload["written_paths"]))
+            self.assertEqual(
+                payload["manifest"]["targets"][0]["provider_payload"]["provider"]["aistackd"]["models"]["lab-model"]["name"],
+                "lab-model",
+            )
             ownership_payload = json.loads(Path(result.ownership_manifest_path).read_text(encoding="utf-8"))
             self.assertEqual(ownership_payload["targets"][0]["frontend"], "opencode")
 
@@ -67,6 +73,7 @@ class SyncWriteTests(unittest.TestCase):
             name="local",
             base_url="http://127.0.0.1:8000",
             api_key_env="AISTACKD_API_KEY",
+            model="local-model",
         )
         full_runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode"))
         codex_only_runtime_config = RuntimeConfig.for_client(profile, ("codex",))
@@ -117,6 +124,7 @@ class SyncWriteTests(unittest.TestCase):
             name="local",
             base_url="http://127.0.0.1:8000",
             api_key_env="AISTACKD_API_KEY",
+            model="local-model",
         )
         full_runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode"))
         opencode_only_runtime_config = RuntimeConfig.for_client(profile, ("opencode",))

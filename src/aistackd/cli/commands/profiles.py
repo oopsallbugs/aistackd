@@ -38,6 +38,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     add_parser.add_argument("name", help="profile name")
     add_parser.add_argument("--base-url", required=True, help="backend base URL for the profile")
     add_parser.add_argument("--api-key-env", required=True, help="environment variable containing the API key")
+    add_parser.add_argument("--model", required=True, help="active model for the profile")
     add_parser.add_argument(
         "--role-hint",
         choices=ALLOWED_PROFILE_ROLE_HINTS,
@@ -83,7 +84,10 @@ def handle_list(args: argparse.Namespace) -> int:
     print(f"profiles: {len(profiles)}")
     for profile in profiles:
         active_marker = "*" if profile.name == active_profile_name else " "
-        line = f"{active_marker} {profile.name}: {profile.base_url} api_key_env={profile.api_key_env}"
+        line = (
+            f"{active_marker} {profile.name}: {profile.base_url} "
+            f"api_key_env={profile.api_key_env} model={profile.model}"
+        )
         if profile.role_hint is not None:
             line += f" role_hint={profile.role_hint}"
         print(line)
@@ -110,6 +114,7 @@ def handle_show(args: argparse.Namespace) -> int:
     print(f"name: {profile.name}")
     print(f"base_url: {profile.base_url}")
     print(f"api_key_env: {profile.api_key_env}")
+    print(f"model: {profile.model}")
     print(f"schema_version: {profile.schema_version}")
     print(f"active: {'yes' if payload['active'] else 'no'}")
     if profile.role_hint is not None:
@@ -125,6 +130,7 @@ def handle_add(args: argparse.Namespace) -> int:
         name=args.name,
         base_url=args.base_url,
         api_key_env=args.api_key_env,
+        model=args.model,
         role_hint=args.role_hint,
         description=args.description,
     )

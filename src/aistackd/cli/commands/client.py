@@ -50,6 +50,7 @@ def handle(args: argparse.Namespace) -> int:
     print(f"base_url: {runtime_config.base_url}")
     print(f"responses_base_url: {runtime_config.responses_base_url}")
     print(f"api_key_env: {runtime_config.api_key_env}")
+    print(f"model: {runtime_config.model}")
     print(f"frontend_targets: {', '.join(runtime_config.frontend_targets)}")
     if runtime_config.profile_role_hint is not None:
         print(f"profile_role_hint: {runtime_config.profile_role_hint}")

@@ -20,7 +20,6 @@ OPENCODE_PROVIDER_KEY = "aistackd"
 OPENCODE_PROVIDER_NPM = "@ai-sdk/openai-compatible"
 OPENCODE_PROVIDER_CONFIG_PATH = Path("opencode.json")
 OPENCODE_SKILLS_ROOT = Path(".opencode") / "skills"
-OPENCODE_DEFAULT_MODEL = "default"
 
 
 class OpenCodeAdapter:
@@ -47,15 +46,15 @@ class OpenCodeAdapter:
                     "name": "aistackd",
                     "options": {"baseURL": runtime_config.responses_base_url},
                     "models": {
-                        OPENCODE_DEFAULT_MODEL: {
-                            "name": OPENCODE_DEFAULT_MODEL,
+                        runtime_config.frontend_model_key: {
+                            "name": runtime_config.model,
                             "tools": True,
                             "limit": {"context": 32768, "output": 8192},
                         }
                     },
                 }
             },
-            "model": f"{OPENCODE_PROVIDER_KEY}/{OPENCODE_DEFAULT_MODEL}",
+            "model": f"{OPENCODE_PROVIDER_KEY}/{runtime_config.frontend_model_key}",
         }
         return FrontendAdapterPlan(
             frontend=self.name,

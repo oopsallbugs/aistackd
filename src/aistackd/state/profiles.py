@@ -10,16 +10,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from aistackd.models.selection import normalize_model_name, validate_model_name
+
 RUNTIME_STATE_DIRECTORY_NAME = ".aistackd"
 PROFILES_DIRECTORY_NAME = "profiles"
 ACTIVE_PROFILE_FILE_NAME = "active_profile"
 PROFILE_FILE_SUFFIX = ".json"
-CURRENT_PROFILE_SCHEMA_VERSION = "v1alpha1"
+CURRENT_PROFILE_SCHEMA_VERSION = "v1alpha2"
 ALLOWED_PROFILE_ROLE_HINTS = ("host", "client", "hybrid", "remote_host", "local")
 
 _PROFILE_NAME_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
 _ENVIRONMENT_VARIABLE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
-_REQUIRED_PROFILE_FIELDS = ("schema_version", "name", "base_url", "api_key_env")
+_REQUIRED_PROFILE_FIELDS = ("schema_version", "name", "base_url", "api_key_env", "model")
 _OPTIONAL_PROFILE_FIELDS = ("role_hint", "description")
 _KNOWN_PROFILE_FIELDS = set(_REQUIRED_PROFILE_FIELDS + _OPTIONAL_PROFILE_FIELDS)
 
@@ -71,6 +73,7 @@ class Profile:
     name: str
     base_url: str
     api_key_env: str
+    model: str
     role_hint: str | None = None
     description: str | None = None
     schema_version: str = CURRENT_PROFILE_SCHEMA_VERSION
@@ -91,6 +94,7 @@ class Profile:
             name=_require_string(payload, "name"),
             base_url=_require_string(payload, "base_url"),
             api_key_env=_require_string(payload, "api_key_env"),
+            model=_require_string(payload, "model"),
             role_hint=_optional_string(payload, "role_hint"),
             description=_optional_string(payload, "description"),
         ).normalized()
@@ -109,9 +113,22 @@ class Profile:
             name=self.name.strip(),
             base_url=normalized_base_url,
             api_key_env=self.api_key_env.strip(),
+            model=normalize_model_name(self.model),
             role_hint=normalized_role_hint or None,
             description=normalized_description or None,
         )
+
+    def with_model(self, model: str) -> "Profile":
+        """Return a copy with an updated model selection."""
+        return Profile(
+            schema_version=self.schema_version,
+            name=self.name,
+            base_url=self.base_url,
+            api_key_env=self.api_key_env,
+            model=model,
+            role_hint=self.role_hint,
+            description=self.description,
+        ).normalized()
 
     def definition_errors(self) -> tuple[str, ...]:
         """Return structural validation errors for this profile."""
@@ -138,6 +155,8 @@ class Profile:
         if not _ENVIRONMENT_VARIABLE_RE.fullmatch(self.api_key_env):
             messages.append("api_key_env must be a valid uppercase environment variable name")
 
+        messages.extend(validate_model_name(self.model))
+
         if self.role_hint is not None and self.role_hint not in ALLOWED_PROFILE_ROLE_HINTS:
             messages.append(
                 f"role_hint must be one of: {', '.join(ALLOWED_PROFILE_ROLE_HINTS)}"
@@ -158,6 +177,7 @@ class Profile:
             "name": self.name,
             "base_url": self.base_url,
             "api_key_env": self.api_key_env,
+            "model": self.model,
         }
         if self.role_hint is not None:
             payload["role_hint"] = self.role_hint

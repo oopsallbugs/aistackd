@@ -59,6 +59,8 @@ class CLITests(unittest.TestCase):
                     "http://127.0.0.1:8000",
                     "--api-key-env",
                     "AISTACKD_API_KEY",
+                    "--model",
+                    "local-model",
                     "--role-hint",
                     "host",
                     "--activate",
@@ -76,6 +78,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             self.assertIn("* local: http://127.0.0.1:8000", stdout)
             self.assertIn("api_key_env=AISTACKD_API_KEY", stdout)
+            self.assertIn("model=local-model", stdout)
 
             exit_code, stdout, stderr = invoke(["profiles", "show", "--project-root", tmpdir])
 
@@ -83,6 +86,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             self.assertIn("name: local", stdout)
             self.assertIn("active: yes", stdout)
+            self.assertIn("model: local-model", stdout)
             self.assertIn("role_hint: host", stdout)
 
     def test_profiles_validate_reports_missing_api_key(self) -> None:
@@ -98,6 +102,8 @@ class CLITests(unittest.TestCase):
                     "http://10.0.0.50:8080",
                     "--api-key-env",
                     "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
                 ]
             )
 
@@ -127,6 +133,8 @@ class CLITests(unittest.TestCase):
                     "http://127.0.0.1:8000",
                     "--api-key-env",
                     "AISTACKD_API_KEY",
+                    "--model",
+                    "local-model",
                     "--activate",
                 ]
             )
@@ -152,6 +160,8 @@ class CLITests(unittest.TestCase):
                     "http://127.0.0.1:8000",
                     "--api-key-env",
                     "AISTACKD_API_KEY",
+                    "--model",
+                    "local-model",
                     "--role-hint",
                     "host",
                     "--activate",
@@ -165,7 +175,60 @@ class CLITests(unittest.TestCase):
             self.assertIn("client runtime config", stdout)
             self.assertIn("active_profile: local", stdout)
             self.assertIn("responses_base_url: http://127.0.0.1:8000/v1", stdout)
+            self.assertIn("model: local-model", stdout)
             self.assertIn("frontend_targets: codex, opencode", stdout)
+
+    def test_models_show_list_and_set_active_profile_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "local",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_API_KEY",
+                    "--model",
+                    "local-model",
+                    "--activate",
+                ]
+            )
+
+            exit_code, stdout, stderr = invoke(["models", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("profile: local", stdout)
+            self.assertIn("model: local-model", stdout)
+
+            exit_code, stdout, stderr = invoke(["models", "list", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("* local: local-model", stdout)
+
+            exit_code, stdout, stderr = invoke(
+                ["models", "set", "refined-model", "--project-root", tmpdir, "--format", "json"]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "updated")
+            self.assertEqual(payload["profile"]["profile"], "local")
+            self.assertEqual(payload["profile"]["model"], "refined-model")
+
+            exit_code, stdout, stderr = invoke(["models", "--project-root", tmpdir, "--format", "json"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["profile"], "local")
+            self.assertEqual(payload["model"], "refined-model")
+            self.assertTrue(payload["active"])
 
     def test_sync_preview_uses_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -180,6 +243,8 @@ class CLITests(unittest.TestCase):
                     "http://127.0.0.1:8000",
                     "--api-key-env",
                     "AISTACKD_API_KEY",
+                    "--model",
+                    "local-model",
                     "--activate",
                 ]
             )
@@ -200,6 +265,10 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["targets"][0]["provider_base_url"], "http://127.0.0.1:8000/v1")
             self.assertEqual(payload["targets"][0]["provider_config_path"], ".codex/config.toml")
             self.assertEqual(payload["targets"][0]["activation_mode"], "project_local")
+            self.assertEqual(
+                payload["targets"][0]["provider_payload"]["profiles"]["aistackd"]["model"],
+                "local-model",
+            )
 
             exit_code, stdout, stderr = invoke(["sync", "--project-root", tmpdir, "--target", "codex"])
 
@@ -243,6 +312,8 @@ class CLITests(unittest.TestCase):
                     "http://127.0.0.1:8000",
                     "--api-key-env",
                     "AISTACKD_API_KEY",
+                    "--model",
+                    "local-model",
                     "--activate",
                 ]
             )
@@ -258,7 +329,11 @@ class CLITests(unittest.TestCase):
             self.assertEqual(opencode_payload["custom"], {"keep": True})
             self.assertIn("existing", opencode_payload["provider"])
             self.assertIn("aistackd", opencode_payload["provider"])
-            self.assertEqual(opencode_payload["model"], "aistackd/default")
+            self.assertEqual(opencode_payload["model"], "aistackd/local-model")
+            self.assertEqual(
+                opencode_payload["provider"]["aistackd"]["models"]["local-model"]["name"],
+                "local-model",
+            )
 
             codex_payload = tomllib.loads(
                 (Path(tmpdir) / ".codex" / "config.toml").read_text(encoding="utf-8")
@@ -268,7 +343,7 @@ class CLITests(unittest.TestCase):
                 codex_payload["profiles"]["aistackd"]["model_provider"],
                 "aistackd",
             )
-            self.assertEqual(codex_payload["profiles"]["aistackd"]["model"], "default")
+            self.assertEqual(codex_payload["profiles"]["aistackd"]["model"], "local-model")
             self.assertEqual(
                 codex_payload["model_providers"]["aistackd"]["base_url"],
                 "http://127.0.0.1:8000/v1",

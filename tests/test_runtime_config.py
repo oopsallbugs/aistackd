@@ -15,6 +15,7 @@ class RuntimeConfigTests(unittest.TestCase):
             name="local",
             base_url="http://127.0.0.1:8000/",
             api_key_env="AISTACKD_API_KEY",
+            model="local-model",
             role_hint="host",
         )
 
@@ -25,6 +26,8 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(runtime_config.active_profile, "local")
         self.assertEqual(runtime_config.base_url, "http://127.0.0.1:8000")
         self.assertEqual(runtime_config.responses_base_url, "http://127.0.0.1:8000/v1")
+        self.assertEqual(runtime_config.model, "local-model")
+        self.assertEqual(runtime_config.frontend_model_key, "local-model")
         self.assertEqual(runtime_config.frontend_targets, ("codex",))
 
     def test_sync_manifest_uses_runtime_config_targets(self) -> None:
@@ -32,6 +35,7 @@ class RuntimeConfigTests(unittest.TestCase):
             name="lab-host",
             base_url="http://10.0.0.25:8000",
             api_key_env="AISTACKD_LAB_HOST_API_KEY",
+            model="lab-model",
         )
         runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode"))
         request = SyncRequest.create(runtime_config.frontend_targets)
@@ -44,4 +48,12 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(len(manifest.targets), 2)
         self.assertEqual(manifest.targets[0].provider_base_url, "http://10.0.0.25:8000/v1")
         self.assertEqual(manifest.targets[0].api_key_env, "AISTACKD_LAB_HOST_API_KEY")
+        self.assertEqual(
+            manifest.targets[0].provider_payload["profiles"]["aistackd"]["model"],
+            "lab-model",
+        )
+        self.assertEqual(
+            manifest.targets[1].provider_payload["provider"]["aistackd"]["models"]["lab-model"]["name"],
+            "lab-model",
+        )
         self.assertTrue(manifest.targets[0].managed_paths)

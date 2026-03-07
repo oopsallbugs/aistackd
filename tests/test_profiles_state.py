@@ -24,6 +24,7 @@ class ProfileStateTests(unittest.TestCase):
                 name="local",
                 base_url="http://127.0.0.1:8000/",
                 api_key_env="AISTACKD_API_KEY",
+                model="local-model",
                 role_hint="host",
                 description="Local control plane",
             )
@@ -37,6 +38,7 @@ class ProfileStateTests(unittest.TestCase):
             self.assertEqual(store.get_active_profile_name(), "local")
             self.assertEqual(reloaded.schema_version, CURRENT_PROFILE_SCHEMA_VERSION)
             self.assertEqual(reloaded.base_url, "http://127.0.0.1:8000")
+            self.assertEqual(reloaded.model, "local-model")
             self.assertEqual(reloaded.role_hint, "host")
             self.assertEqual(reloaded.description, "Local control plane")
 
@@ -50,6 +52,21 @@ class ProfileStateTests(unittest.TestCase):
                         name="Local Host",
                         base_url="http://127.0.0.1:8000",
                         api_key_env="AISTACKD_API_KEY",
+                        model="local-model",
+                    )
+                )
+
+    def test_profile_store_rejects_models_with_whitespace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ProfileStore(Path(tmpdir))
+
+            with self.assertRaises(ProfileValidationError):
+                store.save_profile(
+                    Profile(
+                        name="local",
+                        base_url="http://127.0.0.1:8000",
+                        api_key_env="AISTACKD_API_KEY",
+                        model="bad model",
                     )
                 )
 
@@ -61,6 +78,7 @@ class ProfileStateTests(unittest.TestCase):
                     name="lab-host",
                     base_url="http://10.0.0.25:8000",
                     api_key_env="AISTACKD_LAB_HOST_API_KEY",
+                    model="lab-model",
                     role_hint="remote_host",
                 )
             )

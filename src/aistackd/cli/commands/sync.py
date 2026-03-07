@@ -83,6 +83,7 @@ def handle(args: argparse.Namespace) -> int:
         print("sync write")
         print(f"active_profile: {result.manifest.active_profile}")
         print(f"mode: {result.manifest.mode}")
+        print(f"model: {runtime_config.model}")
         print(f"ownership_manifest: {result.ownership_manifest_path}")
         for target in result.manifest.targets:
             print(f"frontend: {target.frontend}")
@@ -105,6 +106,7 @@ def handle(args: argparse.Namespace) -> int:
     print("sync preview")
     print(f"active_profile: {manifest.active_profile}")
     print(f"mode: {manifest.mode}")
+    print(f"model: {runtime_config.model}")
     print(f"dry_run: {'enabled' if manifest.dry_run else 'disabled'}")
     print("write_mode: available")
     print(
