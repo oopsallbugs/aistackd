@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aistackd.models.sources import resolve_source_model
+from aistackd.models.sources import local_source_model
 from aistackd.runtime.backend_process import (
     build_backend_launch_plan,
     launch_managed_backend_process,
@@ -124,8 +124,7 @@ class _FakePopen:
 
 def _create_ready_host_state(project_root: Path) -> HostStateStore:
     store = HostStateStore(project_root)
-    source_model = resolve_source_model("qwen2.5-coder-7b-instruct-q4-k-m")
-    assert source_model is not None
+    source_model = local_source_model("qwen2.5-coder-7b-instruct-q4-k-m", source="llmfit")
     artifact_path = _create_fake_gguf(project_root, "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
     record, _ = store.install_model(
         source_model,

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aistackd.models.sources import resolve_source_model
+from aistackd.models.sources import local_source_model
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
 from aistackd.runtime.host import HostServiceConfig, validate_host_runtime
 from aistackd.state.host import HostStateStore
@@ -32,8 +32,7 @@ class HostRuntimeTests(unittest.TestCase):
     def test_validate_host_runtime_succeeds_when_active_model_and_api_key_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = HostStateStore(Path(tmpdir))
-            source_model = resolve_source_model("qwen2.5-coder-7b-instruct-q4-k-m")
-            self.assertIsNotNone(source_model)
+            source_model = local_source_model("qwen2.5-coder-7b-instruct-q4-k-m", source="llmfit")
             artifact_path = _create_fake_gguf(Path(tmpdir), "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
             record, _ = store.install_model(
                 source_model,

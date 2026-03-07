@@ -5,6 +5,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from aistackd.models.llmfit import (
+    LlmfitCommandError,
+    extract_model_entries,
+    model_context_window_from_entry,
+    model_name_from_entry,
+    model_quantization_from_entry,
+    model_summary_from_entry,
+    model_tags_from_entry,
+    run_llmfit_json_command,
+)
 from aistackd.models.selection import normalize_model_name
 
 PRIMARY_BACKEND = "llama.cpp"
@@ -14,6 +24,11 @@ LOCAL_MODEL_SOURCE = "local"
 BACKEND_ACQUISITION_POLICY = "prebuilt_first_source_fallback"
 MODEL_SOURCE_POLICY = "llmfit_first_hugging_face_fallback"
 SUPPORTED_MODEL_SOURCES = (PRIMARY_MODEL_SOURCE, FALLBACK_MODEL_SOURCE)
+LLMFIT_BINARY_NAME = "llmfit"
+
+
+class ModelSourceError(RuntimeError):
+    """Raised when model-source discovery commands cannot complete."""
 
 
 @dataclass(frozen=True)
@@ -63,162 +78,118 @@ class SourceModel:
         return payload
 
 
-class StaticModelSourceAdapter:
-    """Simple deterministic source adapter used for the contract phase."""
-
-    def __init__(self, source_name: str, catalog: Sequence[SourceModel]) -> None:
-        self.source_name = source_name
-        self._catalog = tuple(catalog)
-
-    def search(self, query: str | None = None, *, recommended_only: bool = False) -> tuple[SourceModel, ...]:
-        """Return catalog entries matching the query."""
-        matches = [
-            model
-            for model in self._catalog
-            if model.matches_query(query) and (model.recommended or not recommended_only)
-        ]
-        return tuple(sorted(matches, key=_search_sort_key))
-
-    def resolve(self, model_name: str) -> SourceModel | None:
-        """Resolve one model by its exact normalized name."""
-        normalized_name = normalize_model_name(model_name).lower()
-        for model in self._catalog:
-            if model.name.lower() == normalized_name:
-                return model
-        return None
-
-
-_LLMFIT_CATALOG = (
-    SourceModel(
-        name="qwen2.5-coder-7b-instruct-q4-k-m",
-        source=PRIMARY_MODEL_SOURCE,
-        backend=PRIMARY_BACKEND,
-        summary="balanced coding default for local development hosts",
-        context_window=32768,
-        quantization="q4_k_m",
-        recommended_rank=1,
-        tags=("coding", "balanced", "local"),
-    ),
-    SourceModel(
-        name="llama-3.1-8b-instruct-q4-k-m",
-        source=PRIMARY_MODEL_SOURCE,
-        backend=PRIMARY_BACKEND,
-        summary="general-purpose instruct model with stable baseline behavior",
-        context_window=32768,
-        quantization="q4_k_m",
-        recommended_rank=2,
-        tags=("general", "stable"),
-    ),
-    SourceModel(
-        name="deepseek-r1-distill-qwen-7b-q4-k-m",
-        source=PRIMARY_MODEL_SOURCE,
-        backend=PRIMARY_BACKEND,
-        summary="reasoning-oriented small model for constrained local hosts",
-        context_window=32768,
-        quantization="q4_k_m",
-        tags=("reasoning", "local"),
-    ),
-)
-
-_HUGGING_FACE_CATALOG = (
-    SourceModel(
-        name="qwen2.5-coder-7b-instruct-q4-k-m",
-        source=FALLBACK_MODEL_SOURCE,
-        backend=PRIMARY_BACKEND,
-        summary="fallback mirror for the recommended local coding model",
-        context_window=32768,
-        quantization="q4_k_m",
-        recommended_rank=1,
-        tags=("coding", "fallback"),
-    ),
-    SourceModel(
-        name="mistral-nemo-instruct-2407-q4-k-m",
-        source=FALLBACK_MODEL_SOURCE,
-        backend=PRIMARY_BACKEND,
-        summary="larger context instruct model available through the fallback source",
-        context_window=131072,
-        quantization="q4_k_m",
-        recommended_rank=2,
-        tags=("general", "long-context", "fallback"),
-    ),
-    SourceModel(
-        name="deepseek-r1-distill-qwen-7b-q4-k-m",
-        source=FALLBACK_MODEL_SOURCE,
-        backend=PRIMARY_BACKEND,
-        summary="fallback mirror for a smaller reasoning-oriented model",
-        context_window=32768,
-        quantization="q4_k_m",
-        tags=("reasoning", "fallback"),
-    ),
-)
-
-MODEL_SOURCE_ADAPTERS = {
-    PRIMARY_MODEL_SOURCE: StaticModelSourceAdapter(PRIMARY_MODEL_SOURCE, _LLMFIT_CATALOG),
-    FALLBACK_MODEL_SOURCE: StaticModelSourceAdapter(FALLBACK_MODEL_SOURCE, _HUGGING_FACE_CATALOG),
-}
-
-
 def model_source_order(preferred_source: str | None = None) -> tuple[str, ...]:
     """Return the source order implied by the current policy."""
     if preferred_source is None:
         return SUPPORTED_MODEL_SOURCES
-    if preferred_source not in MODEL_SOURCE_ADAPTERS:
+    if preferred_source not in SUPPORTED_MODEL_SOURCES:
         raise ValueError(
             f"unsupported model source '{preferred_source}'; expected one of: {', '.join(SUPPORTED_MODEL_SOURCES)}"
         )
     return (preferred_source,)
 
 
-def iter_model_sources(preferred_source: str | None = None) -> tuple[StaticModelSourceAdapter, ...]:
-    """Return model-source adapters in policy order."""
-    return tuple(MODEL_SOURCE_ADAPTERS[source_name] for source_name in model_source_order(preferred_source))
-
-
 def search_models(
     query: str | None = None,
     *,
-    source: str | None = None,
+    llmfit_binary: str = LLMFIT_BINARY_NAME,
     recommended_only: bool = False,
 ) -> tuple[SourceModel, ...]:
-    """Search the configured model-source adapters."""
-    results: list[SourceModel] = []
-    for adapter in iter_model_sources(source):
-        results.extend(adapter.search(query, recommended_only=recommended_only))
-    return tuple(results)
+    """Search the live llmfit catalog."""
+    if recommended_only:
+        models = recommend_models(llmfit_binary=llmfit_binary)
+        return tuple(model for model in models if model.matches_query(query))
+
+    subcommand = ("search",)
+    if query and query.strip():
+        subcommand = ("search", query.strip())
+    try:
+        _, payload = run_llmfit_json_command(subcommand, llmfit_binary=llmfit_binary)
+    except LlmfitCommandError as exc:
+        raise ModelSourceError(str(exc)) from exc
+    return _parse_llmfit_models(payload, query=query)
 
 
-def recommend_models(*, source: str | None = None) -> tuple[SourceModel, ...]:
-    """Return the recommended model set in source-priority order."""
-    return search_models(source=source, recommended_only=True)
+def recommend_models(*, llmfit_binary: str = LLMFIT_BINARY_NAME) -> tuple[SourceModel, ...]:
+    """Return the policy-ranked llmfit recommendations."""
+    try:
+        _, payload = run_llmfit_json_command(("recommend",), llmfit_binary=llmfit_binary)
+    except LlmfitCommandError as exc:
+        raise ModelSourceError(str(exc)) from exc
+    return _parse_llmfit_models(payload, recommended=True)
 
 
-def resolve_source_model(model_name: str, *, source: str | None = None) -> SourceModel | None:
+def resolve_source_model(
+    model_name: str,
+    *,
+    source: str | None = None,
+    llmfit_binary: str = LLMFIT_BINARY_NAME,
+) -> SourceModel | None:
     """Resolve one exact model name from the configured sources."""
-    for adapter in iter_model_sources(source):
-        match = adapter.resolve(model_name)
-        if match is not None:
-            return match
+    for source_name in model_source_order(source):
+        if source_name != PRIMARY_MODEL_SOURCE:
+            continue
+        matches = search_models(model_name, llmfit_binary=llmfit_binary)
+        normalized_name = normalize_model_name(model_name).lower()
+        for match in matches:
+            if match.name.lower() == normalized_name:
+                return match
     return None
 
 
 def local_source_model(
     model_name: str,
     *,
+    source: str = LOCAL_MODEL_SOURCE,
     summary: str = "local GGUF import",
     quantization: str = "unknown",
     context_window: int = 0,
     tags: Sequence[str] = ("local",),
 ) -> SourceModel:
-    """Build a synthetic local model descriptor for explicit GGUF installs."""
+    """Build a synthetic model descriptor for explicit artifact installs."""
     return SourceModel(
         name=normalize_model_name(model_name),
-        source=LOCAL_MODEL_SOURCE,
+        source=source,
         backend=PRIMARY_BACKEND,
         summary=summary,
         context_window=context_window,
         quantization=quantization,
         tags=tuple(tags),
     )
+
+
+def _parse_llmfit_models(
+    payload: object,
+    *,
+    query: str | None = None,
+    recommended: bool = False,
+) -> tuple[SourceModel, ...]:
+    models: list[SourceModel] = []
+    for index, entry in enumerate(extract_model_entries(payload), start=1):
+        name = model_name_from_entry(entry)
+        if name is None:
+            continue
+        model = SourceModel(
+            name=name,
+            source=PRIMARY_MODEL_SOURCE,
+            backend=PRIMARY_BACKEND,
+            summary=model_summary_from_entry(entry),
+            context_window=model_context_window_from_entry(entry),
+            quantization=model_quantization_from_entry(entry),
+            recommended_rank=_recommended_rank(entry, fallback=index if recommended else None),
+            tags=model_tags_from_entry(entry),
+        )
+        if model.matches_query(query):
+            models.append(model)
+    return tuple(sorted(models, key=_search_sort_key))
+
+
+def _recommended_rank(entry: dict[str, object], fallback: int | None) -> int | None:
+    for key in ("recommended_rank", "rank", "position"):
+        value = entry.get(key)
+        if isinstance(value, int) and value > 0:
+            return value
+    return fallback
 
 
 def _search_sort_key(model: SourceModel) -> tuple[int, int, str]:

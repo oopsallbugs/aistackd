@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -235,7 +236,11 @@ class CLITests(unittest.TestCase):
     def test_models_search_install_activate_and_host_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             gguf_path = _create_fake_gguf(Path(tmpdir), "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
-            exit_code, stdout, stderr = invoke(["models", "recommend", "--project-root", tmpdir, "--format", "json"])
+            with patch(
+                "aistackd.models.llmfit.subprocess.run",
+                side_effect=_fake_llmfit_recommend_subprocess_run,
+            ):
+                exit_code, stdout, stderr = invoke(["models", "recommend", "--project-root", tmpdir, "--format", "json"])
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
@@ -431,6 +436,148 @@ class CLITests(unittest.TestCase):
             self.assertTrue(Path(payload["model"]["artifact_path"]).exists())
             self.assertEqual(payload["acquisition"]["attempts"][0]["strategy"], "local_search")
             self.assertTrue(payload["acquisition"]["attempts"][0]["ok"])
+
+    def test_models_search_uses_live_llmfit_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "aistackd.models.llmfit.subprocess.run",
+                side_effect=_fake_llmfit_search_subprocess_run,
+            ):
+                exit_code, stdout, stderr = invoke(
+                    ["models", "search", "glm", "--project-root", tmpdir, "--format", "json"]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["source"], "llmfit")
+            self.assertEqual(len(payload["models"]), 2)
+            self.assertEqual(payload["models"][0]["name"], "teichai-glm-4.7-flash-claude-opus-4.5-distill")
+            self.assertEqual(payload["models"][0]["quantization"], "q4_k_m")
+
+    def test_models_browse_imports_all_new_ggufs_after_successful_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            watch_root = project_root / "llmfit-cache"
+
+            def fake_browse_run(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[object]:
+                _create_fake_gguf(watch_root, "GLM-4.7-Flash-Claude-4.5-Opus.q4_k_m.gguf")
+                _create_fake_gguf(watch_root, "Qwen2.5-Coder-7B-Instruct.Q4_K_M.gguf", payload=b"GGUF\x00qwen\n")
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout=None, stderr=None)
+
+            with patch("aistackd.models.llmfit.subprocess.run", side_effect=fake_browse_run):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "models",
+                        "browse",
+                        "--project-root",
+                        tmpdir,
+                        "--watch-root",
+                        str(watch_root),
+                        "--format",
+                        "json",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["llmfit_exit_code"], 0)
+            self.assertEqual(payload["imports"]["imported_count"], 2)
+
+            exit_code, stdout, stderr = invoke(["models", "installed", "--project-root", tmpdir, "--format", "json"])
+            self.assertEqual(exit_code, 0)
+            installed_payload = json.loads(stdout)
+            self.assertEqual(len(installed_payload["models"]), 2)
+            self.assertIsNone(installed_payload["active_model"])
+            self.assertTrue(all(model["source"] == "llmfit" for model in installed_payload["models"]))
+
+    def test_models_browse_skips_import_when_llmfit_exits_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            watch_root = project_root / "llmfit-cache"
+
+            def fake_failed_browse(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[object]:
+                _create_fake_gguf(watch_root, "GLM-4.7-Flash-Claude-4.5-Opus.q4_k_m.gguf")
+                return subprocess.CompletedProcess(args=command, returncode=2, stdout=None, stderr=None)
+
+            with patch("aistackd.models.llmfit.subprocess.run", side_effect=fake_failed_browse):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "models",
+                        "browse",
+                        "--project-root",
+                        tmpdir,
+                        "--watch-root",
+                        str(watch_root),
+                        "--format",
+                        "json",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["imports"]["imported_count"], 0)
+
+            exit_code, stdout, stderr = invoke(["models", "installed", "--project-root", tmpdir, "--format", "json"])
+            self.assertEqual(exit_code, 0)
+            installed_payload = json.loads(stdout)
+            self.assertEqual(installed_payload["models"], [])
+
+    def test_models_import_llmfit_imports_detected_watch_root_ggufs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            watch_root = Path(tmpdir) / "llmfit-cache"
+            _create_fake_gguf(watch_root, "GLM-4.7-Flash-Claude-4.5-Opus.q4_k_m.gguf")
+            _create_fake_gguf(watch_root, "Qwen2.5-Coder-7B-Instruct.Q4_K_M.gguf", payload=b"GGUF\x00qwen\n")
+
+            exit_code, stdout, stderr = invoke(
+                [
+                    "models",
+                    "import-llmfit",
+                    "--project-root",
+                    tmpdir,
+                    "--watch-root",
+                    str(watch_root),
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["imports"]["imported_count"], 2)
+
+    def test_models_install_supports_hugging_face_url_without_model_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "aistackd.models.acquisition.subprocess.run",
+                side_effect=_fake_hf_download_subprocess_run,
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "models",
+                        "install",
+                        "--project-root",
+                        tmpdir,
+                        "--hf-url",
+                        (
+                            "https://huggingface.co/TeichAI/"
+                            "GLM-4.7-Flash-Claude-Opus-4.5-High-Reasoning-Distill-GGUF"
+                            "?show_file_info=glm-4.7-flash-claude-4.5-opus.q4_k_m.gguf"
+                        ),
+                        "--format",
+                        "json",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["model"]["source"], "hugging_face")
+            self.assertEqual(payload["acquisition"]["source"], "hugging_face")
+            self.assertTrue(payload["model"]["model"].startswith("glm-4.7-flash-claude-4.5-opus"))
 
     def test_host_acquire_backend_plans_from_llmfit_when_backend_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -637,11 +784,77 @@ def _create_fake_backend_root(root: Path) -> Path:
     return backend_root
 
 
-def _create_fake_gguf(root: Path, filename: str) -> Path:
+def _create_fake_gguf(root: Path, filename: str, *, payload: bytes = b"GGUF\x00test-model\n") -> Path:
     root.mkdir(parents=True, exist_ok=True)
     artifact_path = root / filename
-    artifact_path.write_bytes(b"GGUF\x00test-model\n")
+    artifact_path.write_bytes(payload)
     return artifact_path
+
+
+def _fake_llmfit_recommend_subprocess_run(
+    command: tuple[str, ...],
+    **kwargs: object,
+) -> subprocess.CompletedProcess[str]:
+    payload = {
+        "models": [
+            {
+                "name": "qwen2.5-coder-7b-instruct-q4-k-m",
+                "description": "balanced coding default",
+                "context_length": 32768,
+                "best_quant": "Q4_K_M",
+                "provider": "llmfit",
+                "runtime": "llama.cpp",
+            },
+            {
+                "name": "llama-3.1-8b-instruct-q4-k-m",
+                "description": "general-purpose instruct model",
+                "context_length": 32768,
+                "best_quant": "Q4_K_M",
+                "provider": "llmfit",
+                "runtime": "llama.cpp",
+            },
+        ]
+    }
+    return subprocess.CompletedProcess(args=command, returncode=0, stdout=json.dumps(payload), stderr="")
+
+
+def _fake_llmfit_search_subprocess_run(
+    command: tuple[str, ...],
+    **kwargs: object,
+) -> subprocess.CompletedProcess[str]:
+    payload = {
+        "models": [
+            {
+                "name": "TeichAI/GLM-4.7-Flash-Claude-Opus-4.5-Distill",
+                "description": "high reasoning glm distill",
+                "context_length": 131072,
+                "best_quant": "Q4_K_M",
+                "provider": "TeichAI",
+                "runtime": "llama.cpp",
+            },
+            {
+                "name": "THUDM/GLM-4.5-Air",
+                "description": "lighter glm family model",
+                "context_length": 65536,
+                "best_quant": "Q4_K_M",
+                "provider": "THUDM",
+                "runtime": "llama.cpp",
+            },
+        ]
+    }
+    return subprocess.CompletedProcess(args=command, returncode=0, stdout=json.dumps(payload), stderr="")
+
+
+def _fake_hf_download_subprocess_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    local_dir = Path(command[command.index("--local-dir") + 1])
+    filename = command[3]
+    downloaded_path = _create_fake_gguf(local_dir, filename)
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=0,
+        stdout=str(downloaded_path),
+        stderr="",
+    )
 
 
 def _fake_running_backend_process(project_root: Path) -> SimpleNamespace:

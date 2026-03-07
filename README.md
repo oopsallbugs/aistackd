@@ -32,8 +32,12 @@ PYTHONPATH=src python -m aistackd profiles validate
 PYTHONPATH=src python -m aistackd client
 PYTHONPATH=src python -m aistackd models
 PYTHONPATH=src python -m aistackd models set refined-model
+PYTHONPATH=src python -m aistackd models search qwen
 PYTHONPATH=src python -m aistackd models recommend
+PYTHONPATH=src python -m aistackd models browse
+PYTHONPATH=src python -m aistackd models import-llmfit
 PYTHONPATH=src python -m aistackd models install qwen2.5-coder-7b-instruct-q4-k-m --gguf-path /path/to/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf --activate
+PYTHONPATH=src python -m aistackd models install --hf-url "https://huggingface.co/TeichAI/GLM-4.7-Flash-Claude-Opus-4.5-High-Reasoning-Distill-GGUF?show_file_info=glm-4.7-flash-claude-4.5-opus.q4_k_m.gguf"
 PYTHONPATH=src python -m aistackd models install custom-local-model --local-root /path/to/local-models
 PYTHONPATH=src python -m aistackd host inspect --backend-root /path/to/llama.cpp
 PYTHONPATH=src python -m aistackd host acquire-backend
@@ -49,4 +53,4 @@ PYTHONPATH=src python -m aistackd sync --write
 
 ## Current Scope
 
-The repo is still intentionally thin overall. Network-backed backend downloads, inference execution, and remote `llmfit` model download wiring are still not implemented, but profile-scoped target model selection, deterministic model-source search/recommendation, a managed host-side model store, explicit local GGUF import, common-root local GGUF discovery, optional Hugging Face CLI fallback, host-side installed/active model state, prerequisite inspection, `llmfit`-backed hardware detection, `llama.cpp` acquisition planning, managed prebuilt install import, managed source-build fallback, adoption of an existing `llama.cpp` installation, local host validation, managed `llama-server` process launch and persisted process state, authenticated `GET /health` and `GET /v1/models` control-plane endpoints, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests are now implemented.
+The repo is still intentionally thin overall. Inference execution beyond status endpoints and direct noninteractive `llmfit` download-provider wiring are still not implemented, but profile-scoped target model selection, live `llmfit` search/recommend, native `llmfit` TUI browse, managed import of `llmfit`-downloaded GGUFs, a managed host-side model store, explicit local GGUF import, common-root local GGUF discovery, Hugging Face CLI fallback including file-URL install, host-side installed/active model state, prerequisite inspection, `llmfit`-backed hardware detection, `llama.cpp` acquisition planning, managed prebuilt install import, managed source-build fallback, adoption of an existing `llama.cpp` installation, local host validation, managed `llama-server` process launch and persisted process state, authenticated `GET /health` and `GET /v1/models` control-plane endpoints, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests are now implemented.

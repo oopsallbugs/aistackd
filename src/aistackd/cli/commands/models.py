@@ -4,23 +4,36 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
 from aistackd.models.acquisition import (
     DEFAULT_HUGGING_FACE_CLI,
+    DEFAULT_LLMFIT_IMPORT_METHOD,
+    ManagedGgufImportReport,
     ModelAcquisitionError,
     acquire_managed_model_artifact,
+    diff_gguf_snapshots,
+    import_managed_gguf_candidates,
+    iter_llmfit_watch_roots,
+    parse_hugging_face_url,
+    snapshot_gguf_roots,
 )
+from aistackd.models.llmfit import LlmfitCommandError, launch_llmfit_browser
+from aistackd.models.selection import derive_model_name_from_artifact_name, infer_quantization_from_artifact_name
 from aistackd.models.sources import (
+    FALLBACK_MODEL_SOURCE,
+    LOCAL_MODEL_SOURCE,
+    PRIMARY_MODEL_SOURCE,
     SUPPORTED_MODEL_SOURCES,
+    ModelSourceError,
     SourceModel,
     local_source_model,
     recommend_models,
     resolve_source_model,
     search_models,
 )
+from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.state.host import HostStateError, HostStateStore, InstalledModelNotFoundError
 from aistackd.state.profiles import Profile, ProfileStore, ProfileStoreError
 
@@ -52,21 +65,27 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     )
     set_parser.set_defaults(handler=handle_set)
 
-    search_parser = command_parsers.add_parser("search", help="search available host-side model sources")
+    search_parser = command_parsers.add_parser("search", help="search the live llmfit model catalog")
     _add_common_arguments(search_parser)
+    _add_llmfit_arguments(search_parser)
     search_parser.add_argument("query", nargs="?", help="optional query string")
-    search_parser.add_argument("--source", choices=SUPPORTED_MODEL_SOURCES, help="restrict to one model source")
-    search_parser.add_argument(
-        "--recommended-only",
-        action="store_true",
-        help="only show models that are part of the recommended set",
-    )
     search_parser.set_defaults(handler=handle_search)
 
-    recommend_parser = command_parsers.add_parser("recommend", help="show policy-ranked recommended models")
+    recommend_parser = command_parsers.add_parser("recommend", help="show llmfit recommendations")
     _add_common_arguments(recommend_parser)
-    recommend_parser.add_argument("--source", choices=SUPPORTED_MODEL_SOURCES, help="restrict to one model source")
+    _add_llmfit_arguments(recommend_parser)
     recommend_parser.set_defaults(handler=handle_recommend)
+
+    browse_parser = command_parsers.add_parser("browse", help="launch the native llmfit TUI and import new GGUFs")
+    _add_common_arguments(browse_parser)
+    _add_llmfit_arguments(browse_parser)
+    _add_watch_root_arguments(browse_parser)
+    browse_parser.set_defaults(handler=handle_browse)
+
+    import_parser = command_parsers.add_parser("import-llmfit", help="import GGUFs from llmfit watch roots")
+    _add_common_arguments(import_parser)
+    _add_watch_root_arguments(import_parser)
+    import_parser.set_defaults(handler=handle_import_llmfit)
 
     installed_parser = command_parsers.add_parser("installed", help="list installed host models")
     _add_common_arguments(installed_parser)
@@ -74,7 +93,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     install_parser = command_parsers.add_parser("install", help="install a model into host state")
     _add_common_arguments(install_parser)
-    install_parser.add_argument("model", help="model identifier to install")
+    _add_llmfit_arguments(install_parser)
+    install_parser.add_argument("model", nargs="?", help="model identifier to install")
     install_parser.add_argument("--source", choices=SUPPORTED_MODEL_SOURCES, help="force one model source")
     install_parser.add_argument("--gguf-path", type=Path, help="explicit path to a local GGUF to import")
     install_parser.add_argument(
@@ -85,6 +105,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default=[],
         help="additional local root to scan for matching GGUF files",
     )
+    install_parser.add_argument("--hf-url", help="Hugging Face model/file URL to use for fallback acquisition")
     install_parser.add_argument("--hf-repo", help="Hugging Face repo to use for fallback acquisition")
     install_parser.add_argument("--hf-file", help="GGUF filename to use for Hugging Face fallback")
     install_parser.add_argument(
@@ -178,10 +199,10 @@ def handle_set(args: argparse.Namespace) -> int:
 
 
 def handle_search(args: argparse.Namespace) -> int:
-    """Search the available model-source catalogs."""
+    """Search the live llmfit catalog."""
     try:
-        models = search_models(args.query, source=args.source, recommended_only=args.recommended_only)
-    except ValueError as exc:
+        models = search_models(args.query, llmfit_binary=args.llmfit_binary)
+    except (ModelSourceError, ValueError) as exc:
         return _exit_with_error(str(exc))
 
     if args.format == "json":
@@ -189,8 +210,7 @@ def handle_search(args: argparse.Namespace) -> int:
             json.dumps(
                 {
                     "query": args.query,
-                    "source": args.source,
-                    "recommended_only": args.recommended_only,
+                    "source": PRIMARY_MODEL_SOURCE,
                     "models": [model.as_dict() for model in models],
                 },
                 indent=2,
@@ -205,17 +225,17 @@ def handle_search(args: argparse.Namespace) -> int:
 
 
 def handle_recommend(args: argparse.Namespace) -> int:
-    """Show policy-ranked recommended models."""
+    """Show policy-ranked llmfit recommendations."""
     try:
-        models = recommend_models(source=args.source)
-    except ValueError as exc:
+        models = recommend_models(llmfit_binary=args.llmfit_binary)
+    except (ModelSourceError, ValueError) as exc:
         return _exit_with_error(str(exc))
 
     if args.format == "json":
         print(
             json.dumps(
                 {
-                    "source": args.source,
+                    "source": PRIMARY_MODEL_SOURCE,
                     "models": [model.as_dict() for model in models],
                 },
                 indent=2,
@@ -227,6 +247,75 @@ def handle_recommend(args: argparse.Namespace) -> int:
     for model in models:
         print(_format_source_model_line(model))
     return 0
+
+
+def handle_browse(args: argparse.Namespace) -> int:
+    """Launch the native llmfit browser and import new or changed GGUFs."""
+    watch_roots = _watch_roots_from_args(args)
+    before = snapshot_gguf_roots(watch_roots)
+
+    try:
+        command, llmfit_exit_code = launch_llmfit_browser(llmfit_binary=args.llmfit_binary)
+    except LlmfitCommandError as exc:
+        return _exit_with_error(str(exc))
+
+    report = ManagedGgufImportReport(entries=())
+    exit_code = llmfit_exit_code
+    if llmfit_exit_code == 0:
+        after = snapshot_gguf_roots(watch_roots)
+        changed_paths = diff_gguf_snapshots(before, after)
+        report = import_managed_gguf_candidates(
+            args.project_root,
+            changed_paths,
+            source_name=PRIMARY_MODEL_SOURCE,
+            acquisition_method="llmfit_browse_import",
+        )
+        if report.failed_count:
+            exit_code = 1
+
+    payload = {
+        "action": "browse",
+        "llmfit_command": list(command),
+        "llmfit_exit_code": llmfit_exit_code,
+        "watch_roots": [str(path) for path in watch_roots],
+        "imports": report.to_dict(),
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return exit_code
+
+    print(f"llmfit_exit_code: {llmfit_exit_code}")
+    print(f"watch_roots: {', '.join(str(path) for path in watch_roots)}")
+    if llmfit_exit_code != 0:
+        print("imports_skipped: llmfit exited nonzero; no managed imports were attempted")
+        return exit_code
+    _print_import_report(report)
+    return exit_code
+
+
+def handle_import_llmfit(args: argparse.Namespace) -> int:
+    """Import all currently visible llmfit GGUFs from watched roots."""
+    watch_roots = _watch_roots_from_args(args)
+    snapshot = snapshot_gguf_roots(watch_roots)
+    report = import_managed_gguf_candidates(
+        args.project_root,
+        tuple(Path(path) for path in sorted(snapshot)),
+        source_name=PRIMARY_MODEL_SOURCE,
+        acquisition_method=DEFAULT_LLMFIT_IMPORT_METHOD,
+    )
+
+    payload = {
+        "action": "imported",
+        "watch_roots": [str(path) for path in watch_roots],
+        "imports": report.to_dict(),
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 1 if report.failed_count else 0
+
+    print(f"watch_roots: {', '.join(str(path) for path in watch_roots)}")
+    _print_import_report(report)
+    return 1 if report.failed_count else 0
 
 
 def handle_installed(args: argparse.Namespace) -> int:
@@ -258,17 +347,25 @@ def handle_installed(args: argparse.Namespace) -> int:
 def handle_install(args: argparse.Namespace) -> int:
     """Install one model into host state."""
     try:
-        if bool(args.hf_repo) != bool(args.hf_file):
+        hf_repo, hf_file = _resolve_hugging_face_inputs(args)
+        if bool(hf_repo) != bool(hf_file):
             return _exit_with_error("Hugging Face fallback requires both --hf-repo and --hf-file")
-        source_model = _resolve_install_source_model(args.model, source=args.source, gguf_path=args.gguf_path)
+        requested_model_name = _resolve_requested_model_name(args.model, gguf_path=args.gguf_path, hf_file=hf_file)
+        source_model = _resolve_install_source_model(
+            requested_model_name,
+            source=args.source,
+            gguf_path=args.gguf_path,
+            llmfit_binary=args.llmfit_binary,
+            prefer_hugging_face=hf_repo is not None,
+        )
         acquisition = acquire_managed_model_artifact(
             args.project_root,
             source_model,
             explicit_gguf_path=args.gguf_path,
             local_roots=tuple(args.local_roots),
             preferred_source=args.source,
-            hugging_face_repo=args.hf_repo,
-            hugging_face_file=args.hf_file,
+            hugging_face_repo=hf_repo,
+            hugging_face_file=hf_file,
             hugging_face_cli=args.hf_cli,
         )
         store = HostStateStore(args.project_root)
@@ -281,7 +378,7 @@ def handle_install(args: argparse.Namespace) -> int:
             sha256=acquisition.sha256,
         )
         runtime_state = store.activate_model(record.model) if args.activate else store.load_runtime_state()
-    except (HostStateError, InstalledModelNotFoundError, ModelAcquisitionError, ValueError) as exc:
+    except (HostStateError, InstalledModelNotFoundError, ModelAcquisitionError, ModelSourceError, ValueError) as exc:
         return _exit_with_error(str(exc))
 
     action = "installed" if created else "updated"
@@ -342,6 +439,25 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_llmfit_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--llmfit-binary",
+        default=LLMFIT_BINARY_NAME,
+        help=f"llmfit executable to use for discovery or browse commands (default: {LLMFIT_BINARY_NAME})",
+    )
+
+
+def _add_watch_root_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--watch-root",
+        dest="watch_roots",
+        action="append",
+        type=Path,
+        default=[],
+        help="additional root to watch for llmfit-downloaded GGUF files",
+    )
+
+
 def _profile_model_payload(profile: Profile, active_profile_name: str | None) -> dict[str, object]:
     """Build a stable JSON payload for one profile model."""
     return {
@@ -366,28 +482,76 @@ def _format_source_model_line(model: SourceModel) -> str:
     return " ".join(parts)
 
 
+def _watch_roots_from_args(args: argparse.Namespace) -> tuple[Path, ...]:
+    return iter_llmfit_watch_roots(tuple(args.watch_roots))
+
+
+def _print_import_report(report: ManagedGgufImportReport) -> None:
+    print(f"imported: {report.imported_count}")
+    print(f"skipped: {report.skipped_count}")
+    print(f"failed: {report.failed_count}")
+    for entry in report.entries:
+        print(f"{entry.action}: model={entry.model or '<unknown>'} source_path={entry.source_path} detail={entry.detail}")
+
+
+def _resolve_hugging_face_inputs(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    if args.hf_url and (args.hf_repo or args.hf_file):
+        raise ModelAcquisitionError("use either --hf-url or the --hf-repo/--hf-file pair, not both")
+    if args.hf_url:
+        reference = parse_hugging_face_url(args.hf_url)
+        if reference.filename is None:
+            raise ModelAcquisitionError(
+                "Hugging Face URL does not identify a GGUF file; provide --hf-file or a file-specific URL"
+            )
+        return reference.repo, reference.filename
+    return args.hf_repo, args.hf_file
+
+
+def _resolve_requested_model_name(
+    model_name: str | None,
+    *,
+    gguf_path: Path | None,
+    hf_file: str | None,
+) -> str:
+    if model_name is not None:
+        return model_name
+    if gguf_path is not None:
+        return derive_model_name_from_artifact_name(gguf_path.name)
+    if hf_file is not None:
+        return derive_model_name_from_artifact_name(Path(hf_file).name)
+    raise ModelAcquisitionError("model is required unless --gguf-path or --hf-url provides a GGUF filename")
+
+
 def _resolve_install_source_model(
     model_name: str,
     *,
     source: str | None,
     gguf_path: Path | None,
+    llmfit_binary: str,
+    prefer_hugging_face: bool,
 ) -> SourceModel:
-    match = resolve_source_model(model_name, source=source)
+    if prefer_hugging_face:
+        quantization = infer_quantization_from_artifact_name(model_name)
+        return local_source_model(
+            model_name,
+            source=FALLBACK_MODEL_SOURCE,
+            summary="Hugging Face GGUF install",
+            quantization=quantization,
+            tags=("hugging-face", "download"),
+        )
+
+    match: SourceModel | None = None
+    if source in (None, PRIMARY_MODEL_SOURCE):
+        try:
+            match = resolve_source_model(model_name, source=PRIMARY_MODEL_SOURCE, llmfit_binary=llmfit_binary)
+        except ModelSourceError:
+            match = None
     if match is not None:
         return match
-    quantization = _infer_quantization_from_filename(gguf_path.name) if gguf_path is not None else "unknown"
-    return local_source_model(model_name, quantization=quantization)
 
-
-def _infer_quantization_from_filename(filename: str) -> str:
-    normalized = Path(filename).stem.upper().replace("-", "_")
-    match = re.search(r"(Q\d+(?:_[A-Z0-9]+)+)", normalized)
-    if match is not None:
-        return match.group(1).lower()
-    for token in re.split(r"[._]+", normalized):
-        if token.startswith("Q") and any(character.isdigit() for character in token):
-            return token.lower()
-    return "unknown"
+    quantization = infer_quantization_from_artifact_name(gguf_path.name if gguf_path is not None else model_name)
+    synthetic_source = source or LOCAL_MODEL_SOURCE
+    return local_source_model(model_name, source=synthetic_source, quantization=quantization)
 
 
 def _exit_with_error(message: str) -> int:

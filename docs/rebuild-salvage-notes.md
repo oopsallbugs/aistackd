@@ -163,10 +163,12 @@ Worth keeping:
 
 1. tolerate log lines before JSON payloads from helper tools
 2. separate raw payload capture from normalized interpretation
+3. tolerate helper commands that claim machine-readable output but sometimes emit human-readable tables or plain-text empty-result messages instead
 
 Why it still fits:
 
 1. `llmfit` and similar tools may emit mixed human/machine output
+2. current `llmfit search --json` behavior can drift between JSON, formatted tables, and plain-text no-result output without changing the operator intent
 
 Source reference:
 

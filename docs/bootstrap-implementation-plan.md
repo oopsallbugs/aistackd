@@ -133,6 +133,15 @@ Host-side prerequisite installation is out of scope by design. The repo will val
    - install timestamp
    - install status
 8. `models install` is the mutating boundary for model artifacts; search and recommendation remain read-only
+9. `models search` and `models recommend` are `llmfit`-backed only in v1; missing models use an explicit Hugging Face file install path instead of merged fallback search
+10. `models browse` launches the native `llmfit` TUI in the current terminal, then imports all new or changed GGUF files from watched roots into managed host state when the session exits successfully
+11. successful `models browse` or `models import-llmfit` imports must never auto-activate a model; activation remains an explicit step
+12. default watched roots for llmfit reconciliation are `~/.cache/llmfit` and `~/.cache/huggingface/hub`, with explicit watch-root extension points
+13. import collision rules must be stable:
+   - same-content duplicates are skipped
+   - same normalized model id with different content gets a short-hash suffix instead of silent overwrite
+14. `models install --hf-url` is a first-class escape hatch and must accept file-specific Hugging Face URLs, including `show_file_info=<file>.gguf`
+15. `llmfit` integration stays JSON-first, but search integration must tolerate non-JSON output when `llmfit search --json` does not honor the requested machine format in practice
 
 ### Frontend Integration
 
@@ -291,6 +300,7 @@ Acceptance gates:
 1. Ubuntu reference host can serve one model through the control plane
 2. source fallback works when prebuilt acquisition is unavailable
 3. explicit local GGUF install works without network access
+4. successful llmfit browse/import stages all new GGUF artifacts into managed host state without changing the active model
 
 ### Phase 3: Client Runtime
 
@@ -344,7 +354,9 @@ The implementation is not complete until these scenarios pass:
 5. `llmfit` download path failure with controlled Hugging Face fallback
 6. prebuilt backend unavailable with successful source fallback
 7. explicit local GGUF install succeeds and is activated from managed host state
-8. Arch host manual acceptance
+8. missing model in llmfit search still installs from an explicit Hugging Face file URL
+9. successful llmfit browse session imports multiple new GGUFs without auto-activation
+10. Arch host manual acceptance
 
 ## 12. Risks And Controls
 
@@ -362,6 +374,8 @@ Control:
 
 1. keep detection/recommendation and download responsibilities separate
 2. preserve Hugging Face fallback from the start
+3. keep native llmfit TUI browsing separate from managed runtime artifact ownership
+4. prefer JSON integration, but tolerate search-output format drift without breaking model discovery
 
 ### Risk: Frontend sync becomes too broad
 

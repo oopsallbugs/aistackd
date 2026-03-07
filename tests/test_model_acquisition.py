@@ -8,8 +8,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aistackd.models.acquisition import acquire_managed_model_artifact, discover_local_gguf
-from aistackd.models.sources import resolve_source_model
+from aistackd.models.acquisition import (
+    acquire_managed_model_artifact,
+    discover_local_gguf,
+    import_managed_gguf_candidates,
+    parse_hugging_face_url,
+)
+from aistackd.models.sources import local_source_model
 
 
 class ModelAcquisitionTests(unittest.TestCase):
@@ -18,8 +23,7 @@ class ModelAcquisitionTests(unittest.TestCase):
             project_root = Path(tmpdir) / "project"
             project_root.mkdir()
             artifact_path = _create_fake_gguf(Path(tmpdir) / "imports", "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
-            source_model = resolve_source_model("qwen2.5-coder-7b-instruct-q4-k-m")
-            self.assertIsNotNone(source_model)
+            source_model = local_source_model("qwen2.5-coder-7b-instruct-q4-k-m")
 
             result = acquire_managed_model_artifact(
                 project_root,
@@ -52,8 +56,7 @@ class ModelAcquisitionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir) / "project"
             project_root.mkdir()
-            source_model = resolve_source_model("qwen2.5-coder-7b-instruct-q4-k-m")
-            self.assertIsNotNone(source_model)
+            source_model = local_source_model("qwen2.5-coder-7b-instruct-q4-k-m", source="llmfit")
 
             with patch(
                 "aistackd.models.acquisition.subprocess.run",
@@ -76,11 +79,64 @@ class ModelAcquisitionTests(unittest.TestCase):
             self.assertTrue(result.attempts[2].ok)
             self.assertTrue(Path(result.artifact_path).exists())
 
+    def test_import_managed_gguf_candidates_skips_duplicates_and_suffixes_hash_collisions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "project"
+            project_root.mkdir()
+            imports_root = Path(tmpdir) / "imports"
+            first_path = _create_fake_gguf(imports_root, "GLM-4.7-Flash-Claude-4.5-Opus.Q4_K_M.gguf")
+            second_path = _create_fake_gguf(
+                imports_root,
+                "GLM-4.7-Flash-Claude-4.5-Opus-v2.Q4_K_M.gguf",
+                payload=b"GGUF\x00different-model\n",
+            )
+            duplicate_copy = _create_fake_gguf(
+                imports_root / "nested",
+                "GLM-4.7-Flash-Claude-4.5-Opus-copy.Q4_K_M.gguf",
+                payload=first_path.read_bytes(),
+            )
+            same_name_duplicate = _create_fake_gguf(
+                imports_root / "mirrored",
+                "GLM-4.7-Flash-Claude-4.5-Opus.Q4_K_M.gguf",
+                payload=first_path.read_bytes(),
+            )
 
-def _create_fake_gguf(root: Path, filename: str) -> Path:
+            first_report = import_managed_gguf_candidates(project_root, (first_path,), source_name="llmfit")
+            duplicate_report = import_managed_gguf_candidates(
+                project_root,
+                (first_path, same_name_duplicate, duplicate_copy),
+                source_name="llmfit",
+            )
+            collision_report = import_managed_gguf_candidates(
+                project_root,
+                (second_path,),
+                source_name="llmfit",
+            )
+
+            self.assertEqual(first_report.imported_count, 1)
+            self.assertEqual(duplicate_report.skipped_count, 2)
+            self.assertEqual(duplicate_report.imported_count, 1)
+            self.assertEqual(collision_report.imported_count, 1)
+            self.assertEqual(collision_report.entries[0].action, "imported")
+            self.assertEqual(
+                collision_report.entries[0].model,
+                "glm-4.7-flash-claude-4.5-opus-v2.q4-k-m",
+            )
+
+    def test_parse_hugging_face_url_extracts_repo_and_show_file_info(self) -> None:
+        reference = parse_hugging_face_url(
+            "https://huggingface.co/TeichAI/GLM-4.7-Flash-Claude-Opus-4.5-High-Reasoning-Distill-GGUF"
+            "?show_file_info=glm-4.7-flash-claude-4.5-opus.q4_k_m.gguf"
+        )
+
+        self.assertEqual(reference.repo, "TeichAI/GLM-4.7-Flash-Claude-Opus-4.5-High-Reasoning-Distill-GGUF")
+        self.assertEqual(reference.filename, "glm-4.7-flash-claude-4.5-opus.q4_k_m.gguf")
+
+
+def _create_fake_gguf(root: Path, filename: str, *, payload: bytes = b"GGUF\x00test-model\n") -> Path:
     root.mkdir(parents=True, exist_ok=True)
     artifact_path = root / filename
-    artifact_path.write_bytes(b"GGUF\x00test-model\n")
+    artifact_path.write_bytes(payload)
     return artifact_path
 
 

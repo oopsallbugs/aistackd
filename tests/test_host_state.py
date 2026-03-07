@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aistackd.models.sources import resolve_source_model
+from aistackd.models.sources import local_source_model
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
 from aistackd.state.host import HostStateStore
 
@@ -17,8 +17,7 @@ class HostStateTests(unittest.TestCase):
     def test_install_and_activate_model_round_trips_host_runtime_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = HostStateStore(Path(tmpdir))
-            source_model = resolve_source_model("qwen2.5-coder-7b-instruct-q4-k-m")
-            self.assertIsNotNone(source_model)
+            source_model = local_source_model("qwen2.5-coder-7b-instruct-q4-k-m", source="llmfit")
             artifact_path = _create_fake_gguf(Path(tmpdir), "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
 
             record, created = store.install_model(
@@ -47,8 +46,7 @@ class HostStateTests(unittest.TestCase):
     def test_runtime_state_marks_missing_artifact_when_managed_model_file_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = HostStateStore(Path(tmpdir))
-            source_model = resolve_source_model("deepseek-r1-distill-qwen-7b-q4-k-m")
-            self.assertIsNotNone(source_model)
+            source_model = local_source_model("deepseek-r1-distill-qwen-7b-q4-k-m", source="llmfit")
             artifact_path = _create_fake_gguf(Path(tmpdir), "DeepSeek-R1-Distill-Qwen-7B.Q4_K_M.gguf")
 
             record, created = store.install_model(
