@@ -9,7 +9,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aistackd.runtime.backends import BackendDiscoveryResult, discover_llama_cpp_installation
+from aistackd.runtime.backends import (
+    BackendDiscoveryResult,
+    acquire_managed_llama_cpp_installation,
+    discover_llama_cpp_installation,
+    plan_llama_cpp_acquisition,
+)
 from aistackd.runtime.hardware import CURRENT_HARDWARE_PROFILE_SCHEMA_VERSION, HardwareProfile, LlmfitDetectionResult
 from aistackd.runtime.prereqs import inspect_host_environment
 
@@ -26,6 +31,56 @@ class BackendRuntimeTests(unittest.TestCase):
             self.assertEqual(discovery.backend_root, str(backend_root))
             self.assertTrue(discovery.server_binary.endswith("llama-server"))
             self.assertTrue(discovery.cli_binary.endswith("llama-cli"))
+
+    def test_acquire_managed_backend_from_prebuilt_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "project"
+            project_root.mkdir()
+            prebuilt_root = _create_fake_backend_root(Path(tmpdir) / "prebuilt")
+            plan = plan_llama_cpp_acquisition(_fake_llmfit_detection().profile)
+
+            result = acquire_managed_llama_cpp_installation(project_root, plan, prebuilt_root=prebuilt_root)
+
+            self.assertEqual(result.strategy, "prebuilt_root")
+            self.assertTrue(result.attempts[0].ok)
+            self.assertEqual(result.installation.acquisition_method, "acquired_prebuilt_root")
+            self.assertTrue(
+                str(result.installation.backend_root).endswith(".aistackd/host/backends/llama.cpp/install")
+            )
+            self.assertTrue(Path(result.installation.server_binary).exists())
+
+    def test_acquire_managed_backend_falls_back_to_source_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "project"
+            project_root.mkdir()
+            broken_prebuilt_root = Path(tmpdir) / "broken-prebuilt"
+            broken_prebuilt_root.mkdir()
+            source_root = _create_fake_source_root(Path(tmpdir) / "source")
+            plan = plan_llama_cpp_acquisition(
+                _fake_llmfit_detection(backend="amd", acceleration_api="rocm", target="gfx1100").profile
+            )
+            captured_env: dict[str, str] = {}
+
+            with patch(
+                "aistackd.runtime.backends.subprocess.run",
+                side_effect=lambda command, **kwargs: _fake_backend_subprocess_run(command, captured_env, **kwargs),
+            ):
+                result = acquire_managed_llama_cpp_installation(
+                    project_root,
+                    plan,
+                    prebuilt_root=broken_prebuilt_root,
+                    source_root=source_root,
+                    jobs=2,
+                )
+
+            self.assertEqual(result.strategy, "source_build")
+            self.assertFalse(result.attempts[0].ok)
+            self.assertEqual(result.attempts[0].strategy, "prebuilt_root")
+            self.assertTrue(result.attempts[-1].ok)
+            self.assertEqual(result.attempts[-1].strategy, "source_build")
+            self.assertEqual(captured_env["HSA_OVERRIDE_GFX_VERSION"], "11.0.0")
+            self.assertEqual(result.installation.acquisition_method, "acquired_source_build")
+            self.assertTrue(Path(result.installation.server_binary).exists())
 
     def test_inspect_host_environment_reports_prerequisite_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -139,6 +194,38 @@ def _create_fake_backend_root(root: Path) -> Path:
         path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         path.chmod(0o755)
     return backend_root
+
+
+def _create_fake_source_root(root: Path) -> Path:
+    source_root = root / "llama.cpp"
+    source_root.mkdir(parents=True, exist_ok=True)
+    (source_root / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\nproject(llama_cpp)\n", encoding="utf-8")
+    return source_root
+
+
+def _fake_backend_subprocess_run(
+    command: list[str],
+    captured_env: dict[str, str],
+    **kwargs: object,
+) -> subprocess.CompletedProcess[str]:
+    env = kwargs.get("env")
+    if isinstance(env, dict):
+        captured_env.update({key: str(value) for key, value in env.items()})
+
+    if command[:2] == ["cmake", "-S"]:
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    if command[:2] == ["cmake", "--build"]:
+        build_root = Path(command[2])
+        bin_dir = build_root / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        for binary_name in ("llama-server", "llama-cli"):
+            path = bin_dir / binary_name
+            path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            path.chmod(0o755)
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    raise AssertionError(f"unexpected command: {command}")
 
 
 def _fake_llmfit_detection(

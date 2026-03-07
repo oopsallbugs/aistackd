@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from aistackd.control_plane import ControlPlaneError, serve_control_plane
-from aistackd.runtime.backends import adopt_backend_installation
+from aistackd.runtime.backends import BackendAcquisitionError, acquire_managed_llama_cpp_installation, adopt_backend_installation
 from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.runtime.host import (
     DEFAULT_HOST_API_KEY_ENV,
@@ -47,11 +47,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     acquire_parser = command_parsers.add_parser(
         "acquire-backend",
-        help="adopt an existing llama.cpp installation or plan one from detected hardware",
+        help="adopt an existing llama.cpp installation or acquire one with prebuilt-first source fallback",
     )
     _add_shared_arguments(acquire_parser)
     _add_backend_locator_arguments(acquire_parser)
     _add_llmfit_arguments(acquire_parser)
+    _add_backend_acquisition_arguments(acquire_parser)
     _add_format_argument(acquire_parser)
     acquire_parser.set_defaults(handler=handle_acquire_backend)
 
@@ -157,6 +158,19 @@ def handle_inspect(args: argparse.Namespace) -> int:
 
 def handle_acquire_backend(args: argparse.Namespace) -> int:
     """Adopt an existing llama.cpp installation or plan backend acquisition."""
+    has_existing_locator = any(
+        value is not None
+        for value in (args.backend_root, args.server_binary, args.cli_binary)
+    )
+    has_acquisition_input = any(
+        value is not None
+        for value in (args.prebuilt_root, args.prebuilt_archive, args.source_root)
+    )
+    if has_existing_locator and has_acquisition_input:
+        return _exit_with_error(
+            "existing-backend locator flags cannot be combined with managed acquisition inputs"
+        )
+
     report = inspect_host_environment(
         backend_root=args.backend_root,
         server_binary=args.server_binary,
@@ -165,32 +179,55 @@ def handle_acquire_backend(args: argparse.Namespace) -> int:
     )
     discovery = report.backend_discovery
     try:
-        if discovery.found:
+        if has_acquisition_input:
+            if report.acquisition_plan is None:
+                detail = (
+                    "; ".join(report.hardware_detection.issues)
+                    or "hardware detection did not produce a backend acquisition plan"
+                )
+                return _exit_with_error(detail)
+            acquisition = acquire_managed_llama_cpp_installation(
+                args.project_root,
+                report.acquisition_plan,
+                prebuilt_root=args.prebuilt_root,
+                prebuilt_archive=args.prebuilt_archive,
+                source_root=args.source_root,
+                jobs=args.jobs,
+            )
+            installation = acquisition.installation
+            created = HostStateStore(args.project_root).save_backend_installation(installation)
+            action = "acquired" if created else "updated"
+        elif discovery.found:
             installation = adopt_backend_installation(discovery)
             created = HostStateStore(args.project_root).save_backend_installation(installation)
+            acquisition = None
+            action = "adopted" if created else "updated"
         elif report.acquisition_plan is None:
             issues = [*report.hardware_detection.issues, *discovery.issues]
             detail = "; ".join(issue for issue in issues if issue) or "unable to plan backend acquisition"
             return _exit_with_error(detail)
         else:
             installation = None
+            acquisition = None
             created = False
-    except (HostStateError, ValueError) as exc:
+            action = "planned"
+    except (BackendAcquisitionError, HostStateError, ValueError) as exc:
         return _exit_with_error(str(exc))
 
     if installation is not None:
         payload = {
-            "action": "adopted" if created else "updated",
+            "action": action,
             "backend_installation": installation.as_dict(),
             "hardware_detection": report.hardware_detection.to_dict(),
             "acquisition_plan": (
                 report.acquisition_plan.to_dict() if report.acquisition_plan is not None else None
             ),
+            "acquisition": acquisition.to_dict() if acquisition is not None else None,
             "issues": list(discovery.issues),
         }
     else:
         payload = {
-            "action": "planned",
+            "action": action,
             "hardware_detection": report.hardware_detection.to_dict(),
             "acquisition_plan": report.acquisition_plan.to_dict() if report.acquisition_plan is not None else None,
             "issues": list(report.hardware_detection.issues),
@@ -201,6 +238,11 @@ def handle_acquire_backend(args: argparse.Namespace) -> int:
 
     if installation is not None:
         print(f"{payload['action']} backend installation")
+        if acquisition is not None:
+            print(f"strategy: {acquisition.strategy}")
+            for attempt in acquisition.attempts:
+                status = "ok" if attempt.ok else "failed"
+                print(f"attempt: {attempt.strategy} status={status} detail={attempt.detail}")
         print(f"backend_root: {installation.backend_root}")
         print(f"server_binary: {installation.server_binary}")
         if installation.cli_binary is not None:
@@ -317,6 +359,29 @@ def _add_llmfit_arguments(parser: argparse.ArgumentParser) -> None:
         "--llmfit-binary",
         default=LLMFIT_BINARY_NAME,
         help=f"llmfit executable to use for hardware detection (default: {LLMFIT_BINARY_NAME})",
+    )
+
+
+def _add_backend_acquisition_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--prebuilt-root",
+        type=Path,
+        help="path to a local prebuilt llama.cpp root to copy into managed host state",
+    )
+    parser.add_argument(
+        "--prebuilt-archive",
+        type=Path,
+        help="path to a local prebuilt llama.cpp archive to unpack into managed host state",
+    )
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        help="path to a local llama.cpp source tree used when prebuilt acquisition is unavailable",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        help="override the parallel build job count for source fallback",
     )
 
 

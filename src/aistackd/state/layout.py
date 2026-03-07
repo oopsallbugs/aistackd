@@ -76,6 +76,7 @@ class ProjectLayout:
                 str(host_paths.backend_installation_path),
                 host_paths.backend_installation_path.exists(),
             ),
+            PathCheck("managed_backends_dir", str(host_paths.managed_backends_dir), host_paths.managed_backends_dir.exists()),
             PathCheck("installed_models_file", str(host_paths.installed_models_path), host_paths.installed_models_path.exists()),
             PathCheck("sync_state_dir", str(sync_paths.sync_dir), sync_paths.sync_dir.exists()),
             PathCheck("ownership_manifest_file", str(sync_paths.ownership_manifest_path), sync_paths.ownership_manifest_path.exists()),

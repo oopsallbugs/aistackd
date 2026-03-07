@@ -22,6 +22,7 @@ HOST_RUNTIME_FILE_NAME = "runtime.json"
 INSTALLED_MODELS_FILE_NAME = "installed_models.json"
 MODEL_RECEIPTS_DIRECTORY_NAME = "model_receipts"
 BACKEND_INSTALLATION_FILE_NAME = "backend_installation.json"
+MANAGED_BACKENDS_DIRECTORY_NAME = "backends"
 CURRENT_HOST_STATE_SCHEMA_VERSION = "v1alpha1"
 
 
@@ -43,6 +44,7 @@ class HostStatePaths:
     installed_models_path: Path
     model_receipts_dir: Path
     backend_installation_path: Path
+    managed_backends_dir: Path
 
     @classmethod
     def from_project_root(cls, project_root: Path) -> "HostStatePaths":
@@ -57,11 +59,32 @@ class HostStatePaths:
             installed_models_path=host_dir / INSTALLED_MODELS_FILE_NAME,
             model_receipts_dir=host_dir / MODEL_RECEIPTS_DIRECTORY_NAME,
             backend_installation_path=host_dir / BACKEND_INSTALLATION_FILE_NAME,
+            managed_backends_dir=host_dir / MANAGED_BACKENDS_DIRECTORY_NAME,
         )
 
     def receipt_path(self, model_name: str) -> Path:
         """Return the receipt path for one installed model."""
         return self.model_receipts_dir / f"{frontend_model_key(model_name)}.json"
+
+    def backend_workspace_dir(self, backend_name: str = PRIMARY_BACKEND) -> Path:
+        """Return the managed workspace root for one backend."""
+        return self.managed_backends_dir / backend_name
+
+    def backend_install_dir(self, backend_name: str = PRIMARY_BACKEND) -> Path:
+        """Return the managed install root for one backend."""
+        return self.backend_workspace_dir(backend_name) / "install"
+
+    def backend_extract_dir(self, backend_name: str = PRIMARY_BACKEND) -> Path:
+        """Return the managed extraction root for one backend."""
+        return self.backend_workspace_dir(backend_name) / "extract"
+
+    def backend_source_dir(self, backend_name: str = PRIMARY_BACKEND) -> Path:
+        """Return the managed source-copy root for one backend."""
+        return self.backend_workspace_dir(backend_name) / "source"
+
+    def backend_build_dir(self, backend_name: str = PRIMARY_BACKEND) -> Path:
+        """Return the managed build root for one backend."""
+        return self.backend_workspace_dir(backend_name) / "build"
 
 
 @dataclass(frozen=True)
@@ -182,6 +205,7 @@ class HostStateStore:
         """Create the host-state directories if they do not exist."""
         self.paths.host_dir.mkdir(parents=True, exist_ok=True)
         self.paths.model_receipts_dir.mkdir(parents=True, exist_ok=True)
+        self.paths.managed_backends_dir.mkdir(parents=True, exist_ok=True)
 
     def list_installed_models(self) -> tuple[InstalledModelRecord, ...]:
         """Return installed models sorted by name."""
@@ -325,4 +349,3 @@ def _optional_string(payload: dict[str, object], field_name: str) -> str | None:
         raise HostStateError(f"expected string for field '{field_name}'")
     normalized = value.strip()
     return normalized or None
-

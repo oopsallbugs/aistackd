@@ -60,6 +60,14 @@ class HostStateTests(unittest.TestCase):
             self.assertIsNotNone(runtime_state.backend_installation)
             self.assertEqual(runtime_state.backend_installation.server_binary, installation.server_binary)
 
+    def test_host_state_storage_creates_managed_backends_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+
+            store.ensure_storage()
+
+            self.assertTrue(store.paths.managed_backends_dir.exists())
+
 
 def _create_fake_backend_root(root: Path) -> Path:
     backend_root = root / "llama.cpp"

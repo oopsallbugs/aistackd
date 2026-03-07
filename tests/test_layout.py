@@ -29,6 +29,7 @@ class LayoutTests(unittest.TestCase):
         reserved_checks = {entry.label: entry.path for entry in layout.reserved_paths}
         self.assertIn("host_state_dir", reserved_checks)
         self.assertIn("backend_installation_file", reserved_checks)
+        self.assertIn("managed_backends_dir", reserved_checks)
         self.assertIn("installed_models_file", reserved_checks)
 
     def test_profile_state_paths_follow_canonical_names(self) -> None:

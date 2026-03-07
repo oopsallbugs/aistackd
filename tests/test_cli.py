@@ -410,6 +410,36 @@ class CLITests(unittest.TestCase):
                 "11.0.0",
             )
 
+    def test_host_acquire_backend_from_prebuilt_root_creates_managed_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prebuilt_root = _create_fake_backend_root(Path(tmpdir) / "external-prebuilt")
+
+            with patch(
+                "aistackd.runtime.prereqs.detect_hardware_with_llmfit",
+                return_value=_fake_llmfit_detection(),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "host",
+                        "acquire-backend",
+                        "--project-root",
+                        tmpdir,
+                        "--prebuilt-root",
+                        str(prebuilt_root),
+                        "--format",
+                        "json",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "acquired")
+            self.assertEqual(payload["acquisition"]["strategy"], "prebuilt_root")
+            self.assertEqual(payload["backend_installation"]["acquisition_method"], "acquired_prebuilt_root")
+            self.assertIn(".aistackd/host/backends/llama.cpp/install", payload["backend_installation"]["backend_root"])
+            self.assertTrue(Path(payload["backend_installation"]["server_binary"]).exists())
+
     def test_sync_preview_uses_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             invoke(

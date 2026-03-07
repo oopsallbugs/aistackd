@@ -1,15 +1,17 @@
-"""Backend discovery, acquisition planning, and adoption helpers."""
+"""Backend discovery, acquisition planning, and managed acquisition helpers."""
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from aistackd.models.sources import BACKEND_ACQUISITION_POLICY, PRIMARY_BACKEND
 from aistackd.runtime.hardware import HardwareProfile
-from aistackd.state.host import HostBackendInstallation
+from aistackd.state.host import HostBackendInstallation, HostStatePaths
 
 LLAMA_SERVER_BINARY_NAME = "llama-server"
 LLAMA_CLI_BINARY_NAME = "llama-cli"
@@ -69,6 +71,46 @@ class LlamaCppAcquisitionPlan:
             "warnings": list(self.warnings),
             "notes": list(self.notes),
         }
+
+
+@dataclass(frozen=True)
+class BackendAcquisitionAttempt:
+    """One acquisition attempt and its outcome."""
+
+    strategy: str
+    ok: bool
+    detail: str
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation."""
+        return {
+            "strategy": self.strategy,
+            "ok": self.ok,
+            "detail": self.detail,
+        }
+
+
+@dataclass(frozen=True)
+class BackendAcquisitionResult:
+    """Result of acquiring or building a managed backend installation."""
+
+    strategy: str
+    installation: HostBackendInstallation
+    attempts: tuple[BackendAcquisitionAttempt, ...]
+    warnings: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation."""
+        return {
+            "strategy": self.strategy,
+            "installation": self.installation.as_dict(),
+            "attempts": [attempt.to_dict() for attempt in self.attempts],
+            "warnings": list(self.warnings),
+        }
+
+
+class BackendAcquisitionError(RuntimeError):
+    """Raised when managed backend acquisition fails."""
 
 
 def discover_llama_cpp_installation(
@@ -163,7 +205,11 @@ def discover_llama_cpp_installation(
     )
 
 
-def adopt_backend_installation(discovery: BackendDiscoveryResult) -> HostBackendInstallation:
+def adopt_backend_installation(
+    discovery: BackendDiscoveryResult,
+    *,
+    acquisition_method: str | None = None,
+) -> HostBackendInstallation:
     """Convert a successful discovery result into persisted host state."""
     if not discovery.found or discovery.server_binary is None or discovery.backend_root is None:
         issues = "; ".join(discovery.issues) if discovery.issues else "backend installation was not found"
@@ -171,7 +217,7 @@ def adopt_backend_installation(discovery: BackendDiscoveryResult) -> HostBackend
 
     return HostBackendInstallation(
         backend=discovery.backend,
-        acquisition_method=f"adopted_{discovery.discovery_mode}",
+        acquisition_method=acquisition_method or f"adopted_{discovery.discovery_mode}",
         backend_root=discovery.backend_root,
         server_binary=discovery.server_binary,
         cli_binary=discovery.cli_binary,
@@ -207,6 +253,75 @@ def plan_llama_cpp_acquisition(hardware_profile: HardwareProfile) -> LlamaCppAcq
         warnings=hardware_profile.warnings,
         notes=tuple(notes),
     )
+
+
+def acquire_managed_llama_cpp_installation(
+    project_root: Path,
+    plan: LlamaCppAcquisitionPlan,
+    *,
+    prebuilt_root: Path | None = None,
+    prebuilt_archive: Path | None = None,
+    source_root: Path | None = None,
+    jobs: int | None = None,
+) -> BackendAcquisitionResult:
+    """Acquire a managed llama.cpp installation using the planned strategy order."""
+    if prebuilt_root is not None and prebuilt_archive is not None:
+        raise ValueError("provide only one prebuilt source: --prebuilt-root or --prebuilt-archive")
+    if prebuilt_root is None and prebuilt_archive is None and source_root is None:
+        raise ValueError(
+            "no managed backend acquisition input was provided; use --prebuilt-root, --prebuilt-archive, or --source-root"
+        )
+
+    paths = HostStatePaths.from_project_root(project_root.resolve())
+    attempts: list[BackendAcquisitionAttempt] = []
+    warnings = list(plan.warnings)
+
+    if prebuilt_root is not None:
+        try:
+            installation = _acquire_from_prebuilt_root(paths, prebuilt_root)
+        except BackendAcquisitionError as exc:
+            attempts.append(BackendAcquisitionAttempt(strategy="prebuilt_root", ok=False, detail=str(exc)))
+        else:
+            attempts.append(BackendAcquisitionAttempt(strategy="prebuilt_root", ok=True, detail="acquired managed prebuilt root"))
+            return BackendAcquisitionResult(
+                strategy="prebuilt_root",
+                installation=installation,
+                attempts=tuple(attempts),
+                warnings=tuple(warnings),
+            )
+
+    if prebuilt_archive is not None:
+        try:
+            installation = _acquire_from_prebuilt_archive(paths, prebuilt_archive)
+        except BackendAcquisitionError as exc:
+            attempts.append(BackendAcquisitionAttempt(strategy="prebuilt_archive", ok=False, detail=str(exc)))
+        else:
+            attempts.append(
+                BackendAcquisitionAttempt(strategy="prebuilt_archive", ok=True, detail="acquired managed prebuilt archive")
+            )
+            return BackendAcquisitionResult(
+                strategy="prebuilt_archive",
+                installation=installation,
+                attempts=tuple(attempts),
+                warnings=tuple(warnings),
+            )
+
+    if source_root is not None:
+        try:
+            installation = _acquire_from_source_build(paths, plan, source_root, jobs=jobs)
+        except BackendAcquisitionError as exc:
+            attempts.append(BackendAcquisitionAttempt(strategy="source_build", ok=False, detail=str(exc)))
+        else:
+            attempts.append(BackendAcquisitionAttempt(strategy="source_build", ok=True, detail="built managed source fallback"))
+            return BackendAcquisitionResult(
+                strategy="source_build",
+                installation=installation,
+                attempts=tuple(attempts),
+                warnings=tuple(warnings),
+            )
+
+    detail = " ; ".join(f"{attempt.strategy}: {attempt.detail}" for attempt in attempts) or "no acquisition attempt was made"
+    raise BackendAcquisitionError(detail)
 
 
 def backend_installation_errors(installation: HostBackendInstallation | None) -> tuple[str, ...]:
@@ -248,3 +363,161 @@ def _infer_backend_root(server_binary: Path) -> Path:
     if server_binary.parent.name == "bin":
         return server_binary.parent.parent.resolve()
     return server_binary.parent.resolve()
+
+
+def _acquire_from_prebuilt_root(paths: HostStatePaths, prebuilt_root: Path) -> HostBackendInstallation:
+    normalized_root = prebuilt_root.expanduser().resolve()
+    if not normalized_root.exists():
+        raise BackendAcquisitionError(f"prebuilt root '{normalized_root}' does not exist")
+    if not normalized_root.is_dir():
+        raise BackendAcquisitionError(f"prebuilt root '{normalized_root}' is not a directory")
+
+    workspace_root = paths.backend_workspace_dir(PRIMARY_BACKEND)
+    install_root = paths.backend_install_dir(PRIMARY_BACKEND)
+    _reset_backend_workspace(workspace_root)
+    shutil.copytree(normalized_root, install_root)
+
+    discovery = discover_llama_cpp_installation(backend_root=install_root)
+    if not discovery.found:
+        issues = "; ".join(discovery.issues) if discovery.issues else "no llama-server binary was found after copying prebuilt root"
+        raise BackendAcquisitionError(issues)
+    return adopt_backend_installation(discovery, acquisition_method="acquired_prebuilt_root")
+
+
+def _acquire_from_prebuilt_archive(paths: HostStatePaths, prebuilt_archive: Path) -> HostBackendInstallation:
+    normalized_archive = prebuilt_archive.expanduser().resolve()
+    if not normalized_archive.exists():
+        raise BackendAcquisitionError(f"prebuilt archive '{normalized_archive}' does not exist")
+    if not normalized_archive.is_file():
+        raise BackendAcquisitionError(f"prebuilt archive '{normalized_archive}' is not a file")
+
+    workspace_root = paths.backend_workspace_dir(PRIMARY_BACKEND)
+    extract_root = paths.backend_extract_dir(PRIMARY_BACKEND)
+    install_root = paths.backend_install_dir(PRIMARY_BACKEND)
+    _reset_backend_workspace(workspace_root)
+    extract_root.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.unpack_archive(str(normalized_archive), str(extract_root))
+    except (shutil.ReadError, ValueError) as exc:
+        raise BackendAcquisitionError(f"failed to unpack prebuilt archive '{normalized_archive}': {exc}") from exc
+
+    candidate_root = _find_archive_backend_root(extract_root)
+    if candidate_root is None:
+        raise BackendAcquisitionError(f"no llama.cpp installation was found inside extracted archive '{normalized_archive}'")
+
+    shutil.copytree(candidate_root, install_root)
+    discovery = discover_llama_cpp_installation(backend_root=install_root)
+    if not discovery.found:
+        issues = "; ".join(discovery.issues) if discovery.issues else "no llama-server binary was found after unpacking prebuilt archive"
+        raise BackendAcquisitionError(issues)
+    return adopt_backend_installation(discovery, acquisition_method="acquired_prebuilt_archive")
+
+
+def _acquire_from_source_build(
+    paths: HostStatePaths,
+    plan: LlamaCppAcquisitionPlan,
+    source_root: Path,
+    *,
+    jobs: int | None = None,
+) -> HostBackendInstallation:
+    normalized_source = source_root.expanduser().resolve()
+    if not normalized_source.exists():
+        raise BackendAcquisitionError(f"source root '{normalized_source}' does not exist")
+    if not normalized_source.is_dir():
+        raise BackendAcquisitionError(f"source root '{normalized_source}' is not a directory")
+    if not (normalized_source / "CMakeLists.txt").exists():
+        raise BackendAcquisitionError(f"source root '{normalized_source}' does not contain a CMakeLists.txt file")
+
+    workspace_root = paths.backend_workspace_dir(PRIMARY_BACKEND)
+    source_copy_root = paths.backend_source_dir(PRIMARY_BACKEND)
+    build_root = paths.backend_build_dir(PRIMARY_BACKEND)
+    _reset_backend_workspace(workspace_root)
+    shutil.copytree(
+        normalized_source,
+        source_copy_root,
+        ignore=shutil.ignore_patterns(".git", "build", "__pycache__"),
+    )
+
+    command_environment = os.environ.copy()
+    for key, value in plan.source_environment:
+        command_environment[key] = value
+
+    build_jobs = jobs if jobs is not None else max(1, os.cpu_count() or 1)
+    if build_jobs < 1:
+        raise BackendAcquisitionError("jobs must be a positive integer")
+
+    configure_command = [
+        "cmake",
+        "-S",
+        str(source_copy_root),
+        "-B",
+        str(build_root),
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DLLAMA_BUILD_SERVER=ON",
+        *plan.source_cmake_flags,
+    ]
+    build_command = [
+        "cmake",
+        "--build",
+        str(build_root),
+        "--config",
+        "Release",
+        "-j",
+        str(build_jobs),
+    ]
+    _run_backend_command(configure_command, env=command_environment, phase="cmake configure")
+    _run_backend_command(build_command, env=command_environment, phase="cmake build")
+
+    discovery = discover_llama_cpp_installation(backend_root=build_root)
+    if not discovery.found:
+        issues = "; ".join(discovery.issues) if discovery.issues else "no llama-server binary was found after source build"
+        raise BackendAcquisitionError(issues)
+    return adopt_backend_installation(discovery, acquisition_method="acquired_source_build")
+
+
+def _reset_backend_workspace(workspace_root: Path) -> None:
+    if workspace_root.exists():
+        shutil.rmtree(workspace_root)
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+
+def _find_archive_backend_root(extract_root: Path) -> Path | None:
+    candidates = [extract_root, *(path for path in sorted(extract_root.rglob("*")) if path.is_dir())]
+    for candidate in candidates:
+        discovery = discover_llama_cpp_installation(backend_root=candidate)
+        if discovery.found:
+            return candidate
+    return None
+
+
+def _run_backend_command(
+    command: list[str],
+    *,
+    env: dict[str, str],
+    phase: str,
+) -> None:
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    except OSError as exc:
+        raise BackendAcquisitionError(f"{phase} command failed to start: {exc}") from exc
+    if completed.returncode == 0:
+        return
+    output = _summarize_command_output(completed.stdout, completed.stderr)
+    detail = f"{phase} failed with exit code {completed.returncode}"
+    if output:
+        detail += f": {output}"
+    raise BackendAcquisitionError(detail)
+
+
+def _summarize_command_output(stdout: str, stderr: str) -> str:
+    combined = "\n".join(part.strip() for part in (stderr, stdout) if part and part.strip())
+    if not combined:
+        return ""
+    first_line = combined.splitlines()[0].strip()
+    return first_line[:400]
