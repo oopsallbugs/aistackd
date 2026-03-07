@@ -1,7 +1,8 @@
-"""Host-side model inventory, backend adoption, and activation state."""
+"""Host-side model inventory, backend adoption, process state, and activation state."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,8 +23,10 @@ HOST_RUNTIME_FILE_NAME = "runtime.json"
 INSTALLED_MODELS_FILE_NAME = "installed_models.json"
 MODEL_RECEIPTS_DIRECTORY_NAME = "model_receipts"
 BACKEND_INSTALLATION_FILE_NAME = "backend_installation.json"
+BACKEND_PROCESS_FILE_NAME = "backend_process.json"
 MANAGED_BACKENDS_DIRECTORY_NAME = "backends"
 MANAGED_MODELS_DIRECTORY_NAME = "models"
+HOST_LOGS_DIRECTORY_NAME = "logs"
 CURRENT_HOST_STATE_SCHEMA_VERSION = "v1alpha1"
 
 
@@ -45,8 +48,10 @@ class HostStatePaths:
     installed_models_path: Path
     model_receipts_dir: Path
     backend_installation_path: Path
+    backend_process_path: Path
     managed_backends_dir: Path
     managed_models_dir: Path
+    host_logs_dir: Path
 
     @classmethod
     def from_project_root(cls, project_root: Path) -> "HostStatePaths":
@@ -61,8 +66,10 @@ class HostStatePaths:
             installed_models_path=host_dir / INSTALLED_MODELS_FILE_NAME,
             model_receipts_dir=host_dir / MODEL_RECEIPTS_DIRECTORY_NAME,
             backend_installation_path=host_dir / BACKEND_INSTALLATION_FILE_NAME,
+            backend_process_path=host_dir / BACKEND_PROCESS_FILE_NAME,
             managed_backends_dir=host_dir / MANAGED_BACKENDS_DIRECTORY_NAME,
             managed_models_dir=host_dir / MANAGED_MODELS_DIRECTORY_NAME,
+            host_logs_dir=host_dir / HOST_LOGS_DIRECTORY_NAME,
         )
 
     def receipt_path(self, model_name: str) -> Path:
@@ -96,6 +103,10 @@ class HostStatePaths:
     def model_artifact_dir(self, model_name: str) -> Path:
         """Return the managed artifact directory for one installed model."""
         return self.model_workspace_dir(model_name) / "artifact"
+
+    def backend_log_path(self, backend_name: str = PRIMARY_BACKEND) -> Path:
+        """Return the persisted backend log path for one backend."""
+        return self.host_logs_dir / f"{frontend_model_key(backend_name)}.log"
 
 
 @dataclass(frozen=True)
@@ -132,6 +143,71 @@ class HostBackendInstallation:
         }
         if self.cli_binary is not None:
             payload["cli_binary"] = self.cli_binary
+        return payload
+
+
+@dataclass(frozen=True)
+class HostBackendProcess:
+    """Persisted backend-process record."""
+
+    backend: str
+    status: str
+    pid: int
+    command: tuple[str, ...]
+    bind_host: str
+    port: int
+    model: str
+    artifact_path: str
+    server_binary: str
+    log_path: str
+    started_at: str
+    stopped_at: str | None = None
+    exit_code: int | None = None
+
+    @property
+    def base_url(self) -> str:
+        """Return the northbound URL for the managed backend process."""
+        return f"http://{self.bind_host}:{self.port}"
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "HostBackendProcess":
+        """Decode one backend-process record from JSON."""
+        return cls(
+            backend=_require_string(payload, "backend"),
+            status=_require_string(payload, "status"),
+            pid=_require_int(payload, "pid"),
+            command=_require_string_tuple(payload, "command"),
+            bind_host=_require_string(payload, "bind_host"),
+            port=_require_int(payload, "port"),
+            model=_require_string(payload, "model"),
+            artifact_path=_require_string(payload, "artifact_path"),
+            server_binary=_require_string(payload, "server_binary"),
+            log_path=_require_string(payload, "log_path"),
+            started_at=_require_string(payload, "started_at"),
+            stopped_at=_optional_string(payload, "stopped_at"),
+            exit_code=_optional_int(payload, "exit_code"),
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation."""
+        payload: dict[str, object] = {
+            "backend": self.backend,
+            "status": self.status,
+            "pid": self.pid,
+            "command": list(self.command),
+            "bind_host": self.bind_host,
+            "port": self.port,
+            "base_url": self.base_url,
+            "model": self.model,
+            "artifact_path": self.artifact_path,
+            "server_binary": self.server_binary,
+            "log_path": self.log_path,
+            "started_at": self.started_at,
+        }
+        if self.stopped_at is not None:
+            payload["stopped_at"] = self.stopped_at
+        if self.exit_code is not None:
+            payload["exit_code"] = self.exit_code
         return payload
 
 
@@ -196,6 +272,8 @@ class HostRuntimeState:
     installed_models: tuple[InstalledModelRecord, ...]
     backend_installation: HostBackendInstallation | None = None
     backend_status: str = "missing"
+    backend_process: HostBackendProcess | None = None
+    backend_process_status: str = "not_started"
     supported_sources: tuple[str, ...] = SUPPORTED_MODEL_SOURCES
 
     def to_dict(self) -> dict[str, object]:
@@ -209,11 +287,14 @@ class HostRuntimeState:
             "active_source": self.active_source,
             "activation_state": self.activation_state,
             "backend_status": self.backend_status,
+            "backend_process_status": self.backend_process_status,
             "installed_models": [record.as_dict() for record in self.installed_models],
             "supported_sources": list(self.supported_sources),
         }
         if self.backend_installation is not None:
             payload["backend_installation"] = self.backend_installation.as_dict()
+        if self.backend_process is not None:
+            payload["backend_process"] = self.backend_process.as_dict()
         return payload
 
 
@@ -230,6 +311,7 @@ class HostStateStore:
         self.paths.model_receipts_dir.mkdir(parents=True, exist_ok=True)
         self.paths.managed_backends_dir.mkdir(parents=True, exist_ok=True)
         self.paths.managed_models_dir.mkdir(parents=True, exist_ok=True)
+        self.paths.host_logs_dir.mkdir(parents=True, exist_ok=True)
 
     def list_installed_models(self) -> tuple[InstalledModelRecord, ...]:
         """Return installed models sorted by name."""
@@ -319,6 +401,22 @@ class HostStateStore:
         write_json_atomic(self.paths.backend_installation_path, payload)
         return created
 
+    def load_backend_process(self) -> HostBackendProcess | None:
+        """Load the persisted backend-process record if present."""
+        payload = load_json_object(self.paths.backend_process_path)
+        if not payload:
+            return None
+        return HostBackendProcess.from_dict(payload)
+
+    def save_backend_process(self, process: HostBackendProcess) -> bool:
+        """Persist the current backend-process record."""
+        self.ensure_storage()
+        created = not self.paths.backend_process_path.exists()
+        payload = process.as_dict()
+        payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
+        write_json_atomic(self.paths.backend_process_path, payload)
+        return created
+
     def activate_model(self, model_name: str) -> HostRuntimeState:
         """Mark one installed model as active."""
         installed_models = {record.model: record for record in self.list_installed_models()}
@@ -345,6 +443,7 @@ class HostStateStore:
         """Return the current host runtime summary."""
         installed_models = self.list_installed_models()
         backend_installation = self.load_backend_installation()
+        backend_process = _refresh_backend_process_record(self.load_backend_process())
         runtime_payload = load_json_object(self.paths.runtime_state_path)
         active_model = _optional_string(runtime_payload, "active_model")
         active_source = _optional_string(runtime_payload, "active_source")
@@ -374,6 +473,8 @@ class HostStateStore:
             installed_models=installed_models,
             backend_installation=backend_installation,
             backend_status=backend_status,
+            backend_process=backend_process,
+            backend_process_status=backend_process.status if backend_process is not None else "not_started",
         )
 
 
@@ -392,6 +493,26 @@ def _refresh_installed_model_record(record: InstalledModelRecord) -> InstalledMo
     if status == record.status:
         return record
     return replace(record, status=status)
+
+
+def _refresh_backend_process_record(process: HostBackendProcess | None) -> HostBackendProcess | None:
+    if process is None or process.status != "running":
+        return process
+    if _pid_exists(process.pid):
+        return process
+    return replace(process, status="exited")
+
+
+def _pid_exists(pid: int) -> bool:
+    if pid < 1:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _require_string(payload: dict[str, object], field_name: str) -> str:
@@ -416,3 +537,19 @@ def _require_int(payload: dict[str, object], field_name: str) -> int:
     if not isinstance(value, int) or value < 0:
         raise HostStateError(f"expected non-negative integer for field '{field_name}'")
     return value
+
+
+def _optional_int(payload: dict[str, object], field_name: str) -> int | None:
+    value = payload.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, int):
+        raise HostStateError(f"expected integer for field '{field_name}'")
+    return value
+
+
+def _require_string_tuple(payload: dict[str, object], field_name: str) -> tuple[str, ...]:
+    value = payload.get(field_name)
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
+        raise HostStateError(f"expected non-empty list of strings for field '{field_name}'")
+    return tuple(value)

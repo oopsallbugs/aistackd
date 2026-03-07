@@ -18,7 +18,7 @@ from aistackd.control_plane import create_control_plane_server
 from aistackd.models.sources import resolve_source_model
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
 from aistackd.runtime.host import HostServiceConfig
-from aistackd.state.host import HostStateStore
+from aistackd.state.host import HostBackendProcess, HostStateStore
 
 
 class ControlPlaneTests(unittest.TestCase):
@@ -41,6 +41,28 @@ class ControlPlaneTests(unittest.TestCase):
             store.save_backend_installation(
                 adopt_backend_installation(discover_llama_cpp_installation(backend_root=backend_root))
             )
+            backend_log_path = store.paths.backend_log_path()
+            backend_log_path.parent.mkdir(parents=True, exist_ok=True)
+            backend_log_path.write_text("", encoding="utf-8")
+            store.save_backend_process(
+                HostBackendProcess(
+                    backend="llama.cpp",
+                    status="running",
+                    pid=os.getpid(),
+                    command=(
+                        str((backend_root / "bin" / "llama-server").resolve()),
+                        "--model",
+                        record.artifact_path,
+                    ),
+                    bind_host="127.0.0.1",
+                    port=8011,
+                    model=record.model,
+                    artifact_path=record.artifact_path,
+                    server_binary=str((backend_root / "bin" / "llama-server").resolve()),
+                    log_path=str(backend_log_path),
+                    started_at="2026-03-07T00:00:00+00:00",
+                )
+            )
 
             with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
                 server = create_control_plane_server(
@@ -60,8 +82,10 @@ class ControlPlaneTests(unittest.TestCase):
                 )
                 self.assertEqual(health_payload["status"], "ok")
                 self.assertEqual(health_payload["backend_status"], "configured")
+                self.assertEqual(health_payload["backend_process_status"], "running")
                 self.assertEqual(health_payload["active_model"], record.model)
                 self.assertEqual(health_payload["installed_model_count"], 1)
+                self.assertEqual(health_payload["backend_base_url"], "http://127.0.0.1:8011")
                 self.assertTrue(str(health_payload["server_binary"]).endswith("llama-server"))
 
                 models_payload = _request_json(

@@ -91,6 +91,7 @@ class HostStateTests(unittest.TestCase):
 
             self.assertTrue(store.paths.managed_backends_dir.exists())
             self.assertTrue(store.paths.managed_models_dir.exists())
+            self.assertTrue(store.paths.host_logs_dir.exists())
 
 
 def _create_fake_backend_root(root: Path) -> Path:

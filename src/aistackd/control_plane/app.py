@@ -68,7 +68,11 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_health(self, server: ControlPlaneServer) -> None:
         runtime = server.store.load_runtime_state()
-        status = "ok" if runtime.activation_state == "ready" else "degraded"
+        status = (
+            "ok"
+            if runtime.activation_state == "ready" and runtime.backend_process_status == "running"
+            else "degraded"
+        )
         http_status = HTTPStatus.OK if status == "ok" else HTTPStatus.SERVICE_UNAVAILABLE
         self._write_json(
             http_status,
@@ -76,15 +80,22 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 "status": status,
                 "backend": runtime.backend,
                 "backend_status": runtime.backend_status,
+                "backend_process_status": runtime.backend_process_status,
                 "active_model": runtime.active_model,
                 "active_source": runtime.active_source,
                 "activation_state": runtime.activation_state,
                 "installed_model_count": len(runtime.installed_models),
                 "base_url": server.service_config.base_url,
                 "responses_base_url": server.service_config.responses_base_url,
+                "backend_base_url": server.service_config.backend_base_url,
                 "server_binary": (
                     runtime.backend_installation.server_binary
                     if runtime.backend_installation is not None
+                    else None
+                ),
+                "backend_process": (
+                    runtime.backend_process.as_dict()
+                    if runtime.backend_process is not None
                     else None
                 ),
             },

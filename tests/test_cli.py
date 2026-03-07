@@ -10,6 +10,7 @@ import tomllib
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from aistackd.cli.main import build_parser, main
@@ -299,6 +300,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             self.assertIn("host runtime state", stdout)
             self.assertIn("backend_status: missing", stdout)
+            self.assertIn("backend_process_status: not_started", stdout)
             self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
             self.assertIn("source=local method=explicit_local_gguf", stdout)
             self.assertIn("installed_models: 1", stdout)
@@ -377,10 +379,17 @@ class CLITests(unittest.TestCase):
             self.assertIn("host validation", stdout)
             self.assertIn("status: ok", stdout)
             self.assertIn("backend_status: configured", stdout)
+            self.assertIn("backend_process_status: not_started", stdout)
             self.assertIn("server_binary:", stdout)
             self.assertIn("base_url: http://127.0.0.1:8000", stdout)
+            self.assertIn("backend_base_url: http://127.0.0.1:8011", stdout)
 
-            with patch("aistackd.cli.commands.host.serve_control_plane") as serve_mock:
+            running_process = _fake_running_backend_process(Path(tmpdir))
+            with (
+                patch("aistackd.cli.commands.host.launch_managed_backend_process", return_value=running_process) as launch_mock,
+                patch("aistackd.cli.commands.host.stop_managed_backend_process") as stop_mock,
+                patch("aistackd.cli.commands.host.serve_control_plane") as serve_mock,
+            ):
                 with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
                     exit_code, stdout, stderr = invoke(["host", "serve", "--project-root", tmpdir])
 
@@ -388,7 +397,11 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             self.assertIn("control plane serving", stdout)
             self.assertIn("server_binary:", stdout)
+            self.assertIn("backend_base_url: http://127.0.0.1:8011", stdout)
+            self.assertIn("backend_pid: 4242", stdout)
             self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
+            launch_mock.assert_called_once()
+            stop_mock.assert_called_once()
             serve_mock.assert_called_once()
 
     def test_models_install_discovers_local_gguf_for_uncatalogued_model(self) -> None:
@@ -629,6 +642,16 @@ def _create_fake_gguf(root: Path, filename: str) -> Path:
     artifact_path = root / filename
     artifact_path.write_bytes(b"GGUF\x00test-model\n")
     return artifact_path
+
+
+def _fake_running_backend_process(project_root: Path) -> SimpleNamespace:
+    log_path = project_root / ".aistackd" / "host" / "logs" / "llama-cpp.log"
+    return SimpleNamespace(
+        record=SimpleNamespace(
+            pid=4242,
+            log_path=str(log_path),
+        )
+    )
 
 
 def _fake_llmfit_detection(

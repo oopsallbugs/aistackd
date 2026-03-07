@@ -8,9 +8,16 @@ import sys
 from pathlib import Path
 
 from aistackd.control_plane import ControlPlaneError, serve_control_plane
+from aistackd.runtime.backend_process import (
+    BackendProcessError,
+    launch_managed_backend_process,
+    stop_managed_backend_process,
+)
 from aistackd.runtime.backends import BackendAcquisitionError, acquire_managed_llama_cpp_installation, adopt_backend_installation
 from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.runtime.host import (
+    DEFAULT_BACKEND_BIND,
+    DEFAULT_BACKEND_PORT,
     DEFAULT_HOST_API_KEY_ENV,
     DEFAULT_HOST_BIND,
     DEFAULT_HOST_PORT,
@@ -84,12 +91,17 @@ def handle_status(args: argparse.Namespace) -> int:
     print(f"backend_policy: {runtime_state.backend_policy}")
     print(f"model_source_policy: {runtime_state.model_source_policy}")
     print(f"backend_status: {runtime_state.backend_status}")
+    print(f"backend_process_status: {runtime_state.backend_process_status}")
     if runtime_state.backend_installation is not None:
         print(f"backend_root: {runtime_state.backend_installation.backend_root}")
         print(f"server_binary: {runtime_state.backend_installation.server_binary}")
         print(f"acquisition_method: {runtime_state.backend_installation.acquisition_method}")
         if runtime_state.backend_installation.cli_binary is not None:
             print(f"cli_binary: {runtime_state.backend_installation.cli_binary}")
+    if runtime_state.backend_process is not None:
+        print(f"backend_pid: {runtime_state.backend_process.pid}")
+        print(f"backend_base_url: {runtime_state.backend_process.base_url}")
+        print(f"backend_log_path: {runtime_state.backend_process.log_path}")
     print(f"active_model: {runtime_state.active_model or 'none'}")
     print(f"active_source: {runtime_state.active_source or 'none'}")
     print(f"activation_state: {runtime_state.activation_state}")
@@ -285,8 +297,10 @@ def handle_validate(args: argparse.Namespace) -> int:
     print(f"status: {'ok' if result.ok else 'invalid'}")
     print(f"base_url: {result.service.base_url}")
     print(f"responses_base_url: {result.service.responses_base_url}")
+    print(f"backend_base_url: {result.service.backend_base_url}")
     print(f"api_key_env: {result.service.api_key_env}")
     print(f"backend_status: {result.runtime.backend_status}")
+    print(f"backend_process_status: {result.runtime.backend_process_status}")
     if result.runtime.backend_installation is not None:
         print(f"server_binary: {result.runtime.backend_installation.server_binary}")
     print(f"active_model: {result.runtime.active_model or 'none'}")
@@ -300,7 +314,8 @@ def handle_serve(args: argparse.Namespace) -> int:
     """Run the local authenticated control-plane service."""
     try:
         service = _service_config_from_args(args)
-        result = validate_host_runtime(HostStateStore(args.project_root), service)
+        store = HostStateStore(args.project_root)
+        result = validate_host_runtime(store, service)
     except HostStateError as exc:
         return _exit_with_error(str(exc))
 
@@ -309,12 +324,20 @@ def handle_serve(args: argparse.Namespace) -> int:
             print(message, file=sys.stderr)
         return 1
 
+    try:
+        running_process = launch_managed_backend_process(store, result.service)
+    except (BackendProcessError, HostStateError) as exc:
+        return _exit_with_error(str(exc))
+
     print("control plane serving")
     print(f"base_url: {result.service.base_url}")
     print(f"responses_base_url: {result.service.responses_base_url}")
+    print(f"backend_base_url: {result.service.backend_base_url}")
     print(f"api_key_env: {result.service.api_key_env}")
     if result.runtime.backend_installation is not None:
         print(f"server_binary: {result.runtime.backend_installation.server_binary}")
+    print(f"backend_pid: {running_process.record.pid}")
+    print(f"backend_log_path: {running_process.record.log_path}")
     print(f"active_model: {result.runtime.active_model}")
     print("stop: Ctrl+C")
     try:
@@ -324,6 +347,8 @@ def handle_serve(args: argparse.Namespace) -> int:
         return 0
     except ControlPlaneError as exc:
         return _exit_with_error(str(exc))
+    finally:
+        stop_managed_backend_process(store, running_process)
     return 0
 
 
@@ -402,6 +427,17 @@ def _add_service_arguments(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_HOST_API_KEY_ENV,
         help=f"environment variable containing the control-plane API key (default: {DEFAULT_HOST_API_KEY_ENV})",
     )
+    parser.add_argument(
+        "--backend-bind-host",
+        default=DEFAULT_BACKEND_BIND,
+        help=f"bind host for the managed llama.cpp process (default: {DEFAULT_BACKEND_BIND})",
+    )
+    parser.add_argument(
+        "--backend-port",
+        type=int,
+        default=DEFAULT_BACKEND_PORT,
+        help=f"bind port for the managed llama.cpp process (default: {DEFAULT_BACKEND_PORT})",
+    )
 
 
 def _add_format_argument(parser: argparse.ArgumentParser) -> None:
@@ -418,6 +454,8 @@ def _service_config_from_args(args: argparse.Namespace) -> HostServiceConfig:
         bind_host=args.bind_host,
         port=args.port,
         api_key_env=args.api_key_env,
+        backend_bind_host=args.backend_bind_host,
+        backend_port=args.backend_port,
     ).normalized()
 
 

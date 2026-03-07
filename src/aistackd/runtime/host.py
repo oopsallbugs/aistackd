@@ -12,6 +12,8 @@ from aistackd.state.host import HostRuntimeState, HostStateStore
 DEFAULT_HOST_BIND = "127.0.0.1"
 DEFAULT_HOST_PORT = 8000
 DEFAULT_HOST_API_KEY_ENV = "AISTACKD_API_KEY"
+DEFAULT_BACKEND_BIND = "127.0.0.1"
+DEFAULT_BACKEND_PORT = 8011
 
 _ENVIRONMENT_VARIABLE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _BIND_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
@@ -24,6 +26,8 @@ class HostServiceConfig:
     bind_host: str = DEFAULT_HOST_BIND
     port: int = DEFAULT_HOST_PORT
     api_key_env: str = DEFAULT_HOST_API_KEY_ENV
+    backend_bind_host: str = DEFAULT_BACKEND_BIND
+    backend_port: int = DEFAULT_BACKEND_PORT
 
     def normalized(self) -> "HostServiceConfig":
         """Return a copy with whitespace normalized."""
@@ -31,6 +35,8 @@ class HostServiceConfig:
             bind_host=self.bind_host.strip(),
             port=self.port,
             api_key_env=self.api_key_env.strip(),
+            backend_bind_host=self.backend_bind_host.strip(),
+            backend_port=self.backend_port,
         )
 
     @property
@@ -44,14 +50,23 @@ class HostServiceConfig:
         """Return the Open Responses-compatible base path."""
         return f"{self.base_url}/v1"
 
+    @property
+    def backend_base_url(self) -> str:
+        """Return the internal backend URL used by the control plane."""
+        normalized = self.normalized()
+        return f"http://{normalized.backend_bind_host}:{normalized.backend_port}"
+
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation."""
         return {
             "bind_host": self.bind_host,
             "port": self.port,
             "api_key_env": self.api_key_env,
+            "backend_bind_host": self.backend_bind_host,
+            "backend_port": self.backend_port,
             "base_url": self.base_url,
             "responses_base_url": self.responses_base_url,
+            "backend_base_url": self.backend_base_url,
         }
 
 
@@ -90,6 +105,20 @@ def validate_host_runtime(
 
     if not isinstance(normalized_service.port, int) or not (1 <= normalized_service.port <= 65535):
         errors.append("port must be an integer between 1 and 65535")
+
+    if not normalized_service.backend_bind_host:
+        errors.append("backend_bind_host is required")
+    elif " " in normalized_service.backend_bind_host or not _BIND_HOST_RE.fullmatch(normalized_service.backend_bind_host):
+        errors.append("backend_bind_host must be a non-empty hostname or IPv4 address")
+
+    if not isinstance(normalized_service.backend_port, int) or not (1 <= normalized_service.backend_port <= 65535):
+        errors.append("backend_port must be an integer between 1 and 65535")
+
+    if (
+        normalized_service.bind_host == normalized_service.backend_bind_host
+        and normalized_service.port == normalized_service.backend_port
+    ):
+        errors.append("backend_port must not match the control-plane port on the same bind host")
 
     if not _ENVIRONMENT_VARIABLE_RE.fullmatch(normalized_service.api_key_env):
         errors.append("api_key_env must be a valid uppercase environment variable name")
