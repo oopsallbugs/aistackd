@@ -7,7 +7,13 @@ from pathlib import Path
 
 from aistackd.frontends.adapters.base import FrontendAdapterPlan, ManagedPath
 from aistackd.runtime.config import RuntimeConfig
-from aistackd.state.files import load_json_object, write_json_atomic, write_text_atomic
+from aistackd.state.files import (
+    delete_file_if_exists,
+    load_json_object,
+    prune_empty_directories,
+    write_json_atomic,
+    write_text_atomic,
+)
 
 CODEX_PROVIDER_CONFIG_PATH = Path(".codex") / "aistackd.json"
 CODEX_SKILLS_ROOT = Path(".codex") / "skills"
@@ -82,3 +88,20 @@ class CodexAdapter:
             written_paths.append(str(target_path))
 
         return tuple(written_paths)
+
+    def cleanup(
+        self,
+        project_root: Path,
+        managed_paths: Sequence[ManagedPath],
+    ) -> tuple[str, ...]:
+        """Remove stale repo-owned Codex adapter files."""
+        changed_paths: list[str] = []
+        root = project_root.resolve()
+
+        for managed_path in managed_paths:
+            target_path = root / managed_path.path
+            if delete_file_if_exists(target_path):
+                changed_paths.append(str(target_path))
+            changed_paths.extend(prune_empty_directories(target_path.parent, root))
+
+        return tuple(changed_paths)

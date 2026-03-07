@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aistackd.frontends.sync import SyncManifest, SyncRequest, apply_sync_manifest
+from aistackd.frontends.sync import SyncManifest, SyncOwnershipManifest, SyncRequest, apply_sync_manifest
 from aistackd.runtime.config import RuntimeConfig
 from aistackd.state.profiles import Profile
 
@@ -60,3 +60,53 @@ class SyncWriteTests(unittest.TestCase):
             self.assertIn("opencode.json", "\n".join(payload["written_paths"]))
             ownership_payload = json.loads(Path(result.ownership_manifest_path).read_text(encoding="utf-8"))
             self.assertEqual(ownership_payload["targets"][0]["frontend"], "opencode")
+
+    def test_sync_write_prunes_removed_target_paths_and_preserves_unmanaged_config(self) -> None:
+        profile = Profile(
+            name="local",
+            base_url="http://127.0.0.1:8000",
+            api_key_env="AISTACKD_API_KEY",
+        )
+        full_runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode"))
+        codex_only_runtime_config = RuntimeConfig.for_client(profile, ("codex",))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            opencode_path = project_root / "opencode.json"
+            opencode_path.write_text(
+                json.dumps(
+                    {
+                        "$schema": "https://opencode.ai/config.json",
+                        "custom": {"keep": True},
+                        "provider": {"existing": {"name": "keep"}},
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            full_manifest = SyncManifest.create(
+                full_runtime_config,
+                SyncRequest.create(full_runtime_config.frontend_targets, dry_run=False),
+            )
+            apply_sync_manifest(project_root, full_manifest)
+
+            codex_only_manifest = SyncManifest.create(
+                codex_only_runtime_config,
+                SyncRequest.create(codex_only_runtime_config.frontend_targets, dry_run=False),
+            )
+            result = apply_sync_manifest(project_root, codex_only_manifest)
+
+            cleaned_opencode_payload = json.loads(opencode_path.read_text(encoding="utf-8"))
+            self.assertEqual(cleaned_opencode_payload["custom"], {"keep": True})
+            self.assertEqual(cleaned_opencode_payload["provider"], {"existing": {"name": "keep"}})
+            self.assertNotIn("model", cleaned_opencode_payload)
+            self.assertFalse((project_root / ".opencode" / "skills" / "find-skills" / "SKILL.md").exists())
+            self.assertTrue((project_root / ".codex" / "skills" / "find-skills" / "SKILL.md").exists())
+            self.assertIn(str(opencode_path), result.removed_paths)
+
+            ownership_manifest = SyncOwnershipManifest.load(project_root)
+            self.assertIsNotNone(ownership_manifest)
+            assert ownership_manifest is not None
+            self.assertEqual(tuple(target.frontend for target in ownership_manifest.targets), ("codex",))

@@ -8,7 +8,13 @@ import sys
 from pathlib import Path
 
 from aistackd.frontends.catalog import SUPPORTED_FRONTENDS
-from aistackd.frontends.sync import SyncError, SyncManifest, SyncRequest, apply_sync_manifest
+from aistackd.frontends.sync import (
+    SyncError,
+    SyncManifest,
+    SyncRequest,
+    apply_sync_manifest,
+    evaluate_sync_manifest,
+)
 from aistackd.runtime.config import RuntimeConfig
 from aistackd.state.profiles import ProfileStore, ProfileStoreError
 
@@ -91,11 +97,20 @@ def handle(args: argparse.Namespace) -> int:
         print(json.dumps(manifest.to_dict(), indent=2))
         return 0
 
+    changes = evaluate_sync_manifest(args.project_root, manifest)
+    change_summary = {
+        action: sum(1 for change in changes if change.action == action)
+        for action in ("create", "update", "keep", "remove")
+    }
     print("sync preview")
     print(f"active_profile: {manifest.active_profile}")
     print(f"mode: {manifest.mode}")
     print(f"dry_run: {'enabled' if manifest.dry_run else 'disabled'}")
     print("write_mode: available")
+    print(
+        "change_summary: "
+        + ", ".join(f"{action}={count}" for action, count in change_summary.items() if count)
+    )
     for plan in manifest.targets:
         print(f"frontend: {plan.frontend}")
         print(f"activation_mode: {plan.activation_mode}")
@@ -108,6 +123,13 @@ def handle(args: argparse.Namespace) -> int:
         )
         if plan.notes:
             print(f"notes: {'; '.join(plan.notes)}")
+    for change in changes:
+        if change.action == "keep":
+            continue
+        print(
+            f"change: {change.action} frontend={change.frontend} "
+            f"kind={change.managed_path.kind} path={change.managed_path.path}"
+        )
     return 0
 
 

@@ -200,6 +200,13 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["targets"][0]["provider_config_path"], ".codex/aistackd.json")
             self.assertEqual(payload["targets"][0]["activation_mode"], "staged")
 
+            exit_code, stdout, stderr = invoke(["sync", "--project-root", tmpdir, "--target", "codex"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("change_summary: create=2", stdout)
+            self.assertIn("change: create frontend=codex kind=provider_config path=.codex/aistackd.json", stdout)
+
     def test_sync_requires_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             exit_code, stdout, stderr = invoke(["sync", "--project-root", tmpdir])
