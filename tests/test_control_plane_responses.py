@@ -266,6 +266,146 @@ class ControlPlaneResponsesTests(unittest.TestCase):
             self.assertEqual(second_payload["output_text"], "You have one installed model.")
             self.assertEqual(second_payload["output"][0]["type"], "message")
 
+    def test_proxy_responses_request_executes_repo_owned_tools_in_server_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+            captured_requests: list[dict[str, object]] = []
+
+            class _FakeResponse:
+                def __init__(self, payload: dict[str, object]) -> None:
+                    self._payload = payload
+
+                def read(self) -> bytes:
+                    return json.dumps(self._payload).encode("utf-8")
+
+                def __enter__(self) -> "_FakeResponse":
+                    return self
+
+                def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                    return False
+
+            def fake_urlopen(request_obj: object, timeout: float = 30) -> _FakeResponse:
+                from urllib.request import Request
+
+                assert isinstance(request_obj, Request)
+                request_payload = json.loads(request_obj.data.decode("utf-8"))
+                captured_requests.append(request_payload)
+                if len(captured_requests) == 1:
+                    return _FakeResponse(
+                        {
+                            "id": "chatcmpl_tool",
+                            "object": "chat.completion",
+                            "created": 1741305600,
+                            "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "finish_reason": "tool_calls",
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": None,
+                                        "tool_calls": [
+                                            {
+                                                "id": "call_123",
+                                                "type": "function",
+                                                "function": {
+                                                    "name": "list_installed_models",
+                                                    "arguments": "{}",
+                                                },
+                                            }
+                                        ],
+                                    },
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 12,
+                                "completion_tokens": 2,
+                                "total_tokens": 14,
+                            },
+                        }
+                    )
+                return _FakeResponse(
+                    {
+                        "id": "chatcmpl_final",
+                        "object": "chat.completion",
+                        "created": 1741305601,
+                        "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "stop",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "You have one installed model.",
+                                },
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 18,
+                            "completion_tokens": 6,
+                            "total_tokens": 24,
+                        },
+                    }
+                )
+
+            with patch("aistackd.control_plane.responses.request.urlopen", side_effect=fake_urlopen):
+                payload = proxy_responses_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "input": "What models are installed?",
+                        "tools": [
+                            {
+                                "type": "function",
+                                "name": "list_installed_models",
+                                "description": "ignored client definition",
+                                "parameters": {"type": "object"},
+                            }
+                        ],
+                        "tool_choice": "auto",
+                        "tool_execution": "server",
+                    },
+                )
+
+            self.assertEqual(payload["output"][0]["type"], "message")
+            self.assertEqual(payload["output_text"], "You have one installed model.")
+            self.assertEqual(payload["tool_execution"], "server")
+            self.assertEqual(len(captured_requests), 2)
+            self.assertEqual(captured_requests[0]["tools"][0]["function"]["name"], "list_installed_models")
+            self.assertEqual(captured_requests[1]["messages"][1]["tool_calls"][0]["id"], "call_123")
+            self.assertEqual(captured_requests[1]["messages"][2]["role"], "tool")
+            tool_output = json.loads(captured_requests[1]["messages"][2]["content"])
+            self.assertEqual(tool_output["active_model"], "qwen2.5-coder-7b-instruct-q4-k-m")
+            self.assertEqual(tool_output["models"][0]["id"], "qwen2.5-coder-7b-instruct-q4-k-m")
+
+    def test_proxy_responses_request_rejects_unknown_server_tool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+
+            with self.assertRaises(ResponsesProxyError) as excinfo:
+                proxy_responses_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "input": "hello",
+                        "tools": [
+                            {
+                                "type": "function",
+                                "name": "custom_client_tool",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "additionalProperties": False,
+                                },
+                            }
+                        ],
+                        "tool_execution": "server",
+                    },
+                )
+
+            self.assertEqual(excinfo.exception.status.value, 400)
+            self.assertIn("unsupported repo-owned tool", excinfo.exception.message)
+
     def test_open_responses_stream_translates_backend_sse_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
@@ -486,6 +626,35 @@ class ControlPlaneResponsesTests(unittest.TestCase):
             self.assertEqual(second_request["messages"][2]["role"], "tool")
             self.assertEqual(second_request["messages"][2]["tool_call_id"], "call_123")
             self.assertEqual(follow_up["output_text"], "You have one installed model.")
+
+    def test_open_responses_stream_rejects_server_tool_execution_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+
+            with self.assertRaises(ResponsesProxyError) as excinfo:
+                open_responses_stream(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "input": "What models are installed?",
+                        "stream": True,
+                        "tools": [
+                            {
+                                "type": "function",
+                                "name": "list_installed_models",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "additionalProperties": False,
+                                },
+                            }
+                        ],
+                        "tool_execution": "server",
+                    },
+                )
+
+            self.assertEqual(excinfo.exception.status.value, 400)
+            self.assertIn("tool_execution='server' is only implemented for non-streaming requests", excinfo.exception.message)
 
     def test_open_responses_stream_rejects_invalid_stream_type(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

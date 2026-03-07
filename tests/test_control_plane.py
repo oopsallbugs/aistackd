@@ -187,6 +187,129 @@ class ControlPlaneTests(unittest.TestCase):
                 backend_server.server_close()
                 backend_thread.join(timeout=1)
 
+    def test_control_plane_executes_repo_owned_server_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend_server = _create_fake_backend_server()
+            backend_server.response_sequence = [
+                {
+                    "id": "chatcmpl_tool",
+                    "object": "chat.completion",
+                    "created": 1741305600,
+                    "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "tool_calls",
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_123",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "list_installed_models",
+                                            "arguments": "{}",
+                                        },
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 2,
+                        "total_tokens": 14,
+                    },
+                },
+                {
+                    "id": "chatcmpl_final",
+                    "object": "chat.completion",
+                    "created": 1741305601,
+                    "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {
+                                "role": "assistant",
+                                "content": "Hello from llama-server",
+                            },
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 20,
+                        "completion_tokens": 4,
+                        "total_tokens": 24,
+                    },
+                },
+            ]
+            backend_thread = threading.Thread(target=backend_server.serve_forever, daemon=True)
+            backend_thread.start()
+
+            try:
+                backend_port = backend_server.server_address[1]
+                _create_ready_host_state(Path(tmpdir), backend_port=backend_port)
+
+                with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                    server = create_control_plane_server(
+                        Path(tmpdir),
+                        HostServiceConfig(
+                            bind_host="127.0.0.1",
+                            port=0,
+                            api_key_env="AISTACKD_API_KEY",
+                            backend_bind_host="127.0.0.1",
+                            backend_port=backend_port,
+                        ),
+                    )
+
+                try:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    time.sleep(0.02)
+                    port = server.server_address[1]
+
+                    response_payload = _request_json(
+                        f"http://127.0.0.1:{port}/v1/responses",
+                        token="test-key",
+                        method="POST",
+                        payload={
+                            "input": "What models are installed?",
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "name": "list_installed_models",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {},
+                                        "additionalProperties": False,
+                                    },
+                                }
+                            ],
+                            "tool_choice": "auto",
+                            "tool_execution": "server",
+                        },
+                    )
+
+                    self.assertEqual(response_payload["output"][0]["type"], "message")
+                    self.assertEqual(response_payload["output_text"], "Hello from llama-server")
+                    self.assertEqual(response_payload["tool_execution"], "server")
+
+                    backend_request = backend_server.last_request_payload
+                    self.assertIsNotNone(backend_request)
+                    self.assertEqual(backend_request["messages"][1]["tool_calls"][0]["id"], "call_123")
+                    self.assertEqual(backend_request["messages"][2]["role"], "tool")
+                    tool_output = json.loads(backend_request["messages"][2]["content"])
+                    self.assertEqual(tool_output["models"][0]["id"], "qwen2.5-coder-7b-instruct-q4-k-m")
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=1)
+            finally:
+                backend_server.shutdown()
+                backend_server.server_close()
+                backend_thread.join(timeout=1)
+
     def test_control_plane_streams_responses_events_from_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend_server = _create_fake_backend_server()
@@ -676,6 +799,7 @@ def _request_sse_events(
 
 class _FakeBackendServer(ThreadingHTTPServer):
     response_payload: dict[str, object]
+    response_sequence: list[dict[str, object]]
     stream_payloads: list[dict[str, object]]
     last_request_payload: dict[str, object] | None
 
@@ -705,7 +829,11 @@ class _FakeBackendRequestHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             return
 
-        response_body = json.dumps(backend_server.response_payload).encode("utf-8")
+        if backend_server.response_sequence:
+            response_payload = backend_server.response_sequence.pop(0)
+        else:
+            response_payload = backend_server.response_payload
+        response_body = json.dumps(response_payload).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(response_body)))
@@ -720,6 +848,7 @@ def _create_fake_backend_server() -> _FakeBackendServer:
     server = _FakeBackendServer(("127.0.0.1", 0), _FakeBackendRequestHandler)
     server.daemon_threads = True
     server.last_request_payload = None
+    server.response_sequence = []
     server.response_payload = {
         "id": "chatcmpl_fake",
         "object": "chat.completion",
