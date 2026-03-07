@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import tomllib
 import unittest
+import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -181,6 +182,118 @@ class CLITests(unittest.TestCase):
             self.assertIn("responses_base_url: http://127.0.0.1:8000/v1", stdout)
             self.assertIn("model: local-model", stdout)
             self.assertIn("frontend_targets: codex, opencode", stdout)
+
+    def test_client_validate_reports_remote_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--role-hint",
+                    "client",
+                    "--activate",
+                ]
+            )
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+                patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_remote_client_urlopen),
+            ):
+                exit_code, stdout, stderr = invoke(["client", "validate", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("client validation", stdout)
+            self.assertIn("status: ok", stdout)
+            self.assertIn("health_status_code: 200", stdout)
+            self.assertIn("runtime_status_code: 200", stdout)
+
+    def test_client_validate_reports_remote_auth_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--activate",
+                ]
+            )
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_REMOTE_API_KEY": "bad-key"}, clear=False),
+                patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_remote_client_unauthorized_urlopen),
+            ):
+                exit_code, stdout, stderr = invoke(["client", "validate", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(stderr, "")
+            self.assertIn("status: invalid", stdout)
+            self.assertIn("health returned status 401", stdout)
+
+    def test_client_models_install_proxies_remote_admin_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--activate",
+                ]
+            )
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+                patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_remote_install_urlopen),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "client",
+                        "models",
+                        "install",
+                        "glm-remote",
+                        "--project-root",
+                        tmpdir,
+                        "--quant",
+                        "Q4_K_M",
+                        "--budget",
+                        "12",
+                        "--activate",
+                        "--format",
+                        "json",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "installed")
+            self.assertEqual(payload["model"]["source"], "llmfit")
+            self.assertEqual(payload["active_model"], "glm-remote")
 
     def test_models_show_list_and_set_active_profile_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1070,6 +1183,84 @@ def _fake_hf_download_subprocess_run(command: list[str], **kwargs: object) -> su
         returncode=0,
         stdout=str(downloaded_path),
         stderr="",
+    )
+
+
+class _FakeUrlopenResponse:
+    def __init__(self, status: int, payload: dict[str, object]) -> None:
+        self.status = status
+        self._payload = json.dumps(payload).encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._payload
+
+    def __enter__(self) -> "_FakeUrlopenResponse":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        return None
+
+
+class _FakeErrorStream:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def read(self, *_args: object, **_kwargs: object) -> bytes:
+        payload = self._payload
+        self._payload = b""
+        return payload
+
+    def close(self) -> None:
+        return None
+
+
+def _fake_remote_client_urlopen(request_obj: object, timeout: float = 5) -> _FakeUrlopenResponse:
+    url = getattr(request_obj, "full_url")
+    if url.endswith("/health"):
+        return _FakeUrlopenResponse(200, {"status": "ok", "active_model": "remote-model"})
+    if url.endswith("/v1/models"):
+        return _FakeUrlopenResponse(200, {"object": "list", "active_model": "remote-model", "data": []})
+    if url.endswith("/admin/runtime"):
+        return _FakeUrlopenResponse(
+            200,
+            {
+                "runtime": {"active_model": "remote-model", "backend_status": "configured", "installed_models": []},
+                "service": {"base_url": "http://127.0.0.1:8000"},
+            },
+        )
+    raise AssertionError(f"unexpected URL: {url}")
+
+
+def _fake_remote_client_unauthorized_urlopen(request_obj: object, timeout: float = 5) -> _FakeUrlopenResponse:
+    body = json.dumps({"error": {"message": "missing or invalid API key"}}).encode("utf-8")
+    raise urllib.error.HTTPError(
+        getattr(request_obj, "full_url"),
+        401,
+        "Unauthorized",
+        hdrs=None,
+        fp=_FakeErrorStream(body),
+    )
+
+
+def _fake_remote_install_urlopen(request_obj: object, timeout: float = 30) -> _FakeUrlopenResponse:
+    url = getattr(request_obj, "full_url")
+    if not url.endswith("/admin/models/install"):
+        raise AssertionError(f"unexpected URL: {url}")
+    decoded = json.loads(getattr(request_obj, "data").decode("utf-8"))
+    if decoded["quant"] != "Q4_K_M" or decoded["budget_gb"] != 12:
+        raise AssertionError(f"unexpected install payload: {decoded}")
+    return _FakeUrlopenResponse(
+        200,
+        {
+            "action": "installed",
+            "model": {
+                "model": decoded["model"],
+                "source": "llmfit",
+                "acquisition_method": "llmfit_download",
+                "artifact_path": "/managed/models/glm-remote.gguf",
+            },
+            "active_model": decoded["model"],
+        },
     )
 
 
