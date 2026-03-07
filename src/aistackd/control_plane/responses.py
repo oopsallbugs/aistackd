@@ -1542,32 +1542,6 @@ def _normalize_backend_arguments(value: object) -> str:
         ) from exc
 
 
-def _request_uses_tool_calling(payload: dict[str, object]) -> bool:
-    tools = payload.get("tools")
-    if isinstance(tools, list) and tools:
-        return True
-    if payload.get("previous_response_id") is not None:
-        return True
-    tool_choice = payload.get("tool_choice")
-    if tool_choice not in (None, "none"):
-        return True
-    if payload.get("parallel_tool_calls") not in (None, False):
-        return True
-    return _input_contains_tool_items(payload.get("input"))
-
-
-def _input_contains_tool_items(value: object) -> bool:
-    if isinstance(value, list):
-        return any(_input_contains_tool_items(item) for item in value)
-    if not isinstance(value, dict):
-        return False
-    item_type = value.get("type")
-    if item_type in {"function_call", "function_call_output"}:
-        return True
-    tool_calls = value.get("tool_calls")
-    return isinstance(tool_calls, list) and bool(tool_calls)
-
-
 def _extract_stream_tool_argument_delta(payload: dict[str, object]) -> str:
     function_payload = payload.get("function")
     if not isinstance(function_payload, dict):
