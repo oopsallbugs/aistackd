@@ -14,6 +14,14 @@ DEFAULT_API_KEY_ENV = "${api_key_env}"
 
 
 def build_parser() -> argparse.ArgumentParser:
+    common_parser = argparse.ArgumentParser(add_help=False)
+    common_parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="output format",
+    )
+
     parser = argparse.ArgumentParser(
         description="Search, recommend, install, and activate models through the aistackd admin API.",
     )
@@ -27,22 +35,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_API_KEY_ENV,
         help=f"environment variable containing the API key (default: {DEFAULT_API_KEY_ENV})",
     )
-    parser.add_argument(
-        "--format",
-        choices=("text", "json"),
-        default="text",
-        help="output format",
-    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    search_parser = subparsers.add_parser("search", help="search the live llmfit catalog through the host")
+    search_parser = subparsers.add_parser(
+        "search",
+        parents=[common_parser],
+        help="search the live llmfit catalog through the host",
+    )
     search_parser.add_argument("query", nargs="?", help="optional query string")
 
-    subparsers.add_parser("recommend", help="show llmfit recommendations from the host")
-    subparsers.add_parser("installed", help="list installed host models through the control plane")
+    subparsers.add_parser(
+        "recommend",
+        parents=[common_parser],
+        help="show llmfit recommendations from the host",
+    )
+    subparsers.add_parser(
+        "installed",
+        parents=[common_parser],
+        help="list installed host models through the control plane",
+    )
 
-    install_parser = subparsers.add_parser("install", help="install one model into host state")
+    install_parser = subparsers.add_parser(
+        "install",
+        parents=[common_parser],
+        help="install one model into host state",
+    )
     install_parser.add_argument("model", nargs="?", help="model identifier to install")
     install_parser.add_argument("--source", choices=("llmfit", "hugging_face"), help="force one model source")
     install_parser.add_argument("--gguf-path", help="explicit path to a local GGUF to import")
@@ -57,9 +75,15 @@ def build_parser() -> argparse.ArgumentParser:
     install_parser.add_argument("--hf-repo", help="Hugging Face repo to use for fallback acquisition")
     install_parser.add_argument("--hf-file", help="GGUF filename to use for Hugging Face fallback")
     install_parser.add_argument("--hf-cli", help="Hugging Face CLI executable to use for fallback downloads")
+    install_parser.add_argument("--quant", help="preferred llmfit quantization for direct downloads")
+    install_parser.add_argument("--budget", dest="budget_gb", type=float, help="llmfit memory budget in GB")
     install_parser.add_argument("--activate", action="store_true", help="activate the model after installing it")
 
-    activate_parser = subparsers.add_parser("activate", help="activate an installed host model")
+    activate_parser = subparsers.add_parser(
+        "activate",
+        parents=[common_parser],
+        help="activate an installed host model",
+    )
     activate_parser.add_argument("model", help="installed model identifier to activate")
 
     return parser
@@ -100,10 +124,12 @@ def dispatch(args: argparse.Namespace, api_key: str) -> tuple[dict[str, object],
         payload: dict[str, object] = {"activate": args.activate}
         if args.model is not None:
             payload["model"] = args.model
-        for field_name in ("source", "gguf_path", "hf_url", "hf_repo", "hf_file", "hf_cli"):
+        for field_name in ("source", "gguf_path", "hf_url", "hf_repo", "hf_file", "hf_cli", "quant"):
             value = getattr(args, field_name)
             if value is not None:
                 payload[field_name] = value
+        if args.budget_gb is not None:
+            payload["budget_gb"] = args.budget_gb
         if args.local_roots:
             payload["local_roots"] = list(args.local_roots)
         result = post_json(base_url, "/admin/models/install", api_key, payload)
@@ -146,20 +172,23 @@ def perform_json_request(request_object: request.Request) -> dict[str, object]:
         with request.urlopen(request_object, timeout=30) as response:
             body = response.read().decode("utf-8")
     except error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
         try:
-            decoded = json.loads(body)
-        except json.JSONDecodeError:
-            raise RuntimeError(
-                f"request failed with status {exc.code}: {body.strip() or exc.reason}"
-            ) from exc
-        if isinstance(decoded, dict):
-            error_payload = decoded.get("error")
-            if isinstance(error_payload, dict):
-                message = error_payload.get("message")
-                if isinstance(message, str) and message.strip():
-                    raise RuntimeError(f"request failed with status {exc.code}: {message.strip()}") from exc
-        raise RuntimeError(f"request failed with status {exc.code}: {body.strip() or exc.reason}") from exc
+            body = exc.read().decode("utf-8", errors="replace")
+            try:
+                decoded = json.loads(body)
+            except json.JSONDecodeError:
+                raise RuntimeError(
+                    f"request failed with status {exc.code}: {body.strip() or exc.reason}"
+                ) from exc
+            if isinstance(decoded, dict):
+                error_payload = decoded.get("error")
+                if isinstance(error_payload, dict):
+                    message = error_payload.get("message")
+                    if isinstance(message, str) and message.strip():
+                        raise RuntimeError(f"request failed with status {exc.code}: {message.strip()}") from exc
+            raise RuntimeError(f"request failed with status {exc.code}: {body.strip() or exc.reason}") from exc
+        finally:
+            exc.close()
     except error.URLError as exc:
         raise RuntimeError(f"failed to reach {request_object.full_url}: {exc.reason}") from exc
     except OSError as exc:

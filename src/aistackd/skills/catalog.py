@@ -8,7 +8,7 @@ from string import Template
 SHARED_SKILLS_DIRECTORY_NAME = "skills"
 SHARED_TOOLS_DIRECTORY_NAME = "tools"
 BASELINE_SKILLS = ("find-skills",)
-BASELINE_TOOLS = ("runtime-status", "model-admin")
+BASELINE_TOOLS = ("runtime-status", "model-admin", "responses-smoke", "runtime-wait")
 PLANNED_BASELINE_SKILLS = BASELINE_SKILLS
 PLANNED_BASELINE_TOOLS = BASELINE_TOOLS
 SKILL_FILE_NAME = "SKILL.md"

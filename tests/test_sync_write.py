@@ -66,6 +66,8 @@ class SyncWriteTests(unittest.TestCase):
             self.assertEqual(payload["manifest"]["active_profile"], "lab-host")
             self.assertIn("opencode.json", "\n".join(payload["written_paths"]))
             self.assertIn(".opencode/tools/runtime-status.py", "\n".join(payload["written_paths"]))
+            self.assertIn(".opencode/tools/responses-smoke.py", "\n".join(payload["written_paths"]))
+            self.assertIn(".opencode/tools/runtime-wait.py", "\n".join(payload["written_paths"]))
             self.assertEqual(
                 payload["manifest"]["targets"][0]["provider_payload"]["provider"]["aistackd"]["models"]["lab-model"]["name"],
                 "lab-model",
@@ -117,8 +119,12 @@ class SyncWriteTests(unittest.TestCase):
             self.assertNotIn("model", cleaned_opencode_payload)
             self.assertFalse((project_root / ".opencode" / "skills" / "find-skills" / "SKILL.md").exists())
             self.assertFalse((project_root / ".opencode" / "tools" / "runtime-status.py").exists())
+            self.assertFalse((project_root / ".opencode" / "tools" / "responses-smoke.py").exists())
+            self.assertFalse((project_root / ".opencode" / "tools" / "runtime-wait.py").exists())
             self.assertTrue((project_root / ".codex" / "skills" / "find-skills" / "SKILL.md").exists())
             self.assertTrue((project_root / ".codex" / "tools" / "runtime-status.py").exists())
+            self.assertTrue((project_root / ".codex" / "tools" / "responses-smoke.py").exists())
+            self.assertTrue((project_root / ".codex" / "tools" / "runtime-wait.py").exists())
             self.assertIn(str(opencode_path), result.removed_paths)
 
             ownership_manifest = SyncOwnershipManifest.load(project_root)
@@ -182,6 +188,8 @@ class SyncWriteTests(unittest.TestCase):
             self.assertNotIn("aistackd", cleaned_codex_payload["model_providers"])
             self.assertFalse((project_root / ".codex" / "skills" / "find-skills" / "SKILL.md").exists())
             self.assertFalse((project_root / ".codex" / "tools" / "runtime-status.py").exists())
+            self.assertFalse((project_root / ".codex" / "tools" / "responses-smoke.py").exists())
+            self.assertFalse((project_root / ".codex" / "tools" / "runtime-wait.py").exists())
             self.assertIn(str(codex_path), result.removed_paths)
 
             ownership_manifest = SyncOwnershipManifest.load(project_root)
@@ -208,10 +216,18 @@ class SyncWriteTests(unittest.TestCase):
 
             codex_tool = project_root / ".codex" / "tools" / "runtime-status.py"
             opencode_tool = project_root / ".opencode" / "tools" / "model-admin.py"
+            codex_smoke_tool = project_root / ".codex" / "tools" / "responses-smoke.py"
+            opencode_wait_tool = project_root / ".opencode" / "tools" / "runtime-wait.py"
 
             self.assertTrue(codex_tool.exists())
             self.assertTrue(opencode_tool.exists())
+            self.assertTrue(codex_smoke_tool.exists())
+            self.assertTrue(opencode_wait_tool.exists())
             self.assertTrue(os.access(codex_tool, os.X_OK))
             self.assertTrue(os.access(opencode_tool, os.X_OK))
+            self.assertTrue(os.access(codex_smoke_tool, os.X_OK))
+            self.assertTrue(os.access(opencode_wait_tool, os.X_OK))
             self.assertIn('DEFAULT_BASE_URL = "http://127.0.0.1:8000"', codex_tool.read_text(encoding="utf-8"))
             self.assertIn('DEFAULT_API_KEY_ENV = "AISTACKD_API_KEY"', opencode_tool.read_text(encoding="utf-8"))
+            self.assertIn('DEFAULT_BASE_URL = "http://127.0.0.1:8000"', codex_smoke_tool.read_text(encoding="utf-8"))
+            self.assertIn('DEFAULT_API_KEY_ENV = "AISTACKD_API_KEY"', opencode_wait_tool.read_text(encoding="utf-8"))

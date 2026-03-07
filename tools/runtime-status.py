@@ -104,8 +104,11 @@ def request_json(base_url: str, path: str, api_key: str) -> dict[str, object]:
             body = response.read().decode("utf-8")
             status_code = response.status
     except error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        status_code = exc.code
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+            status_code = exc.code
+        finally:
+            exc.close()
     except error.URLError as exc:
         raise RuntimeError(f"failed to reach {base_url}{path}: {exc.reason}") from exc
     except OSError as exc:
