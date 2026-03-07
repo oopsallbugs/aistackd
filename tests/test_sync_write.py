@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -27,11 +28,11 @@ class SyncWriteTests(unittest.TestCase):
 
             first_result = apply_sync_manifest(project_root, manifest)
             first_opencode = (project_root / "opencode.json").read_text(encoding="utf-8")
-            first_codex = (project_root / ".codex" / "aistackd.json").read_text(encoding="utf-8")
+            first_codex = (project_root / ".codex" / "config.toml").read_text(encoding="utf-8")
 
             second_result = apply_sync_manifest(project_root, manifest)
             second_opencode = (project_root / "opencode.json").read_text(encoding="utf-8")
-            second_codex = (project_root / ".codex" / "aistackd.json").read_text(encoding="utf-8")
+            second_codex = (project_root / ".codex" / "config.toml").read_text(encoding="utf-8")
 
             self.assertEqual(first_opencode, second_opencode)
             self.assertEqual(first_codex, second_codex)
@@ -110,3 +111,64 @@ class SyncWriteTests(unittest.TestCase):
             self.assertIsNotNone(ownership_manifest)
             assert ownership_manifest is not None
             self.assertEqual(tuple(target.frontend for target in ownership_manifest.targets), ("codex",))
+
+    def test_sync_write_prunes_codex_profile_and_preserves_unmanaged_codex_config(self) -> None:
+        profile = Profile(
+            name="local",
+            base_url="http://127.0.0.1:8000",
+            api_key_env="AISTACKD_API_KEY",
+        )
+        full_runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode"))
+        opencode_only_runtime_config = RuntimeConfig.for_client(profile, ("opencode",))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            codex_path = project_root / ".codex" / "config.toml"
+            codex_path.parent.mkdir(parents=True, exist_ok=True)
+            codex_path.write_text(
+                "\n".join(
+                    (
+                        'model_reasoning_effort = "high"',
+                        "",
+                        "[profiles.fast]",
+                        'model = "gpt-5.4"',
+                        "",
+                        "[model_providers.existing]",
+                        'name = "existing"',
+                        'base_url = "https://example.com/v1"',
+                        'env_key = "EXISTING_API_KEY"',
+                        'wire_api = "responses"',
+                        "",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            full_manifest = SyncManifest.create(
+                full_runtime_config,
+                SyncRequest.create(full_runtime_config.frontend_targets, dry_run=False),
+            )
+            apply_sync_manifest(project_root, full_manifest)
+
+            opencode_only_manifest = SyncManifest.create(
+                opencode_only_runtime_config,
+                SyncRequest.create(opencode_only_runtime_config.frontend_targets, dry_run=False),
+            )
+            result = apply_sync_manifest(project_root, opencode_only_manifest)
+
+            cleaned_codex_payload = tomllib.loads(codex_path.read_text(encoding="utf-8"))
+            self.assertEqual(cleaned_codex_payload["model_reasoning_effort"], "high")
+            self.assertNotIn("profile", cleaned_codex_payload)
+            self.assertEqual(cleaned_codex_payload["profiles"], {"fast": {"model": "gpt-5.4"}})
+            self.assertEqual(
+                cleaned_codex_payload["model_providers"]["existing"]["base_url"],
+                "https://example.com/v1",
+            )
+            self.assertNotIn("aistackd", cleaned_codex_payload["model_providers"])
+            self.assertFalse((project_root / ".codex" / "skills" / "find-skills" / "SKILL.md").exists())
+            self.assertIn(str(codex_path), result.removed_paths)
+
+            ownership_manifest = SyncOwnershipManifest.load(project_root)
+            self.assertIsNotNone(ownership_manifest)
+            assert ownership_manifest is not None
+            self.assertEqual(tuple(target.frontend for target in ownership_manifest.targets), ("opencode",))

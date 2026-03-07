@@ -36,4 +36,4 @@ PYTHONPATH=src python -m aistackd sync --write
 
 ## Current Scope
 
-The repo is still intentionally thin overall. Model management remains placeholder, but profile storage, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex staged adapter writes, baseline skill sync, and ownership manifests are now implemented.
+The repo is still intentionally thin overall. Model management remains placeholder, but profile storage, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests are now implemented.

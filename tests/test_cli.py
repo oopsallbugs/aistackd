@@ -6,6 +6,7 @@ import io
 import json
 import os
 import tempfile
+import tomllib
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -197,15 +198,15 @@ class CLITests(unittest.TestCase):
             self.assertEqual(len(payload["targets"]), 1)
             self.assertEqual(payload["targets"][0]["frontend"], "codex")
             self.assertEqual(payload["targets"][0]["provider_base_url"], "http://127.0.0.1:8000/v1")
-            self.assertEqual(payload["targets"][0]["provider_config_path"], ".codex/aistackd.json")
-            self.assertEqual(payload["targets"][0]["activation_mode"], "staged")
+            self.assertEqual(payload["targets"][0]["provider_config_path"], ".codex/config.toml")
+            self.assertEqual(payload["targets"][0]["activation_mode"], "project_local")
 
             exit_code, stdout, stderr = invoke(["sync", "--project-root", tmpdir, "--target", "codex"])
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
             self.assertIn("change_summary: create=2", stdout)
-            self.assertIn("change: create frontend=codex kind=provider_config path=.codex/aistackd.json", stdout)
+            self.assertIn("change: create frontend=codex kind=provider_config path=.codex/config.toml", stdout)
 
     def test_sync_requires_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -259,13 +260,22 @@ class CLITests(unittest.TestCase):
             self.assertIn("aistackd", opencode_payload["provider"])
             self.assertEqual(opencode_payload["model"], "aistackd/default")
 
-            codex_payload = json.loads(
-                (Path(tmpdir) / ".codex" / "aistackd.json").read_text(encoding="utf-8")
+            codex_payload = tomllib.loads(
+                (Path(tmpdir) / ".codex" / "config.toml").read_text(encoding="utf-8")
             )
-            self.assertEqual(codex_payload["active_profile"], "local")
+            self.assertEqual(codex_payload["profile"], "aistackd")
             self.assertEqual(
-                codex_payload["provider"]["base_url"],
+                codex_payload["profiles"]["aistackd"]["model_provider"],
+                "aistackd",
+            )
+            self.assertEqual(codex_payload["profiles"]["aistackd"]["model"], "default")
+            self.assertEqual(
+                codex_payload["model_providers"]["aistackd"]["base_url"],
                 "http://127.0.0.1:8000/v1",
+            )
+            self.assertEqual(
+                codex_payload["model_providers"]["aistackd"]["env_key"],
+                "AISTACKD_API_KEY",
             )
 
             opencode_skill = Path(tmpdir) / ".opencode" / "skills" / "find-skills" / "SKILL.md"

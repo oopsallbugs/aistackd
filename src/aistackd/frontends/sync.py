@@ -116,11 +116,13 @@ class SyncOwnershipTarget:
             raise ValueError("ownership targets require list 'managed_paths'")
         if not isinstance(notes, list):
             raise ValueError("ownership targets require list 'notes'")
+        if not all(isinstance(entry, dict) for entry in managed_paths):
+            raise ValueError("managed path entries must be objects")
 
         return cls(
             frontend=frontend,
             activation_mode=activation_mode,
-            managed_paths=tuple(ManagedPath.from_object(entry) for entry in managed_paths),
+            managed_paths=tuple(ManagedPath.from_dict(entry) for entry in managed_paths),
             notes=tuple(str(note) for note in notes),
         )
 
@@ -186,12 +188,14 @@ class SyncOwnershipManifest:
             raise ValueError("ownership manifest requires string 'mode'")
         if not isinstance(targets, list):
             raise ValueError("ownership manifest requires list 'targets'")
+        if not all(isinstance(entry, dict) for entry in targets):
+            raise ValueError("ownership manifest targets must be objects")
 
         return cls(
             schema_version=schema_version,
             active_profile=active_profile,
             mode=mode,
-            targets=tuple(SyncOwnershipTarget.from_dict(entry) for entry in targets if isinstance(entry, dict)),
+            targets=tuple(SyncOwnershipTarget.from_dict(entry) for entry in targets),
         )
 
     def target_by_frontend(self, frontend: str) -> SyncOwnershipTarget | None:
