@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aistackd.cli.main import build_parser, main
+from aistackd.runtime.hardware import CURRENT_HARDWARE_PROFILE_SCHEMA_VERSION, HardwareProfile, LlmfitDetectionResult
 from aistackd.state.layout import COMMAND_GROUPS
 
 
@@ -311,43 +312,54 @@ class CLITests(unittest.TestCase):
 
             backend_root = _create_fake_backend_root(Path(tmpdir))
 
-            exit_code, stdout, stderr = invoke(
-                [
-                    "host",
-                    "inspect",
-                    "--project-root",
-                    tmpdir,
-                    "--backend-root",
-                    str(backend_root),
-                    "--format",
-                    "json",
-                ]
-            )
+            with patch(
+                "aistackd.runtime.prereqs.detect_hardware_with_llmfit",
+                return_value=_fake_llmfit_detection(),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "host",
+                        "inspect",
+                        "--project-root",
+                        tmpdir,
+                        "--backend-root",
+                        str(backend_root),
+                        "--format",
+                        "json",
+                    ]
+                )
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
             payload = json.loads(stdout)
+            self.assertTrue(payload["hardware_detection"]["ok"])
+            self.assertEqual(payload["acquisition_plan"]["flavor"], "cuda")
             self.assertTrue(payload["backend_discovery"]["found"])
             self.assertEqual(payload["backend_discovery"]["discovery_mode"], "explicit_root")
 
-            exit_code, stdout, stderr = invoke(
-                [
-                    "host",
-                    "acquire-backend",
-                    "--project-root",
-                    tmpdir,
-                    "--backend-root",
-                    str(backend_root),
-                    "--format",
-                    "json",
-                ]
-            )
+            with patch(
+                "aistackd.runtime.prereqs.detect_hardware_with_llmfit",
+                return_value=_fake_llmfit_detection(),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "host",
+                        "acquire-backend",
+                        "--project-root",
+                        tmpdir,
+                        "--backend-root",
+                        str(backend_root),
+                        "--format",
+                        "json",
+                    ]
+                )
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
             payload = json.loads(stdout)
             self.assertEqual(payload["action"], "adopted")
             self.assertTrue(payload["backend_installation"]["server_binary"].endswith("llama-server"))
+            self.assertEqual(payload["acquisition_plan"]["flavor"], "cuda")
 
             with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
                 exit_code, stdout, stderr = invoke(["host", "validate", "--project-root", tmpdir])
@@ -370,6 +382,33 @@ class CLITests(unittest.TestCase):
             self.assertIn("server_binary:", stdout)
             self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
             serve_mock.assert_called_once()
+
+    def test_host_acquire_backend_plans_from_llmfit_when_backend_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch(
+                    "aistackd.runtime.prereqs.detect_hardware_with_llmfit",
+                    return_value=_fake_llmfit_detection(
+                        backend="amd",
+                        acceleration_api="rocm",
+                        target="gfx1100",
+                    ),
+                ),
+                patch("aistackd.runtime.backends.shutil.which", return_value=None),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    ["host", "acquire-backend", "--project-root", tmpdir, "--format", "json"]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "planned")
+            self.assertEqual(payload["acquisition_plan"]["flavor"], "rocm")
+            self.assertEqual(
+                payload["acquisition_plan"]["source_environment"]["HSA_OVERRIDE_GFX_VERSION"],
+                "11.0.0",
+            )
 
     def test_sync_preview_uses_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -517,3 +556,39 @@ def _create_fake_backend_root(root: Path) -> Path:
         path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         path.chmod(0o755)
     return backend_root
+
+
+def _fake_llmfit_detection(
+    *,
+    backend: str = "nvidia",
+    acceleration_api: str = "cuda",
+    target: str = "",
+) -> LlmfitDetectionResult:
+    profile = HardwareProfile(
+        schema_version=CURRENT_HARDWARE_PROFILE_SCHEMA_VERSION,
+        detector="llmfit",
+        backend=backend,
+        acceleration_api=acceleration_api,
+        target=target,
+        cmake_flags=(
+            ("-DGGML_HIP=ON", f"-DGPU_TARGETS={target}")
+            if acceleration_api == "rocm" and target
+            else ("-DGGML_HIP=ON",)
+            if acceleration_api == "rocm"
+            else ("-DGGML_CUDA=ON",)
+            if acceleration_api == "cuda"
+            else ()
+        ),
+        gpu_layers=99 if acceleration_api != "cpu" else 0,
+        hsa_override_gfx_version="11.0.0" if acceleration_api == "rocm" else "",
+    )
+    return LlmfitDetectionResult(
+        detector="llmfit",
+        available=True,
+        ok=True,
+        command=("llmfit", "system", "--json"),
+        exit_code=0,
+        raw_output="{}",
+        raw_payload={"provider": backend},
+        profile=profile,
+    )

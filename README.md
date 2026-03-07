@@ -35,6 +35,7 @@ PYTHONPATH=src python -m aistackd models set refined-model
 PYTHONPATH=src python -m aistackd models recommend
 PYTHONPATH=src python -m aistackd models install qwen2.5-coder-7b-instruct-q4-k-m --activate
 PYTHONPATH=src python -m aistackd host inspect --backend-root /path/to/llama.cpp
+PYTHONPATH=src python -m aistackd host acquire-backend
 PYTHONPATH=src python -m aistackd host acquire-backend --backend-root /path/to/llama.cpp
 PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host validate
 PYTHONPATH=src python -m aistackd host
@@ -45,4 +46,4 @@ PYTHONPATH=src python -m aistackd sync --write
 
 ## Current Scope
 
-The repo is still intentionally thin overall. Actual downloads, backend process management, and inference execution are still not implemented, but profile-scoped target model selection, deterministic model-source search/recommendation, host-side installed/active model state, prerequisite inspection, adoption of an existing `llama.cpp` installation, local host validation, authenticated `GET /health` and `GET /v1/models` control-plane endpoints, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests are now implemented.
+The repo is still intentionally thin overall. Actual backend downloads/builds, backend process management, and inference execution are still not implemented, but profile-scoped target model selection, deterministic model-source search/recommendation, host-side installed/active model state, prerequisite inspection, `llmfit`-backed hardware detection, `llama.cpp` acquisition planning, adoption of an existing `llama.cpp` installation, local host validation, authenticated `GET /health` and `GET /v1/models` control-plane endpoints, active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, baseline skill sync, and ownership manifests are now implemented.

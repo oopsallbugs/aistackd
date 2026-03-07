@@ -9,6 +9,7 @@ from pathlib import Path
 
 from aistackd.control_plane import ControlPlaneError, serve_control_plane
 from aistackd.runtime.backends import adopt_backend_installation
+from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.runtime.host import (
     DEFAULT_HOST_API_KEY_ENV,
     DEFAULT_HOST_BIND,
@@ -34,18 +35,23 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _add_format_argument(status_parser)
     status_parser.set_defaults(handler=handle_status)
 
-    inspect_parser = command_parsers.add_parser("inspect", help="inspect prerequisites and backend discovery")
+    inspect_parser = command_parsers.add_parser(
+        "inspect",
+        help="inspect prerequisites, llmfit hardware detection, and backend discovery",
+    )
     _add_shared_arguments(inspect_parser)
     _add_backend_locator_arguments(inspect_parser)
+    _add_llmfit_arguments(inspect_parser)
     _add_format_argument(inspect_parser)
     inspect_parser.set_defaults(handler=handle_inspect)
 
     acquire_parser = command_parsers.add_parser(
         "acquire-backend",
-        help="adopt an existing llama.cpp installation into host state",
+        help="adopt an existing llama.cpp installation or plan one from detected hardware",
     )
     _add_shared_arguments(acquire_parser)
     _add_backend_locator_arguments(acquire_parser)
+    _add_llmfit_arguments(acquire_parser)
     _add_format_argument(acquire_parser)
     acquire_parser.set_defaults(handler=handle_acquire_backend)
 
@@ -98,11 +104,12 @@ def handle_status(args: argparse.Namespace) -> int:
 
 
 def handle_inspect(args: argparse.Namespace) -> int:
-    """Inspect host prerequisites and backend discovery state."""
+    """Inspect host prerequisites, llmfit hardware detection, and backend discovery state."""
     report = inspect_host_environment(
         backend_root=args.backend_root,
         server_binary=args.server_binary,
         cli_binary=args.cli_binary,
+        llmfit_binary=args.llmfit_binary,
     )
     if args.format == "json":
         print(json.dumps(report.to_dict(), indent=2))
@@ -114,6 +121,18 @@ def handle_inspect(args: argparse.Namespace) -> int:
     for check in report.prerequisite_checks:
         label = "ok" if check.ok else "missing"
         print(f"prerequisite: {check.name} status={label} detail={check.detail}")
+    print(f"hardware_detection: {'ok' if report.hardware_detection_ok else 'needs_attention'}")
+    print(f"llmfit_command: {' '.join(report.hardware_detection.command)}")
+    if report.hardware_detection.profile is not None:
+        profile = report.hardware_detection.profile
+        print(f"hardware_backend: {profile.backend}")
+        print(f"hardware_acceleration_api: {profile.acceleration_api}")
+        print(f"hardware_target: {profile.target or 'none'}")
+        print(f"source_cmake_flags: {', '.join(profile.cmake_flags) if profile.cmake_flags else 'none'}")
+        for warning in profile.warnings:
+            print(f"warning: {warning}")
+    for issue in report.hardware_detection.issues:
+        print(f"issue: {issue}")
     discovery = report.backend_discovery
     print(f"backend_discovery: {'found' if discovery.found else 'missing'}")
     print(f"discovery_mode: {discovery.discovery_mode}")
@@ -125,38 +144,87 @@ def handle_inspect(args: argparse.Namespace) -> int:
         print(f"cli_binary: {discovery.cli_binary}")
     for issue in discovery.issues:
         print(f"issue: {issue}")
+    if report.acquisition_plan is not None:
+        print(f"acquisition_flavor: {report.acquisition_plan.flavor}")
+        print(f"acquisition_primary: {report.acquisition_plan.primary_strategy}")
+        print(f"acquisition_fallback: {report.acquisition_plan.fallback_strategy}")
+        for key, value in report.acquisition_plan.source_environment:
+            print(f"source_env: {key}={value}")
+        for note in report.acquisition_plan.notes:
+            print(f"note: {note}")
     return 0
 
 
 def handle_acquire_backend(args: argparse.Namespace) -> int:
-    """Adopt an existing llama.cpp installation into host state."""
-    discovery = inspect_host_environment(
+    """Adopt an existing llama.cpp installation or plan backend acquisition."""
+    report = inspect_host_environment(
         backend_root=args.backend_root,
         server_binary=args.server_binary,
         cli_binary=args.cli_binary,
-    ).backend_discovery
+        llmfit_binary=args.llmfit_binary,
+    )
+    discovery = report.backend_discovery
     try:
-        installation = adopt_backend_installation(discovery)
-        created = HostStateStore(args.project_root).save_backend_installation(installation)
+        if discovery.found:
+            installation = adopt_backend_installation(discovery)
+            created = HostStateStore(args.project_root).save_backend_installation(installation)
+        elif report.acquisition_plan is None:
+            issues = [*report.hardware_detection.issues, *discovery.issues]
+            detail = "; ".join(issue for issue in issues if issue) or "unable to plan backend acquisition"
+            return _exit_with_error(detail)
+        else:
+            installation = None
+            created = False
     except (HostStateError, ValueError) as exc:
         return _exit_with_error(str(exc))
 
-    payload = {
-        "action": "adopted" if created else "updated",
-        "backend_installation": installation.as_dict(),
-        "issues": list(discovery.issues),
-    }
+    if installation is not None:
+        payload = {
+            "action": "adopted" if created else "updated",
+            "backend_installation": installation.as_dict(),
+            "hardware_detection": report.hardware_detection.to_dict(),
+            "acquisition_plan": (
+                report.acquisition_plan.to_dict() if report.acquisition_plan is not None else None
+            ),
+            "issues": list(discovery.issues),
+        }
+    else:
+        payload = {
+            "action": "planned",
+            "hardware_detection": report.hardware_detection.to_dict(),
+            "acquisition_plan": report.acquisition_plan.to_dict() if report.acquisition_plan is not None else None,
+            "issues": list(report.hardware_detection.issues),
+        }
     if args.format == "json":
         print(json.dumps(payload, indent=2))
         return 0
 
-    print(f"{payload['action']} backend installation")
-    print(f"backend_root: {installation.backend_root}")
-    print(f"server_binary: {installation.server_binary}")
-    if installation.cli_binary is not None:
-        print(f"cli_binary: {installation.cli_binary}")
-    for issue in discovery.issues:
-        print(f"issue: {issue}")
+    if installation is not None:
+        print(f"{payload['action']} backend installation")
+        print(f"backend_root: {installation.backend_root}")
+        print(f"server_binary: {installation.server_binary}")
+        if installation.cli_binary is not None:
+            print(f"cli_binary: {installation.cli_binary}")
+        for issue in discovery.issues:
+            print(f"issue: {issue}")
+        return 0
+
+    print("planned backend acquisition")
+    print(f"llmfit_command: {' '.join(report.hardware_detection.command)}")
+    if report.hardware_detection.profile is not None:
+        print(f"hardware_backend: {report.hardware_detection.profile.backend}")
+        print(f"hardware_acceleration_api: {report.hardware_detection.profile.acceleration_api}")
+    print(f"acquisition_flavor: {report.acquisition_plan.flavor}")
+    print(f"acquisition_primary: {report.acquisition_plan.primary_strategy}")
+    print(f"acquisition_fallback: {report.acquisition_plan.fallback_strategy}")
+    if report.acquisition_plan.source_cmake_flags:
+        print(f"source_cmake_flags: {', '.join(report.acquisition_plan.source_cmake_flags)}")
+    for key, value in report.acquisition_plan.source_environment:
+        print(f"source_env: {key}={value}")
+    for warning in report.acquisition_plan.warnings:
+        print(f"warning: {warning}")
+    for note in report.acquisition_plan.notes:
+        print(f"note: {note}")
     return 0
 
 
@@ -244,6 +312,14 @@ def _add_backend_locator_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_llmfit_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--llmfit-binary",
+        default=LLMFIT_BINARY_NAME,
+        help=f"llmfit executable to use for hardware detection (default: {LLMFIT_BINARY_NAME})",
+    )
+
+
 def _add_service_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--bind-host",
@@ -283,4 +359,3 @@ def _service_config_from_args(args: argparse.Namespace) -> HostServiceConfig:
 def _exit_with_error(message: str) -> int:
     print(message, file=sys.stderr)
     return 1
-

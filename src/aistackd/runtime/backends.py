@@ -1,4 +1,4 @@
-"""Backend discovery and adoption helpers."""
+"""Backend discovery, acquisition planning, and adoption helpers."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from aistackd.models.sources import PRIMARY_BACKEND
+from aistackd.models.sources import BACKEND_ACQUISITION_POLICY, PRIMARY_BACKEND
+from aistackd.runtime.hardware import HardwareProfile
 from aistackd.state.host import HostBackendInstallation
 
 LLAMA_SERVER_BINARY_NAME = "llama-server"
@@ -36,6 +37,37 @@ class BackendDiscoveryResult:
             "server_binary": self.server_binary,
             "cli_binary": self.cli_binary,
             "issues": list(self.issues),
+        }
+
+
+@dataclass(frozen=True)
+class LlamaCppAcquisitionPlan:
+    """Acquisition plan derived from a normalized hardware profile."""
+
+    backend: str
+    acquisition_policy: str
+    flavor: str
+    target: str
+    primary_strategy: str
+    fallback_strategy: str
+    source_cmake_flags: tuple[str, ...]
+    source_environment: tuple[tuple[str, str], ...] = ()
+    warnings: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation."""
+        return {
+            "backend": self.backend,
+            "acquisition_policy": self.acquisition_policy,
+            "flavor": self.flavor,
+            "target": self.target,
+            "primary_strategy": self.primary_strategy,
+            "fallback_strategy": self.fallback_strategy,
+            "source_cmake_flags": list(self.source_cmake_flags),
+            "source_environment": {key: value for key, value in self.source_environment},
+            "warnings": list(self.warnings),
+            "notes": list(self.notes),
         }
 
 
@@ -147,6 +179,36 @@ def adopt_backend_installation(discovery: BackendDiscoveryResult) -> HostBackend
     )
 
 
+def plan_llama_cpp_acquisition(hardware_profile: HardwareProfile) -> LlamaCppAcquisitionPlan:
+    """Plan the preferred llama.cpp acquisition path for one hardware profile."""
+    source_environment: list[tuple[str, str]] = []
+    notes: list[str] = []
+
+    if hardware_profile.acceleration_api == "cuda":
+        notes.append("Prefer CUDA-enabled prebuilt llama.cpp artifacts for NVIDIA hosts.")
+    elif hardware_profile.acceleration_api == "rocm":
+        notes.append("Prefer ROCm-capable prebuilt artifacts when available; keep source fallback ready.")
+        if hardware_profile.hsa_override_gfx_version:
+            source_environment.append(("HSA_OVERRIDE_GFX_VERSION", hardware_profile.hsa_override_gfx_version))
+    elif hardware_profile.acceleration_api == "metal":
+        notes.append("Prefer Metal-enabled prebuilt artifacts for Apple hosts.")
+    else:
+        notes.append("No GPU accelerator detected; prefer CPU-oriented llama.cpp artifacts.")
+
+    return LlamaCppAcquisitionPlan(
+        backend=PRIMARY_BACKEND,
+        acquisition_policy=BACKEND_ACQUISITION_POLICY,
+        flavor=hardware_profile.acceleration_api,
+        target=hardware_profile.target,
+        primary_strategy="prebuilt",
+        fallback_strategy="source",
+        source_cmake_flags=hardware_profile.cmake_flags,
+        source_environment=tuple(source_environment),
+        warnings=hardware_profile.warnings,
+        notes=tuple(notes),
+    )
+
+
 def backend_installation_errors(installation: HostBackendInstallation | None) -> tuple[str, ...]:
     """Return validation errors for an adopted backend installation."""
     if installation is None:
@@ -186,4 +248,3 @@ def _infer_backend_root(server_binary: Path) -> Path:
     if server_binary.parent.name == "bin":
         return server_binary.parent.parent.resolve()
     return server_binary.parent.resolve()
-
