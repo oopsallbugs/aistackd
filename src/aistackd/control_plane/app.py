@@ -177,7 +177,12 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
         try:
             request_payload = parse_json_request_body(request_body)
             if is_streaming_request(request_payload):
-                stream_session = open_responses_stream(server.store, server.service_config, request_payload)
+                stream_session = open_responses_stream(
+                    server.store,
+                    server.service_config,
+                    request_payload,
+                    response_state_cache=server.responses_state_cache,
+                )
             else:
                 response_payload = proxy_responses_request(
                     server.store,

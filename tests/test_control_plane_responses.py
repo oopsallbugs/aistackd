@@ -343,6 +343,150 @@ class ControlPlaneResponsesTests(unittest.TestCase):
             self.assertEqual(events[4]["response"]["usage"]["total_tokens"], 12)
             self.assertTrue(captured_response["value"].closed)
 
+    def test_open_responses_stream_translates_function_tool_events_and_persists_follow_up_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+            captured_requests: list[dict[str, object]] = []
+            captured_responses: list[object] = []
+            state_cache = ResponsesStateCache()
+
+            class _FakeStreamingResponse:
+                def __init__(self, lines: list[bytes]) -> None:
+                    self._lines = lines
+                    self.closed = False
+
+                def __iter__(self) -> object:
+                    return iter(self._lines)
+
+                def close(self) -> None:
+                    self.closed = True
+
+            class _FakeResponse:
+                def __init__(self, payload: dict[str, object]) -> None:
+                    self._payload = payload
+
+                def read(self) -> bytes:
+                    return json.dumps(self._payload).encode("utf-8")
+
+                def __enter__(self) -> "_FakeResponse":
+                    return self
+
+                def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                    return False
+
+            def fake_urlopen(request_obj: object, timeout: float = 30) -> object:
+                from urllib.request import Request
+
+                assert isinstance(request_obj, Request)
+                request_payload = json.loads(request_obj.data.decode("utf-8"))
+                captured_requests.append(request_payload)
+                if len(captured_requests) == 1:
+                    response = _FakeStreamingResponse(
+                        [
+                            b'data: {"id":"chatcmpl_tool","object":"chat.completion.chunk","created":1741305600,"model":"qwen2.5-coder-7b-instruct-q4-k-m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"list_installed_models","arguments":"{"}}]},"finish_reason":null}]}\n',
+                            b"\n",
+                            b'data: {"id":"chatcmpl_tool","object":"chat.completion.chunk","created":1741305601,"model":"qwen2.5-coder-7b-instruct-q4-k-m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":14,"completion_tokens":3,"total_tokens":17}}\n',
+                            b"\n",
+                            b"data: [DONE]\n",
+                            b"\n",
+                        ]
+                    )
+                    captured_responses.append(response)
+                    return response
+                return _FakeResponse(
+                    {
+                        "id": "chatcmpl_follow_up",
+                        "object": "chat.completion",
+                        "created": 1741305602,
+                        "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "stop",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "You have one installed model.",
+                                },
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 20,
+                            "completion_tokens": 6,
+                            "total_tokens": 26,
+                        },
+                    }
+                )
+
+            with patch("aistackd.control_plane.responses.request.urlopen", side_effect=fake_urlopen):
+                session = open_responses_stream(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "input": "What models are installed?",
+                        "tools": [
+                            {
+                                "type": "function",
+                                "name": "list_installed_models",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "additionalProperties": False,
+                                },
+                            }
+                        ],
+                        "tool_choice": "auto",
+                        "stream": True,
+                    },
+                    response_state_cache=state_cache,
+                )
+                events = list(session.iter_events())
+
+                completion_event = events[-1]
+                follow_up = proxy_responses_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "previous_response_id": completion_event["response"]["id"],
+                        "input": [
+                            {
+                                "type": "function_call_output",
+                                "call_id": "call_123",
+                                "output": {"models": ["qwen2.5-coder-7b-instruct-q4-k-m"]},
+                            }
+                        ],
+                    },
+                    response_state_cache=state_cache,
+                )
+
+            self.assertEqual([event["type"] for event in events], [
+                "response.created",
+                "response.output_item.added",
+                "response.function_call_arguments.delta",
+                "response.function_call_arguments.delta",
+                "response.function_call_arguments.done",
+                "response.output_item.done",
+                "response.completed",
+            ])
+            self.assertEqual(events[1]["item"]["type"], "function_call")
+            self.assertEqual(events[1]["item"]["call_id"], "call_123")
+            self.assertEqual(events[2]["delta"], "{")
+            self.assertEqual(events[3]["delta"], "}")
+            self.assertEqual(events[4]["arguments"], "{}")
+            self.assertEqual(events[5]["item"]["arguments"], "{}")
+            self.assertEqual(events[6]["response"]["output"][0]["type"], "function_call")
+            self.assertEqual(events[6]["response"]["output"][0]["arguments"], "{}")
+            self.assertTrue(captured_responses[0].closed)
+
+            first_request = captured_requests[0]
+            self.assertTrue(first_request["stream"])
+            self.assertEqual(first_request["tools"][0]["function"]["name"], "list_installed_models")
+
+            second_request = captured_requests[1]
+            self.assertEqual(second_request["messages"][1]["tool_calls"][0]["id"], "call_123")
+            self.assertEqual(second_request["messages"][2]["role"], "tool")
+            self.assertEqual(second_request["messages"][2]["tool_call_id"], "call_123")
+            self.assertEqual(follow_up["output_text"], "You have one installed model.")
+
     def test_open_responses_stream_rejects_invalid_stream_type(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
@@ -356,34 +500,6 @@ class ControlPlaneResponsesTests(unittest.TestCase):
 
             self.assertEqual(excinfo.exception.status.value, 400)
             self.assertIn("stream must be a boolean", excinfo.exception.message)
-
-    def test_open_responses_stream_rejects_tool_calling_features(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
-
-            with self.assertRaises(ResponsesProxyError) as excinfo:
-                open_responses_stream(
-                    store,
-                    HostServiceConfig(),
-                    {
-                        "input": "What models are installed?",
-                        "stream": True,
-                        "tools": [
-                            {
-                                "type": "function",
-                                "name": "list_installed_models",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {},
-                                    "additionalProperties": False,
-                                },
-                            }
-                        ],
-                    },
-                )
-
-            self.assertEqual(excinfo.exception.status.value, 400)
-            self.assertIn("streaming tool calling is not implemented yet", excinfo.exception.message)
 
 
 def _create_ready_host_state(project_root: Path, *, backend_port: int) -> HostStateStore:

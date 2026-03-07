@@ -249,6 +249,175 @@ class ControlPlaneTests(unittest.TestCase):
                 backend_server.server_close()
                 backend_thread.join(timeout=1)
 
+    def test_control_plane_streams_function_tool_events_and_allows_follow_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend_server = _create_fake_backend_server()
+            backend_server.stream_payloads = [
+                {
+                    "id": "chatcmpl_tool",
+                    "object": "chat.completion.chunk",
+                    "created": 1741305600,
+                    "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_123",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "list_installed_models",
+                                            "arguments": "{",
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                },
+                {
+                    "id": "chatcmpl_tool",
+                    "object": "chat.completion.chunk",
+                    "created": 1741305601,
+                    "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {
+                                            "arguments": "}",
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 14,
+                        "completion_tokens": 3,
+                        "total_tokens": 17,
+                    },
+                },
+            ]
+            backend_server.response_payload = {
+                "id": "chatcmpl_follow_up",
+                "object": "chat.completion",
+                "created": 1741305602,
+                "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": "You have one installed model.",
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 20,
+                    "completion_tokens": 6,
+                    "total_tokens": 26,
+                },
+            }
+            backend_thread = threading.Thread(target=backend_server.serve_forever, daemon=True)
+            backend_thread.start()
+
+            try:
+                backend_port = backend_server.server_address[1]
+                _create_ready_host_state(Path(tmpdir), backend_port=backend_port)
+
+                with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                    server = create_control_plane_server(
+                        Path(tmpdir),
+                        HostServiceConfig(
+                            bind_host="127.0.0.1",
+                            port=0,
+                            api_key_env="AISTACKD_API_KEY",
+                            backend_bind_host="127.0.0.1",
+                            backend_port=backend_port,
+                        ),
+                    )
+
+                try:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    time.sleep(0.02)
+                    port = server.server_address[1]
+
+                    content_type, events = _request_sse_events(
+                        f"http://127.0.0.1:{port}/v1/responses",
+                        token="test-key",
+                        payload={
+                            "input": "What models are installed?",
+                            "stream": True,
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "name": "list_installed_models",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {},
+                                        "additionalProperties": False,
+                                    },
+                                }
+                            ],
+                            "tool_choice": "auto",
+                        },
+                    )
+
+                    self.assertTrue(content_type.startswith("text/event-stream"))
+                    self.assertEqual([event["type"] for event in events], [
+                        "response.created",
+                        "response.output_item.added",
+                        "response.function_call_arguments.delta",
+                        "response.function_call_arguments.delta",
+                        "response.function_call_arguments.done",
+                        "response.output_item.done",
+                        "response.completed",
+                    ])
+                    self.assertEqual(events[1]["item"]["call_id"], "call_123")
+                    self.assertEqual(events[4]["arguments"], "{}")
+                    response_id = events[-1]["response"]["id"]
+
+                    follow_up_response = _request_json(
+                        f"http://127.0.0.1:{port}/v1/responses",
+                        token="test-key",
+                        method="POST",
+                        payload={
+                            "previous_response_id": response_id,
+                            "input": [
+                                {
+                                    "type": "function_call_output",
+                                    "call_id": "call_123",
+                                    "output": {"models": ["qwen2.5-coder-7b-instruct-q4-k-m"]},
+                                }
+                            ],
+                        },
+                    )
+                    self.assertEqual(follow_up_response["output_text"], "You have one installed model.")
+
+                    backend_request = backend_server.last_request_payload
+                    self.assertIsNotNone(backend_request)
+                    self.assertEqual(backend_request["messages"][1]["tool_calls"][0]["id"], "call_123")
+                    self.assertEqual(backend_request["messages"][2]["role"], "tool")
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=1)
+            finally:
+                backend_server.shutdown()
+                backend_server.server_close()
+                backend_thread.join(timeout=1)
+
     def test_control_plane_responses_supports_function_tool_call_follow_up(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend_server = _create_fake_backend_server()

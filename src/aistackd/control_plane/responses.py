@@ -71,6 +71,175 @@ class PreparedResponseTools:
 
 
 @dataclass
+class _StreamingToolCallState:
+    index: int
+    output_index: int
+    item_id: str
+    call_id: str
+    name: str
+    arguments: str = ""
+    added_emitted: bool = False
+    done_emitted: bool = False
+
+    def in_progress_item(self) -> dict[str, object]:
+        return {
+            "id": self.item_id,
+            "type": "function_call",
+            "status": "in_progress",
+            "call_id": self.call_id,
+            "name": self.name,
+            "arguments": self.arguments,
+        }
+
+    def completed_item(self) -> dict[str, object]:
+        return {
+            "id": self.item_id,
+            "type": "function_call",
+            "status": "completed",
+            "call_id": self.call_id,
+            "name": self.name,
+            "arguments": self.arguments,
+        }
+
+    def as_backend_tool_call(self) -> dict[str, object]:
+        return {
+            "id": self.call_id,
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "arguments": self.arguments,
+            },
+        }
+
+
+class _StreamingToolCallStateCollection:
+    def __init__(self, *, response_id: str) -> None:
+        self.response_id = response_id
+        self._ordered_states: list[_StreamingToolCallState] = []
+        self._states_by_index: dict[int, _StreamingToolCallState] = {}
+
+    def apply_backend_chunk(self, payload: dict[str, object]) -> list[dict[str, object]]:
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return []
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_GATEWAY,
+                "backend stream choice had an invalid shape",
+                error_type="server_error",
+            )
+        delta = first_choice.get("delta")
+        if not isinstance(delta, dict):
+            return []
+        raw_tool_calls = delta.get("tool_calls")
+        if raw_tool_calls is None:
+            return []
+        if not isinstance(raw_tool_calls, list):
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_GATEWAY,
+                "backend stream tool_calls payload had an invalid shape",
+                error_type="server_error",
+            )
+
+        events: list[dict[str, object]] = []
+        for raw_tool_call in raw_tool_calls:
+            if not isinstance(raw_tool_call, dict):
+                raise ResponsesProxyError(
+                    HTTPStatus.BAD_GATEWAY,
+                    "backend stream tool_call entry had an invalid shape",
+                    error_type="server_error",
+                )
+            state = self._state_from_delta(raw_tool_call)
+            if not state.added_emitted:
+                events.append(
+                    {
+                        "type": "response.output_item.added",
+                        "response_id": self.response_id,
+                        "output_index": state.output_index,
+                        "item": state.in_progress_item(),
+                    }
+                )
+                state.added_emitted = True
+
+            delta_arguments = _extract_stream_tool_argument_delta(raw_tool_call)
+            if delta_arguments:
+                state.arguments += delta_arguments
+                events.append(
+                    {
+                        "type": "response.function_call_arguments.delta",
+                        "response_id": self.response_id,
+                        "item_id": state.item_id,
+                        "output_index": state.output_index,
+                        "delta": delta_arguments,
+                    }
+                )
+        return events
+
+    def finish(self) -> list[dict[str, object]]:
+        events: list[dict[str, object]] = []
+        for state in self._ordered_states:
+            if state.done_emitted:
+                continue
+            events.append(
+                {
+                    "type": "response.function_call_arguments.done",
+                    "response_id": self.response_id,
+                    "item_id": state.item_id,
+                    "output_index": state.output_index,
+                    "arguments": state.arguments,
+                }
+            )
+            events.append(
+                {
+                    "type": "response.output_item.done",
+                    "response_id": self.response_id,
+                    "output_index": state.output_index,
+                    "item": state.completed_item(),
+                }
+            )
+            state.done_emitted = True
+        return events
+
+    def as_backend_tool_calls(self) -> list[dict[str, object]]:
+        return [state.as_backend_tool_call() for state in self._ordered_states]
+
+    def _state_from_delta(self, payload: dict[str, object]) -> _StreamingToolCallState:
+        index_value = payload.get("index", 0)
+        if not isinstance(index_value, int) or index_value < 0:
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_GATEWAY,
+                "backend stream tool_call index must be a non-negative integer",
+                error_type="server_error",
+            )
+        existing = self._states_by_index.get(index_value)
+        if existing is not None:
+            call_id = payload.get("id")
+            if isinstance(call_id, str) and call_id.strip():
+                existing.call_id = call_id.strip()
+            function_payload = payload.get("function")
+            if isinstance(function_payload, dict):
+                function_name = function_payload.get("name")
+                if isinstance(function_name, str) and function_name.strip():
+                    existing.name = _merge_stream_tool_name(existing.name, function_name.strip())
+            return existing
+
+        call_id = payload.get("id")
+        function_payload = payload.get("function")
+        function_name = function_payload.get("name") if isinstance(function_payload, dict) else None
+        state = _StreamingToolCallState(
+            index=index_value,
+            output_index=index_value,
+            item_id=f"fc_{uuid4().hex}",
+            call_id=(call_id.strip() if isinstance(call_id, str) and call_id.strip() else f"call_{uuid4().hex}"),
+            name=(function_name.strip() if isinstance(function_name, str) and function_name.strip() else ""),
+        )
+        self._ordered_states.append(state)
+        self._states_by_index[index_value] = state
+        return state
+
+
+@dataclass
 class ResponsesStreamSession:
     """One live streaming Open Responses proxy session."""
 
@@ -80,6 +249,11 @@ class ResponsesStreamSession:
     message_id: str
     created_at: int
     upstream_response: Any
+    backend_messages: list[dict[str, object]]
+    response_tools: tuple[dict[str, object], ...]
+    response_tool_choice: str | dict[str, object]
+    parallel_tool_calls: bool
+    response_state_cache: ResponsesStateCache | None
     _closed: bool = False
 
     def iter_events(self) -> Iterator[dict[str, object]]:
@@ -91,10 +265,14 @@ class ResponsesStreamSession:
                 model_name=self.model_name,
                 response_id=self.response_id,
                 created_at=self.created_at,
+                response_tools=self.response_tools,
+                response_tool_choice=self.response_tool_choice,
+                parallel_tool_calls=self.parallel_tool_calls,
             ),
         }
 
         output_parts: list[str] = []
+        tool_calls = _StreamingToolCallStateCollection(response_id=self.response_id)
         usage_value: object = None
         created_at = self.created_at
 
@@ -107,6 +285,9 @@ class ResponsesStreamSession:
                 chunk_usage = backend_chunk.get("usage")
                 if isinstance(chunk_usage, dict):
                     usage_value = chunk_usage
+
+                for event in tool_calls.apply_backend_chunk(backend_chunk):
+                    yield event
 
                 delta = _extract_backend_delta_text(backend_chunk)
                 if not delta:
@@ -128,25 +309,42 @@ class ResponsesStreamSession:
             self.close()
 
         output_text = "".join(output_parts)
-        yield {
-            "type": "response.output_text.done",
-            "response_id": self.response_id,
-            "item_id": self.message_id,
-            "output_index": 0,
-            "content_index": 0,
-            "text": output_text,
-        }
+        if output_text:
+            yield {
+                "type": "response.output_text.done",
+                "response_id": self.response_id,
+                "item_id": self.message_id,
+                "output_index": 0,
+                "content_index": 0,
+                "text": output_text,
+            }
+        for event in tool_calls.finish():
+            yield event
+
+        tool_call_payloads = tool_calls.as_backend_tool_calls()
+        backend_response = _synthesize_backend_response(
+            model_name=self.model_name,
+            created_at=created_at,
+            output_text=output_text,
+            usage_value=usage_value,
+            tool_calls=tool_call_payloads,
+        )
+        if self.response_state_cache is not None:
+            assistant_message = _build_backend_assistant_message(backend_response)
+            self.response_state_cache.save(
+                self.response_id,
+                self.model_name,
+                [*self.backend_messages, assistant_message],
+            )
         yield {
             "type": "response.completed",
             "response": _build_open_responses_payload(
                 self.request_payload,
                 model_name=self.model_name,
-                backend_response=_synthesize_backend_response(
-                    model_name=self.model_name,
-                    created_at=created_at,
-                    output_text=output_text,
-                    usage_value=usage_value,
-                ),
+                backend_response=backend_response,
+                response_tools=self.response_tools,
+                response_tool_choice=self.response_tool_choice,
+                parallel_tool_calls=self.parallel_tool_calls,
                 response_id=self.response_id,
                 message_id=self.message_id,
                 created_at=created_at,
@@ -218,27 +416,31 @@ def open_responses_stream(
     store: HostStateStore,
     service: HostServiceConfig,
     payload: dict[str, object],
+    *,
+    response_state_cache: ResponsesStateCache | None = None,
 ) -> ResponsesStreamSession:
     """Open one streaming Responses session against the running backend."""
     if not is_streaming_request(payload):
         raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "streaming request must set stream=true")
-    if _request_uses_tool_calling(payload):
-        raise ResponsesProxyError(
-            HTTPStatus.BAD_REQUEST,
-            "streaming tool calling is not implemented yet",
-        )
 
     runtime = store.load_runtime_state()
     model_name = _resolve_requested_model(runtime, payload)
-    backend_messages = _build_chat_messages(payload, previous_state=None)
+    prepared_tools = _prepare_response_tools(payload)
+    previous_state = _load_previous_response_state(payload, response_state_cache)
+    if previous_state is not None and previous_state.model_name != model_name:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            f"previous_response_id targets model '{previous_state.model_name}', not active model '{model_name}'",
+        )
+    backend_messages = _build_chat_messages(payload, previous_state=previous_state)
     backend_payload = _build_backend_chat_payload(
         payload,
         model_name=model_name,
         stream=True,
         messages=backend_messages,
-        backend_tools=(),
-        backend_tool_choice=None,
-        parallel_tool_calls=False,
+        backend_tools=prepared_tools.backend_tools,
+        backend_tool_choice=prepared_tools.backend_tool_choice,
+        parallel_tool_calls=prepared_tools.parallel_tool_calls,
     )
     upstream_response = _open_backend_chat_completion_stream(runtime, service, backend_payload)
     return ResponsesStreamSession(
@@ -248,6 +450,11 @@ def open_responses_stream(
         message_id=f"msg_{uuid4().hex}",
         created_at=int(time.time()),
         upstream_response=upstream_response,
+        backend_messages=backend_messages,
+        response_tools=prepared_tools.response_tools,
+        response_tool_choice=prepared_tools.response_tool_choice,
+        parallel_tool_calls=prepared_tools.parallel_tool_calls,
+        response_state_cache=response_state_cache,
     )
 
 
@@ -1228,6 +1435,9 @@ def _build_in_progress_responses_payload(
     model_name: str,
     response_id: str,
     created_at: int,
+    response_tools: tuple[dict[str, object], ...],
+    response_tool_choice: str | dict[str, object],
+    parallel_tool_calls: bool,
 ) -> dict[str, object]:
     return {
         "id": response_id,
@@ -1243,11 +1453,11 @@ def _build_in_progress_responses_payload(
         "instructions": request_payload.get("instructions"),
         "max_output_tokens": request_payload.get("max_output_tokens"),
         "metadata": request_payload.get("metadata") if isinstance(request_payload.get("metadata"), dict) else {},
-        "parallel_tool_calls": False,
+        "parallel_tool_calls": parallel_tool_calls,
         "temperature": request_payload.get("temperature"),
         "text": request_payload.get("text") if isinstance(request_payload.get("text"), dict) else None,
-        "tool_choice": "none",
-        "tools": [],
+        "tool_choice": response_tool_choice,
+        "tools": list(response_tools),
         "top_p": request_payload.get("top_p"),
         "truncation": "disabled",
     }
@@ -1259,7 +1469,13 @@ def _synthesize_backend_response(
     created_at: int,
     output_text: str,
     usage_value: object,
+    tool_calls: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
+    message: dict[str, object] = {"role": "assistant"}
+    if output_text:
+        message["content"] = output_text
+    if tool_calls:
+        message["tool_calls"] = tool_calls
     return {
         "object": "chat.completion",
         "model": model_name,
@@ -1267,8 +1483,8 @@ def _synthesize_backend_response(
         "choices": [
             {
                 "index": 0,
-                "finish_reason": "stop",
-                "message": {"role": "assistant", "content": output_text},
+                "finish_reason": "tool_calls" if tool_calls else "stop",
+                "message": message,
             }
         ],
         "usage": usage_value if isinstance(usage_value, dict) else {},
@@ -1350,3 +1566,23 @@ def _input_contains_tool_items(value: object) -> bool:
         return True
     tool_calls = value.get("tool_calls")
     return isinstance(tool_calls, list) and bool(tool_calls)
+
+
+def _extract_stream_tool_argument_delta(payload: dict[str, object]) -> str:
+    function_payload = payload.get("function")
+    if not isinstance(function_payload, dict):
+        return ""
+    arguments = function_payload.get("arguments")
+    return arguments if isinstance(arguments, str) else ""
+
+
+def _merge_stream_tool_name(current: str, incoming: str) -> str:
+    if not current:
+        return incoming
+    if incoming.startswith(current):
+        return incoming
+    if current.endswith(incoming):
+        return current
+    if incoming and incoming != current:
+        return current + incoming
+    return current
