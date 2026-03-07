@@ -249,6 +249,142 @@ class ControlPlaneTests(unittest.TestCase):
                 backend_server.server_close()
                 backend_thread.join(timeout=1)
 
+    def test_control_plane_responses_supports_function_tool_call_follow_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend_server = _create_fake_backend_server()
+            backend_server.response_payload = {
+                "id": "chatcmpl_tool",
+                "object": "chat.completion",
+                "created": 1741305600,
+                "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_123",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "list_installed_models",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 14,
+                    "completion_tokens": 3,
+                    "total_tokens": 17,
+                },
+            }
+            backend_thread = threading.Thread(target=backend_server.serve_forever, daemon=True)
+            backend_thread.start()
+
+            try:
+                backend_port = backend_server.server_address[1]
+                _create_ready_host_state(Path(tmpdir), backend_port=backend_port)
+
+                with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                    server = create_control_plane_server(
+                        Path(tmpdir),
+                        HostServiceConfig(
+                            bind_host="127.0.0.1",
+                            port=0,
+                            api_key_env="AISTACKD_API_KEY",
+                            backend_bind_host="127.0.0.1",
+                            backend_port=backend_port,
+                        ),
+                    )
+
+                try:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    time.sleep(0.02)
+                    port = server.server_address[1]
+
+                    tool_response = _request_json(
+                        f"http://127.0.0.1:{port}/v1/responses",
+                        token="test-key",
+                        method="POST",
+                        payload={
+                            "input": "What models are installed?",
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "name": "list_installed_models",
+                                    "description": "Return installed host models.",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {},
+                                        "additionalProperties": False,
+                                    },
+                                }
+                            ],
+                            "tool_choice": "auto",
+                        },
+                    )
+                    self.assertEqual(tool_response["output"][0]["type"], "function_call")
+                    self.assertEqual(tool_response["output"][0]["call_id"], "call_123")
+
+                    backend_server.response_payload = {
+                        "id": "chatcmpl_follow_up",
+                        "object": "chat.completion",
+                        "created": 1741305601,
+                        "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "stop",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "You have one installed model.",
+                                },
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 20,
+                            "completion_tokens": 6,
+                            "total_tokens": 26,
+                        },
+                    }
+
+                    follow_up_response = _request_json(
+                        f"http://127.0.0.1:{port}/v1/responses",
+                        token="test-key",
+                        method="POST",
+                        payload={
+                            "previous_response_id": tool_response["id"],
+                            "input": [
+                                {
+                                    "type": "function_call_output",
+                                    "call_id": "call_123",
+                                    "output": {"models": ["qwen2.5-coder-7b-instruct-q4-k-m"]},
+                                }
+                            ],
+                        },
+                    )
+                    self.assertEqual(follow_up_response["output_text"], "You have one installed model.")
+
+                    backend_request = backend_server.last_request_payload
+                    self.assertIsNotNone(backend_request)
+                    self.assertEqual(backend_request["messages"][1]["tool_calls"][0]["id"], "call_123")
+                    self.assertEqual(backend_request["messages"][2]["role"], "tool")
+                    self.assertEqual(backend_request["messages"][2]["tool_call_id"], "call_123")
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=1)
+            finally:
+                backend_server.shutdown()
+                backend_server.server_close()
+                backend_thread.join(timeout=1)
+
     def test_control_plane_admin_runtime_and_model_operations(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)

@@ -88,7 +88,8 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 ### Northbound API
 
 1. base contract: Open Responses
-2. repo-owned extensions:
+2. support `type: "function"` tool calling on non-streaming Responses requests
+3. repo-owned extensions:
    - `GET /health`
    - `GET /v1/models`
    - authenticated admin endpoints for model management and runtime state
@@ -104,6 +105,8 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 1. support text generation only in v1
 2. serve one active model per host process
 3. active-model changes happen through controlled restart or process swap
+4. support non-streaming function-tool calls on the northbound Responses surface
+5. defer streaming tool-call events, non-function tools, and broader orchestration beyond the basic function-call loop
 
 ### Backend Acquisition
 

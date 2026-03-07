@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from aistackd.control_plane.responses import (
     ResponsesProxyError,
+    ResponsesStateCache,
     open_responses_stream,
     parse_json_request_body,
     proxy_responses_request,
@@ -115,6 +116,156 @@ class ControlPlaneResponsesTests(unittest.TestCase):
             self.assertEqual(backend_payload["temperature"], 0.1)
             self.assertFalse(backend_payload["stream"])
 
+    def test_proxy_responses_request_translates_function_tool_calls_and_follow_up_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+            captured_requests: list[dict[str, object]] = []
+            state_cache = ResponsesStateCache()
+
+            class _FakeResponse:
+                def __init__(self, payload: dict[str, object]) -> None:
+                    self._payload = payload
+
+                def read(self) -> bytes:
+                    return json.dumps(self._payload).encode("utf-8")
+
+                def __enter__(self) -> "_FakeResponse":
+                    return self
+
+                def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                    return False
+
+            def fake_urlopen(request_obj: object, timeout: float = 30) -> _FakeResponse:
+                from urllib.request import Request
+
+                assert isinstance(request_obj, Request)
+                request_payload = json.loads(request_obj.data.decode("utf-8"))
+                captured_requests.append(request_payload)
+                if len(captured_requests) == 1:
+                    return _FakeResponse(
+                        {
+                            "id": "chatcmpl_tool",
+                            "object": "chat.completion",
+                            "created": 1741305600,
+                            "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "finish_reason": "tool_calls",
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": None,
+                                        "tool_calls": [
+                                            {
+                                                "id": "call_123",
+                                                "type": "function",
+                                                "function": {
+                                                    "name": "list_installed_models",
+                                                    "arguments": "{}",
+                                                },
+                                            }
+                                        ],
+                                    },
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 14,
+                                "completion_tokens": 3,
+                                "total_tokens": 17,
+                            },
+                        }
+                    )
+                return _FakeResponse(
+                    {
+                        "id": "chatcmpl_follow_up",
+                        "object": "chat.completion",
+                        "created": 1741305601,
+                        "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "stop",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "You have one installed model.",
+                                },
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 20,
+                            "completion_tokens": 6,
+                            "total_tokens": 26,
+                        },
+                    }
+                )
+
+            with patch("aistackd.control_plane.responses.request.urlopen", side_effect=fake_urlopen):
+                first_payload = proxy_responses_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "input": "What models are installed?",
+                        "tools": [
+                            {
+                                "type": "function",
+                                "name": "list_installed_models",
+                                "description": "Return installed host models.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "additionalProperties": False,
+                                },
+                                "strict": True,
+                            }
+                        ],
+                        "tool_choice": "auto",
+                        "parallel_tool_calls": False,
+                    },
+                    response_state_cache=state_cache,
+                )
+                second_payload = proxy_responses_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "previous_response_id": first_payload["id"],
+                        "input": [
+                            {
+                                "type": "function_call_output",
+                                "call_id": "call_123",
+                                "output": {"models": ["qwen2.5-coder-7b-instruct-q4-k-m"]},
+                            }
+                        ],
+                    },
+                    response_state_cache=state_cache,
+                )
+
+            self.assertEqual(first_payload["output"][0]["type"], "function_call")
+            self.assertEqual(first_payload["output"][0]["call_id"], "call_123")
+            self.assertEqual(first_payload["output"][0]["name"], "list_installed_models")
+            self.assertEqual(first_payload["output_text"], "")
+            self.assertEqual(first_payload["tool_choice"], "auto")
+            self.assertEqual(first_payload["tools"][0]["name"], "list_installed_models")
+
+            first_request = captured_requests[0]
+            self.assertEqual(first_request["tools"][0]["function"]["name"], "list_installed_models")
+            self.assertEqual(first_request["tool_choice"], "auto")
+            self.assertFalse(first_request["parallel_tool_calls"])
+
+            second_request = captured_requests[1]
+            self.assertEqual(second_request["messages"][0]["role"], "user")
+            self.assertEqual(second_request["messages"][0]["content"], "What models are installed?")
+            self.assertEqual(second_request["messages"][1]["role"], "assistant")
+            self.assertEqual(second_request["messages"][1]["tool_calls"][0]["id"], "call_123")
+            self.assertEqual(second_request["messages"][2]["role"], "tool")
+            self.assertEqual(second_request["messages"][2]["tool_call_id"], "call_123")
+            self.assertEqual(
+                second_request["messages"][2]["content"],
+                json.dumps({"models": ["qwen2.5-coder-7b-instruct-q4-k-m"]}),
+            )
+
+            self.assertEqual(second_payload["output_text"], "You have one installed model.")
+            self.assertEqual(second_payload["output"][0]["type"], "message")
+
     def test_open_responses_stream_translates_backend_sse_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
@@ -205,6 +356,34 @@ class ControlPlaneResponsesTests(unittest.TestCase):
 
             self.assertEqual(excinfo.exception.status.value, 400)
             self.assertIn("stream must be a boolean", excinfo.exception.message)
+
+    def test_open_responses_stream_rejects_tool_calling_features(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+
+            with self.assertRaises(ResponsesProxyError) as excinfo:
+                open_responses_stream(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "input": "What models are installed?",
+                        "stream": True,
+                        "tools": [
+                            {
+                                "type": "function",
+                                "name": "list_installed_models",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "additionalProperties": False,
+                                },
+                            }
+                        ],
+                    },
+                )
+
+            self.assertEqual(excinfo.exception.status.value, 400)
+            self.assertIn("streaming tool calling is not implemented yet", excinfo.exception.message)
 
 
 def _create_ready_host_state(project_root: Path, *, backend_port: int) -> HostStateStore:

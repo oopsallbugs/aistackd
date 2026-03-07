@@ -30,6 +30,7 @@ from aistackd.control_plane.admin import (
 )
 from aistackd.control_plane.responses import (
     ResponsesProxyError,
+    ResponsesStateCache,
     is_streaming_request,
     open_responses_stream,
     parse_json_request_body,
@@ -50,6 +51,7 @@ class ControlPlaneServer(ThreadingHTTPServer):
     store: HostStateStore
     service_config: HostServiceConfig
     api_key: str
+    responses_state_cache: ResponsesStateCache
 
 
 class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
@@ -177,7 +179,12 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
             if is_streaming_request(request_payload):
                 stream_session = open_responses_stream(server.store, server.service_config, request_payload)
             else:
-                response_payload = proxy_responses_request(server.store, server.service_config, request_payload)
+                response_payload = proxy_responses_request(
+                    server.store,
+                    server.service_config,
+                    request_payload,
+                    response_state_cache=server.responses_state_cache,
+                )
         except ResponsesProxyError as exc:
             self._write_json(exc.status, exc.to_payload())
             return
@@ -305,6 +312,7 @@ def create_control_plane_server(project_root: Path, service: HostServiceConfig) 
     server.store = HostStateStore(project_root)
     server.service_config = normalized_service
     server.api_key = resolve_api_key(normalized_service)
+    server.responses_state_cache = ResponsesStateCache()
     return server
 
 

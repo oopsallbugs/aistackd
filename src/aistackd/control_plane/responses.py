@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
+from threading import Lock
 from typing import Any, Iterator
 from urllib import error, request
 from uuid import uuid4
@@ -27,6 +29,45 @@ class ResponsesProxyError(RuntimeError):
     def to_payload(self) -> dict[str, object]:
         """Return the error payload shape used by the control plane."""
         return {"error": {"message": self.message, "type": self.error_type}}
+
+
+@dataclass(frozen=True)
+class ResponsesConversationState:
+    """One stored conversation prefix for Responses follow-up requests."""
+
+    model_name: str
+    messages: tuple[dict[str, object], ...]
+
+
+class ResponsesStateCache:
+    """Thread-safe in-memory storage for recent Responses state."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._responses: dict[str, ResponsesConversationState] = {}
+
+    def save(self, response_id: str, model_name: str, messages: list[dict[str, object]]) -> None:
+        stored_state = ResponsesConversationState(
+            model_name=model_name,
+            messages=tuple(_clone_message(message) for message in messages),
+        )
+        with self._lock:
+            self._responses[response_id] = stored_state
+
+    def load(self, response_id: str) -> ResponsesConversationState | None:
+        with self._lock:
+            return self._responses.get(response_id)
+
+
+@dataclass(frozen=True)
+class PreparedResponseTools:
+    """Validated Responses function-tool configuration for one request."""
+
+    response_tools: tuple[dict[str, object], ...]
+    backend_tools: tuple[dict[str, object], ...]
+    response_tool_choice: str | dict[str, object]
+    backend_tool_choice: str | dict[str, object] | None
+    parallel_tool_calls: bool
 
 
 @dataclass
@@ -126,6 +167,8 @@ def proxy_responses_request(
     store: HostStateStore,
     service: HostServiceConfig,
     payload: dict[str, object],
+    *,
+    response_state_cache: ResponsesStateCache | None = None,
 ) -> dict[str, object]:
     """Proxy one Open Responses request to the running llama-server backend."""
     runtime = store.load_runtime_state()
@@ -135,9 +178,40 @@ def proxy_responses_request(
             HTTPStatus.BAD_REQUEST,
             "streaming requests must use the streaming control-plane path",
         )
-    backend_payload = _build_backend_chat_payload(payload, model_name=model_name, stream=False)
+    prepared_tools = _prepare_response_tools(payload)
+    previous_state = _load_previous_response_state(payload, response_state_cache)
+    if previous_state is not None and previous_state.model_name != model_name:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            f"previous_response_id targets model '{previous_state.model_name}', not active model '{model_name}'",
+        )
+    backend_messages = _build_chat_messages(payload, previous_state=previous_state)
+    backend_payload = _build_backend_chat_payload(
+        payload,
+        model_name=model_name,
+        stream=False,
+        messages=backend_messages,
+        backend_tools=prepared_tools.backend_tools,
+        backend_tool_choice=prepared_tools.backend_tool_choice,
+        parallel_tool_calls=prepared_tools.parallel_tool_calls,
+    )
     backend_response = _invoke_backend_chat_completion(runtime, service, backend_payload)
-    return _build_open_responses_payload(payload, model_name=model_name, backend_response=backend_response)
+    response_payload = _build_open_responses_payload(
+        payload,
+        model_name=model_name,
+        backend_response=backend_response,
+        response_tools=prepared_tools.response_tools,
+        response_tool_choice=prepared_tools.response_tool_choice,
+        parallel_tool_calls=prepared_tools.parallel_tool_calls,
+    )
+    if response_state_cache is not None:
+        assistant_message = _build_backend_assistant_message(backend_response)
+        response_state_cache.save(
+            str(response_payload["id"]),
+            model_name,
+            [*backend_messages, assistant_message],
+        )
+    return response_payload
 
 
 def open_responses_stream(
@@ -148,10 +222,24 @@ def open_responses_stream(
     """Open one streaming Responses session against the running backend."""
     if not is_streaming_request(payload):
         raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "streaming request must set stream=true")
+    if _request_uses_tool_calling(payload):
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "streaming tool calling is not implemented yet",
+        )
 
     runtime = store.load_runtime_state()
     model_name = _resolve_requested_model(runtime, payload)
-    backend_payload = _build_backend_chat_payload(payload, model_name=model_name, stream=True)
+    backend_messages = _build_chat_messages(payload, previous_state=None)
+    backend_payload = _build_backend_chat_payload(
+        payload,
+        model_name=model_name,
+        stream=True,
+        messages=backend_messages,
+        backend_tools=(),
+        backend_tool_choice=None,
+        parallel_tool_calls=False,
+    )
     upstream_response = _open_backend_chat_completion_stream(runtime, service, backend_payload)
     return ResponsesStreamSession(
         request_payload=payload,
@@ -224,8 +312,11 @@ def _build_backend_chat_payload(
     *,
     model_name: str,
     stream: bool,
+    messages: list[dict[str, object]],
+    backend_tools: tuple[dict[str, object], ...],
+    backend_tool_choice: str | dict[str, object] | None,
+    parallel_tool_calls: bool,
 ) -> dict[str, object]:
-    messages = _build_chat_messages(payload)
     if not messages:
         raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "input or instructions must produce at least one text message")
 
@@ -255,11 +346,26 @@ def _build_backend_chat_payload(
         if isinstance(response_format, dict):
             backend_payload["response_format"] = response_format
 
+    if backend_tools:
+        backend_payload["tools"] = list(backend_tools)
+        backend_payload["parallel_tool_calls"] = parallel_tool_calls
+        if backend_tool_choice is not None:
+            backend_payload["tool_choice"] = backend_tool_choice
+
     return backend_payload
 
 
-def _build_chat_messages(payload: dict[str, object]) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = []
+def _build_chat_messages(
+    payload: dict[str, object],
+    *,
+    previous_state: ResponsesConversationState | None,
+) -> list[dict[str, object]]:
+    messages: list[dict[str, object]] = []
+    available_tool_call_ids: set[str] = set()
+
+    if previous_state is not None:
+        messages.extend(_clone_message(message) for message in previous_state.messages)
+        available_tool_call_ids.update(_tool_call_ids_from_messages(messages))
 
     instructions = payload.get("instructions")
     if instructions is not None:
@@ -271,16 +377,16 @@ def _build_chat_messages(payload: dict[str, object]) -> list[dict[str, str]]:
     if input_value is None:
         return messages
     if isinstance(input_value, (str, dict)):
-        messages.extend(_messages_from_input_item(input_value))
+        messages.extend(_messages_from_input_item(input_value, available_tool_call_ids))
         return messages
     if isinstance(input_value, list):
         for item in input_value:
-            messages.extend(_messages_from_input_item(item))
+            messages.extend(_messages_from_input_item(item, available_tool_call_ids))
         return messages
     raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "input must be a string, object, or list")
 
 
-def _messages_from_input_item(item: object) -> list[dict[str, str]]:
+def _messages_from_input_item(item: object, available_tool_call_ids: set[str]) -> list[dict[str, object]]:
     if isinstance(item, str):
         if not item:
             return []
@@ -289,17 +395,34 @@ def _messages_from_input_item(item: object) -> list[dict[str, str]]:
     if not isinstance(item, dict):
         raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "input items must be strings or objects")
 
+    item_type = item.get("type")
+    if item_type == "function_call":
+        return [_build_assistant_tool_call_message(item, available_tool_call_ids)]
+    if item_type == "function_call_output":
+        return [_build_tool_result_message(item, available_tool_call_ids)]
+
     role_value = item.get("role")
     if role_value is None and item.get("type") == "message":
         role_value = item.get("role")
 
     if isinstance(role_value, str):
+        normalized_role = _normalize_role(role_value)
         content = _extract_text_content(item.get("content"))
-        if content is None:
+        tool_calls = _normalize_message_tool_calls(item.get("tool_calls"), available_tool_call_ids)
+        if content is None and not tool_calls:
             raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, f"message content for role '{role_value}' must be textual")
-        return [{"role": _normalize_role(role_value), "content": content}]
+        if tool_calls and normalized_role != "assistant":
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_REQUEST,
+                f"message role '{normalized_role}' cannot contain tool_calls",
+            )
+        message: dict[str, object] = {"role": normalized_role}
+        if content is not None:
+            message["content"] = content
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        return [message]
 
-    item_type = item.get("type")
     if isinstance(item_type, str):
         if item_type in {"input_image", "image", "input_audio", "audio"}:
             raise ResponsesProxyError(
@@ -357,6 +480,330 @@ def _extract_text_content(value: object) -> str | None:
         if nested_content is not None:
             return _extract_text_content(nested_content)
     return None
+
+
+def _prepare_response_tools(payload: dict[str, object]) -> PreparedResponseTools:
+    tools_value = payload.get("tools")
+    response_tools, backend_tools = _normalize_function_tools(tools_value)
+
+    parallel_tool_calls_value = payload.get("parallel_tool_calls")
+    if parallel_tool_calls_value is None:
+        parallel_tool_calls = False
+    elif isinstance(parallel_tool_calls_value, bool):
+        parallel_tool_calls = parallel_tool_calls_value
+    else:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "parallel_tool_calls must be a boolean when provided",
+        )
+    if parallel_tool_calls and not response_tools:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "parallel_tool_calls requires at least one function tool",
+        )
+
+    tool_choice_value = payload.get("tool_choice")
+    response_tool_choice, backend_tool_choice = _normalize_tool_choice(tool_choice_value, response_tools)
+
+    return PreparedResponseTools(
+        response_tools=tuple(response_tools),
+        backend_tools=tuple(backend_tools),
+        response_tool_choice=response_tool_choice,
+        backend_tool_choice=backend_tool_choice,
+        parallel_tool_calls=parallel_tool_calls,
+    )
+
+
+def _normalize_function_tools(value: object) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    if value is None:
+        return [], []
+    if not isinstance(value, list):
+        raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "tools must be a list when provided")
+
+    response_tools: list[dict[str, object]] = []
+    backend_tools: list[dict[str, object]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, f"tool at index {index} must be an object")
+        if item.get("type") != "function":
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_REQUEST,
+                "only function tools are implemented in v1",
+            )
+        function_payload = item.get("function")
+        tool_name = item.get("name")
+        tool_description = item.get("description")
+        tool_parameters = item.get("parameters")
+        tool_strict = item.get("strict")
+        if isinstance(function_payload, dict):
+            tool_name = function_payload.get("name", tool_name)
+            tool_description = function_payload.get("description", tool_description)
+            tool_parameters = function_payload.get("parameters", tool_parameters)
+            tool_strict = function_payload.get("strict", tool_strict)
+
+        normalized_name = _required_non_empty_string(tool_name, field_name=f"tools[{index}].name")
+        if tool_description is not None and not isinstance(tool_description, str):
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_REQUEST,
+                f"tools[{index}].description must be a string when provided",
+            )
+        if tool_parameters is None:
+            tool_parameters = {"type": "object", "properties": {}, "additionalProperties": False}
+        if not isinstance(tool_parameters, dict):
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_REQUEST,
+                f"tools[{index}].parameters must be an object when provided",
+            )
+        if tool_strict is not None and not isinstance(tool_strict, bool):
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_REQUEST,
+                f"tools[{index}].strict must be a boolean when provided",
+            )
+
+        response_tool = {
+            "type": "function",
+            "name": normalized_name,
+            "description": tool_description if isinstance(tool_description, str) else "",
+            "parameters": tool_parameters,
+            "strict": tool_strict if isinstance(tool_strict, bool) else False,
+        }
+        backend_tool = {
+            "type": "function",
+            "function": {
+                "name": normalized_name,
+                "description": tool_description if isinstance(tool_description, str) else "",
+                "parameters": tool_parameters,
+            },
+        }
+        response_tools.append(response_tool)
+        backend_tools.append(backend_tool)
+    return response_tools, backend_tools
+
+
+def _normalize_tool_choice(
+    value: object,
+    response_tools: list[dict[str, object]],
+) -> tuple[str | dict[str, object], str | dict[str, object] | None]:
+    tool_names = {str(tool["name"]) for tool in response_tools}
+
+    if value is None:
+        if response_tools:
+            return "auto", "auto"
+        return "none", None
+
+    if isinstance(value, str):
+        if value not in {"none", "auto", "required"}:
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_REQUEST,
+                "tool_choice must be one of: none, auto, required",
+            )
+        if value != "none" and not response_tools:
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_REQUEST,
+                "tool_choice requires at least one function tool",
+            )
+        return value, value if response_tools else None
+
+    if not isinstance(value, dict):
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "tool_choice must be a string or object when provided",
+        )
+    if not response_tools:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "tool_choice requires at least one function tool",
+        )
+    if value.get("type") != "function":
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "only function tool_choice objects are implemented in v1",
+        )
+    function_payload = value.get("function")
+    function_name = value.get("name")
+    if isinstance(function_payload, dict):
+        function_name = function_payload.get("name", function_name)
+    normalized_name = _required_non_empty_string(function_name, field_name="tool_choice.name")
+    if normalized_name not in tool_names:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            f"tool_choice references unknown function tool '{normalized_name}'",
+        )
+    response_tool_choice = {"type": "function", "name": normalized_name}
+    backend_tool_choice = {"type": "function", "function": {"name": normalized_name}}
+    return response_tool_choice, backend_tool_choice
+
+
+def _load_previous_response_state(
+    payload: dict[str, object],
+    response_state_cache: ResponsesStateCache | None,
+) -> ResponsesConversationState | None:
+    previous_response_id = payload.get("previous_response_id")
+    if previous_response_id is None:
+        return None
+    if not isinstance(previous_response_id, str) or not previous_response_id.strip():
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "previous_response_id must be a non-empty string when provided",
+        )
+    if response_state_cache is None:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "previous_response_id is not available for this control-plane path",
+        )
+    state = response_state_cache.load(previous_response_id.strip())
+    if state is None:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            f"unknown previous_response_id '{previous_response_id.strip()}'",
+        )
+    return state
+
+
+def _build_assistant_tool_call_message(
+    item: dict[str, object],
+    available_tool_call_ids: set[str],
+) -> dict[str, object]:
+    call_id = _required_non_empty_string(item.get("call_id"), field_name="input.function_call.call_id")
+    name = _required_non_empty_string(item.get("name"), field_name="input.function_call.name")
+    arguments = _normalize_json_string(item.get("arguments"), field_name="input.function_call.arguments")
+    available_tool_call_ids.add(call_id)
+    return {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": arguments,
+                },
+            }
+        ],
+    }
+
+
+def _build_tool_result_message(
+    item: dict[str, object],
+    available_tool_call_ids: set[str],
+) -> dict[str, object]:
+    call_id = _required_non_empty_string(item.get("call_id"), field_name="input.function_call_output.call_id")
+    if call_id not in available_tool_call_ids:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            f"function_call_output for call_id '{call_id}' requires previous_response_id or a prior function_call item",
+        )
+    return {
+        "role": "tool",
+        "tool_call_id": call_id,
+        "content": _stringify_tool_output(item.get("output")),
+    }
+
+
+def _normalize_message_tool_calls(
+    value: object,
+    available_tool_call_ids: set[str],
+) -> list[dict[str, object]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "message tool_calls must be a list when provided",
+        )
+
+    tool_calls: list[dict[str, object]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_REQUEST,
+                f"message tool_calls[{index}] must be an object",
+            )
+        if item.get("type") != "function":
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_REQUEST,
+                "only function tool_calls are implemented in v1",
+            )
+        function_payload = item.get("function")
+        function_name = item.get("name")
+        function_arguments = item.get("arguments")
+        if isinstance(function_payload, dict):
+            function_name = function_payload.get("name", function_name)
+            function_arguments = function_payload.get("arguments", function_arguments)
+        call_id = _required_non_empty_string(
+            item.get("call_id", item.get("id")),
+            field_name=f"message.tool_calls[{index}].call_id",
+        )
+        available_tool_call_ids.add(call_id)
+        tool_calls.append(
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": _required_non_empty_string(
+                        function_name,
+                        field_name=f"message.tool_calls[{index}].name",
+                    ),
+                    "arguments": _normalize_json_string(
+                        function_arguments,
+                        field_name=f"message.tool_calls[{index}].arguments",
+                    ),
+                },
+            }
+        )
+    return tool_calls
+
+
+def _tool_call_ids_from_messages(messages: list[dict[str, object]]) -> set[str]:
+    identifiers: set[str] = set()
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            call_id = tool_call.get("id")
+            if isinstance(call_id, str) and call_id:
+                identifiers.add(call_id)
+    return identifiers
+
+
+def _clone_message(message: dict[str, object]) -> dict[str, object]:
+    return deepcopy(message)
+
+
+def _required_non_empty_string(value: object, *, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, f"{field_name} must be a non-empty string")
+    return value.strip()
+
+
+def _normalize_json_string(value: object, *, field_name: str) -> str:
+    if value is None:
+        return "{}"
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value)
+    except TypeError as exc:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            f"{field_name} must be a string or JSON-serializable value",
+        ) from exc
+
+
+def _stringify_tool_output(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    try:
+        return json.dumps(value)
+    except TypeError:
+        return str(value)
 
 
 def _invoke_backend_chat_completion(
@@ -545,14 +992,19 @@ def _build_open_responses_payload(
     *,
     model_name: str,
     backend_response: dict[str, object],
+    response_tools: tuple[dict[str, object], ...] = (),
+    response_tool_choice: str | dict[str, object] = "none",
+    parallel_tool_calls: bool = False,
     response_id: str | None = None,
     message_id: str | None = None,
     created_at: int | None = None,
 ) -> dict[str, object]:
-    output_text = _extract_backend_output_text(backend_response)
+    output_items, output_text = _build_output_items_from_backend_response(
+        backend_response,
+        message_id=message_id,
+    )
     usage_payload = _translate_usage_payload(backend_response.get("usage"))
     resolved_response_id = response_id or f"resp_{uuid4().hex}"
-    resolved_message_id = message_id or f"msg_{uuid4().hex}"
     resolved_created_at = created_at or _response_timestamp(backend_response.get("created"))
 
     payload: dict[str, object] = {
@@ -561,9 +1013,40 @@ def _build_open_responses_payload(
         "created_at": resolved_created_at,
         "status": "completed",
         "model": model_name,
-        "output": [
+        "output": output_items,
+        "output_text": output_text,
+        "usage": usage_payload,
+        "error": None,
+        "incomplete_details": None,
+        "instructions": request_payload.get("instructions"),
+        "max_output_tokens": request_payload.get("max_output_tokens"),
+        "metadata": request_payload.get("metadata") if isinstance(request_payload.get("metadata"), dict) else {},
+        "parallel_tool_calls": parallel_tool_calls,
+        "temperature": request_payload.get("temperature"),
+        "text": request_payload.get("text") if isinstance(request_payload.get("text"), dict) else None,
+        "tool_choice": response_tool_choice,
+        "tools": list(response_tools),
+        "top_p": request_payload.get("top_p"),
+        "truncation": "disabled",
+    }
+    return payload
+
+
+def _build_output_items_from_backend_response(
+    payload: dict[str, object],
+    *,
+    message_id: str | None,
+) -> tuple[list[dict[str, object]], str]:
+    assistant_message = _build_backend_assistant_message(payload)
+    output_items: list[dict[str, object]] = []
+    output_text = ""
+
+    content = assistant_message.get("content")
+    if content is not None:
+        output_text = _extract_text_content(content) or ""
+        output_items.append(
             {
-                "id": resolved_message_id,
+                "id": message_id or f"msg_{uuid4().hex}",
                 "type": "message",
                 "status": "completed",
                 "role": "assistant",
@@ -575,26 +1058,30 @@ def _build_open_responses_payload(
                     }
                 ],
             }
-        ],
-        "output_text": output_text,
-        "usage": usage_payload,
-        "error": None,
-        "incomplete_details": None,
-        "instructions": request_payload.get("instructions"),
-        "max_output_tokens": request_payload.get("max_output_tokens"),
-        "metadata": request_payload.get("metadata") if isinstance(request_payload.get("metadata"), dict) else {},
-        "parallel_tool_calls": False,
-        "temperature": request_payload.get("temperature"),
-        "text": request_payload.get("text") if isinstance(request_payload.get("text"), dict) else None,
-        "tool_choice": "none",
-        "tools": [],
-        "top_p": request_payload.get("top_p"),
-        "truncation": "disabled",
-    }
-    return payload
+        )
+
+    for tool_call in _extract_backend_tool_calls(assistant_message):
+        output_items.append(
+            {
+                "id": f"fc_{uuid4().hex}",
+                "type": "function_call",
+                "status": "completed",
+                "call_id": tool_call["id"],
+                "name": tool_call["name"],
+                "arguments": tool_call["arguments"],
+            }
+        )
+
+    if not output_items:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_GATEWAY,
+            "backend response did not contain assistant text or function tool calls",
+            error_type="server_error",
+        )
+    return output_items, output_text
 
 
-def _extract_backend_output_text(payload: dict[str, object]) -> str:
+def _build_backend_assistant_message(payload: dict[str, object]) -> dict[str, object]:
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ResponsesProxyError(
@@ -613,17 +1100,32 @@ def _extract_backend_output_text(payload: dict[str, object]) -> str:
 
     message = first_choice.get("message")
     if isinstance(message, dict):
-        content = _extract_text_content(message.get("content"))
-        if content is not None:
-            return content
+        normalized_message: dict[str, object] = {"role": "assistant"}
+        if message.get("content") is not None:
+            normalized_message["content"] = message.get("content")
+        tool_calls = _extract_backend_tool_calls(message)
+        if tool_calls:
+            normalized_message["tool_calls"] = [
+                {
+                    "id": tool_call["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tool_call["name"],
+                        "arguments": tool_call["arguments"],
+                    },
+                }
+                for tool_call in tool_calls
+            ]
+        if "content" in normalized_message or "tool_calls" in normalized_message:
+            return normalized_message
 
     text = first_choice.get("text")
     if isinstance(text, str):
-        return text
+        return {"role": "assistant", "content": text}
 
     raise ResponsesProxyError(
         HTTPStatus.BAD_GATEWAY,
-        "backend response did not contain assistant text output",
+        "backend response did not contain assistant text or function tool calls",
         error_type="server_error",
     )
 
@@ -664,6 +1166,60 @@ def _extract_backend_delta_text(payload: dict[str, object]) -> str | None:
         return text
 
     return None
+
+
+def _extract_backend_tool_calls(message: object) -> list[dict[str, str]]:
+    if not isinstance(message, dict):
+        return []
+    raw_tool_calls = message.get("tool_calls")
+    if raw_tool_calls is None:
+        return []
+    if not isinstance(raw_tool_calls, list):
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_GATEWAY,
+            "backend tool_calls payload had an invalid shape",
+            error_type="server_error",
+        )
+
+    tool_calls: list[dict[str, str]] = []
+    for index, item in enumerate(raw_tool_calls):
+        if not isinstance(item, dict):
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_GATEWAY,
+                f"backend tool_call at index {index} had an invalid shape",
+                error_type="server_error",
+            )
+        if item.get("type") != "function":
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_GATEWAY,
+                "backend returned a non-function tool call, which is unsupported in v1",
+                error_type="server_error",
+            )
+        function_payload = item.get("function")
+        if not isinstance(function_payload, dict):
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_GATEWAY,
+                "backend tool_call function payload had an invalid shape",
+                error_type="server_error",
+            )
+        tool_call_id = item.get("id")
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+            tool_call_id = f"call_{uuid4().hex}"
+        function_name = function_payload.get("name")
+        if not isinstance(function_name, str) or not function_name.strip():
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_GATEWAY,
+                "backend tool_call did not include a valid function name",
+                error_type="server_error",
+            )
+        tool_calls.append(
+            {
+                "id": tool_call_id,
+                "name": function_name.strip(),
+                "arguments": _normalize_backend_arguments(function_payload.get("arguments")),
+            }
+        )
+    return tool_calls
 
 
 def _build_in_progress_responses_payload(
@@ -753,3 +1309,44 @@ def _response_timestamp(value: object) -> int:
     if isinstance(value, int) and value > 0:
         return value
     return int(time.time())
+
+
+def _normalize_backend_arguments(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return "{}"
+    try:
+        return json.dumps(value)
+    except TypeError as exc:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_GATEWAY,
+            "backend tool_call arguments were not JSON-serializable",
+            error_type="server_error",
+        ) from exc
+
+
+def _request_uses_tool_calling(payload: dict[str, object]) -> bool:
+    tools = payload.get("tools")
+    if isinstance(tools, list) and tools:
+        return True
+    if payload.get("previous_response_id") is not None:
+        return True
+    tool_choice = payload.get("tool_choice")
+    if tool_choice not in (None, "none"):
+        return True
+    if payload.get("parallel_tool_calls") not in (None, False):
+        return True
+    return _input_contains_tool_items(payload.get("input"))
+
+
+def _input_contains_tool_items(value: object) -> bool:
+    if isinstance(value, list):
+        return any(_input_contains_tool_items(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    item_type = value.get("type")
+    if item_type in {"function_call", "function_call_output"}:
+        return True
+    tool_calls = value.get("tool_calls")
+    return isinstance(tool_calls, list) and bool(tool_calls)
