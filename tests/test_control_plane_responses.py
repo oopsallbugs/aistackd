@@ -266,6 +266,142 @@ class ControlPlaneResponsesTests(unittest.TestCase):
             self.assertEqual(second_payload["output_text"], "You have one installed model.")
             self.assertEqual(second_payload["output"][0]["type"], "message")
 
+    def test_proxy_responses_request_loads_previous_response_id_from_persisted_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+            first_cache = ResponsesStateCache(store)
+            second_cache = ResponsesStateCache(store)
+            captured_requests: list[dict[str, object]] = []
+
+            class _FakeResponse:
+                def __init__(self, payload: dict[str, object]) -> None:
+                    self._payload = payload
+
+                def read(self) -> bytes:
+                    return json.dumps(self._payload).encode("utf-8")
+
+                def __enter__(self) -> "_FakeResponse":
+                    return self
+
+                def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                    return False
+
+            def fake_urlopen(request_obj: object, timeout: float = 30) -> _FakeResponse:
+                from urllib.request import Request
+
+                assert isinstance(request_obj, Request)
+                request_payload = json.loads(request_obj.data.decode("utf-8"))
+                captured_requests.append(request_payload)
+                if len(captured_requests) == 1:
+                    return _FakeResponse(
+                        {
+                            "id": "chatcmpl_tool",
+                            "object": "chat.completion",
+                            "created": 1741305600,
+                            "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "finish_reason": "tool_calls",
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": None,
+                                        "tool_calls": [
+                                            {
+                                                "id": "call_123",
+                                                "type": "function",
+                                                "function": {
+                                                    "name": "list_installed_models",
+                                                    "arguments": "{}",
+                                                },
+                                            }
+                                        ],
+                                    },
+                                }
+                            ],
+                            "usage": {"prompt_tokens": 14, "completion_tokens": 3, "total_tokens": 17},
+                        }
+                    )
+                return _FakeResponse(
+                    {
+                        "id": "chatcmpl_follow_up",
+                        "object": "chat.completion",
+                        "created": 1741305601,
+                        "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "stop",
+                                "message": {"role": "assistant", "content": "Recovered after restart."},
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 20, "completion_tokens": 4, "total_tokens": 24},
+                    }
+                )
+
+            with patch("aistackd.control_plane.responses.request.urlopen", side_effect=fake_urlopen):
+                first_payload = proxy_responses_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "input": "What models are installed?",
+                        "tools": [
+                            {
+                                "type": "function",
+                                "name": "list_installed_models",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "additionalProperties": False,
+                                },
+                            }
+                        ],
+                    },
+                    response_state_cache=first_cache,
+                )
+                second_payload = proxy_responses_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "previous_response_id": first_payload["id"],
+                        "input": [
+                            {
+                                "type": "function_call_output",
+                                "call_id": "call_123",
+                                "output": {"models": ["qwen2.5-coder-7b-instruct-q4-k-m"]},
+                            }
+                        ],
+                    },
+                    response_state_cache=second_cache,
+                )
+
+            self.assertEqual(second_payload["output_text"], "Recovered after restart.")
+            self.assertEqual(captured_requests[1]["messages"][1]["tool_calls"][0]["id"], "call_123")
+
+    def test_proxy_responses_request_reports_unknown_previous_response_id_with_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+
+            with self.assertRaises(ResponsesProxyError) as excinfo:
+                proxy_responses_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "previous_response_id": "resp_missing",
+                        "input": [
+                            {
+                                "type": "function_call_output",
+                                "call_id": "call_123",
+                                "output": {"ok": True},
+                            }
+                        ],
+                    },
+                    response_state_cache=ResponsesStateCache(store),
+                )
+
+            self.assertEqual(excinfo.exception.status.value, 400)
+            self.assertIn("may have expired, been pruned, or come from a different host instance", excinfo.exception.message)
+
     def test_open_responses_stream_translates_backend_sse_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir), backend_port=8011)

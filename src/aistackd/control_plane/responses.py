@@ -13,7 +13,13 @@ from urllib import error, request
 from uuid import uuid4
 
 from aistackd.runtime.host import HostServiceConfig
-from aistackd.state.host import HostRuntimeState, HostStateStore
+from aistackd.state.host import (
+    DEFAULT_RESPONSE_STATE_RETENTION_LIMIT,
+    HostRuntimeState,
+    HostStateError,
+    HostStateStore,
+    StoredResponseState,
+)
 
 CHAT_COMPLETIONS_ENDPOINT = "/v1/chat/completions"
 
@@ -42,9 +48,16 @@ class ResponsesConversationState:
 class ResponsesStateCache:
     """Thread-safe in-memory storage for recent Responses state."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        store: HostStateStore | None = None,
+        *,
+        retention_limit: int = DEFAULT_RESPONSE_STATE_RETENTION_LIMIT,
+    ) -> None:
         self._lock = Lock()
         self._responses: dict[str, ResponsesConversationState] = {}
+        self._store = store
+        self._retention_limit = retention_limit
 
     def save(self, response_id: str, model_name: str, messages: list[dict[str, object]]) -> None:
         stored_state = ResponsesConversationState(
@@ -53,10 +66,42 @@ class ResponsesStateCache:
         )
         with self._lock:
             self._responses[response_id] = stored_state
+        if self._store is not None:
+            try:
+                self._store.save_response_state(
+                    response_id,
+                    model_name,
+                    [_clone_message(message) for message in messages],
+                    retention_limit=self._retention_limit,
+                )
+            except HostStateError as exc:
+                raise ResponsesProxyError(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    f"failed to persist response state: {exc}",
+                    error_type="server_error",
+                ) from exc
 
     def load(self, response_id: str) -> ResponsesConversationState | None:
         with self._lock:
-            return self._responses.get(response_id)
+            cached_state = self._responses.get(response_id)
+        if cached_state is not None:
+            return cached_state
+        if self._store is None:
+            return None
+        try:
+            stored_state = self._store.load_response_state(response_id)
+        except HostStateError as exc:
+            raise ResponsesProxyError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                f"failed to load persisted response state: {exc}",
+                error_type="server_error",
+            ) from exc
+        if stored_state is None:
+            return None
+        hydrated_state = _conversation_state_from_stored_state(stored_state)
+        with self._lock:
+            self._responses[response_id] = hydrated_state
+        return hydrated_state
 
 
 @dataclass(frozen=True)
@@ -862,7 +907,7 @@ def _load_previous_response_state(
     if state is None:
         raise ResponsesProxyError(
             HTTPStatus.BAD_REQUEST,
-            f"unknown previous_response_id '{previous_response_id.strip()}'",
+            f"unknown previous_response_id '{previous_response_id.strip()}'; it may have expired, been pruned, or come from a different host instance",
         )
     return state
 
@@ -980,6 +1025,13 @@ def _tool_call_ids_from_messages(messages: list[dict[str, object]]) -> set[str]:
 
 def _clone_message(message: dict[str, object]) -> dict[str, object]:
     return deepcopy(message)
+
+
+def _conversation_state_from_stored_state(state: StoredResponseState) -> ResponsesConversationState:
+    return ResponsesConversationState(
+        model_name=state.model_name,
+        messages=tuple(_clone_message(message) for message in state.messages),
+    )
 
 
 def _required_non_empty_string(value: object, *, field_name: str) -> str:

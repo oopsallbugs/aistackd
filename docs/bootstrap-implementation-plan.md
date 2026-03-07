@@ -108,6 +108,7 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 4. support the basic function-call loop on the northbound Responses surface for both streaming and non-streaming requests
 5. keep function-tool execution client-managed in v1; the host transports tool calls but does not execute or advertise repo-owned server tools
 6. defer non-function tools and broader orchestration beyond the basic function-call loop
+7. persist bounded `previous_response_id` state on the host so client-managed tool loops can continue across control-plane restarts and return actionable diagnostics when state is missing
 
 ### Frontend Tooling Notes
 

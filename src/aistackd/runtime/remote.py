@@ -132,7 +132,11 @@ def validate_remote_runtime(
     if health.ok:
         remote_status = health.payload.get("status")
         if remote_status != "ok":
-            errors.append(f"health endpoint reported status '{remote_status}'")
+            status_reason = health.payload.get("status_reason")
+            if isinstance(status_reason, str) and status_reason:
+                errors.append(f"health endpoint reported status '{remote_status}' ({status_reason})")
+            else:
+                errors.append(f"health endpoint reported status '{remote_status}'")
 
     return ClientValidationResult(
         active_profile=runtime_config.active_profile,
@@ -320,4 +324,13 @@ def _response_error_message(label: str, response: RemoteJsonResponse) -> str:
         message = error_payload.get("message")
         if isinstance(message, str) and message.strip():
             return f"{label} returned status {response.status_code}: {message.strip()}"
+    status_value = payload.get("status")
+    status_reason = payload.get("status_reason")
+    if isinstance(status_value, str) and status_value.strip():
+        if isinstance(status_reason, str) and status_reason.strip():
+            return (
+                f"{label} returned status {response.status_code}: "
+                f"{status_value.strip()} ({status_reason.strip()})"
+            )
+        return f"{label} returned status {response.status_code}: {status_value.strip()}"
     return f"{label} returned status {response.status_code}"

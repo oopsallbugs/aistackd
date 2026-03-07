@@ -86,6 +86,8 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertEqual(health_payload["backend_process_status"], "running")
                 self.assertEqual(health_payload["active_model"], record.model)
                 self.assertEqual(health_payload["installed_model_count"], 1)
+                self.assertEqual(health_payload["status_reason"], "ready")
+                self.assertEqual(health_payload["responses_state"]["count"], 0)
                 self.assertEqual(health_payload["backend_base_url"], "http://127.0.0.1:8011")
                 self.assertTrue(str(health_payload["server_binary"]).endswith("llama-server"))
 
@@ -582,6 +584,7 @@ class ControlPlaneTests(unittest.TestCase):
                         self.assertEqual(runtime_payload["service"]["responses_base_url"], "http://127.0.0.1:0/v1")
                         self.assertEqual(runtime_payload["runtime"]["backend"], "llama.cpp")
                         self.assertEqual(runtime_payload["runtime"]["installed_models"], [])
+                        self.assertEqual(runtime_payload["responses_state"]["count"], 0)
 
                         search_payload = _request_json(
                             f"http://127.0.0.1:{port}/admin/models/search",

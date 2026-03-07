@@ -125,6 +125,7 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_health(self, server: ControlPlaneServer) -> None:
         runtime = server.store.load_runtime_state()
+        status_reason = _health_status_reason(runtime)
         status = (
             "ok"
             if runtime.activation_state == "ready" and runtime.backend_process_status == "running"
@@ -141,10 +142,12 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 "active_model": runtime.active_model,
                 "active_source": runtime.active_source,
                 "activation_state": runtime.activation_state,
+                "status_reason": status_reason,
                 "installed_model_count": len(runtime.installed_models),
                 "base_url": server.service_config.base_url,
                 "responses_base_url": server.service_config.responses_base_url,
                 "backend_base_url": server.service_config.backend_base_url,
+                "responses_state": server.store.response_state_summary(),
                 "server_binary": (
                     runtime.backend_installation.server_binary
                     if runtime.backend_installation is not None
@@ -317,7 +320,7 @@ def create_control_plane_server(project_root: Path, service: HostServiceConfig) 
     server.store = HostStateStore(project_root)
     server.service_config = normalized_service
     server.api_key = resolve_api_key(normalized_service)
-    server.responses_state_cache = ResponsesStateCache()
+    server.responses_state_cache = ResponsesStateCache(server.store)
     return server
 
 
@@ -357,3 +360,14 @@ def _model_payload(record: object, active_model: str | None) -> dict[str, object
         if field_name in receipt_payload:
             payload[field_name] = receipt_payload[field_name]
     return payload
+
+
+def _health_status_reason(runtime: object) -> str:
+    from aistackd.state.host import HostRuntimeState
+
+    runtime_state = cast(HostRuntimeState, runtime)
+    if runtime_state.activation_state != "ready":
+        return runtime_state.activation_state
+    if runtime_state.backend_process_status != "running":
+        return runtime_state.backend_process_status
+    return "ready"

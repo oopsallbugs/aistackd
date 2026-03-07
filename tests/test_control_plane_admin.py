@@ -34,6 +34,7 @@ class ControlPlaneAdminTests(unittest.TestCase):
         self.assertEqual(payload["runtime"]["backend"], "llama.cpp")
         self.assertEqual(payload["runtime"]["backend_status"], "missing")
         self.assertEqual(payload["runtime"]["installed_models"], [])
+        self.assertEqual(payload["responses_state"]["count"], 0)
 
     def test_search_and_recommend_models_admin_use_llmfit(self) -> None:
         with patch(

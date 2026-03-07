@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +28,8 @@ BACKEND_PROCESS_FILE_NAME = "backend_process.json"
 MANAGED_BACKENDS_DIRECTORY_NAME = "backends"
 MANAGED_MODELS_DIRECTORY_NAME = "models"
 HOST_LOGS_DIRECTORY_NAME = "logs"
+RESPONSES_STATE_DIRECTORY_NAME = "responses"
+DEFAULT_RESPONSE_STATE_RETENTION_LIMIT = 128
 CURRENT_HOST_STATE_SCHEMA_VERSION = "v1alpha1"
 
 
@@ -36,6 +39,39 @@ class HostStateError(RuntimeError):
 
 class InstalledModelNotFoundError(HostStateError):
     """Raised when a requested installed model does not exist."""
+
+
+@dataclass(frozen=True)
+class StoredResponseState:
+    """Persisted conversation state for one Responses follow-up chain."""
+
+    response_id: str
+    model_name: str
+    messages: tuple[dict[str, object], ...]
+    updated_at: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "StoredResponseState":
+        response_id = _require_string(payload, "response_id")
+        model_name = _require_string(payload, "model_name")
+        updated_at = _require_string(payload, "updated_at")
+        messages_value = payload.get("messages")
+        if not isinstance(messages_value, list) or not all(isinstance(entry, dict) for entry in messages_value):
+            raise HostStateError("expected 'messages' to be a list of objects")
+        return cls(
+            response_id=response_id,
+            model_name=model_name,
+            messages=tuple(deepcopy(entry) for entry in messages_value),
+            updated_at=updated_at,
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "response_id": self.response_id,
+            "model_name": self.model_name,
+            "messages": [deepcopy(entry) for entry in self.messages],
+            "updated_at": self.updated_at,
+        }
 
 
 @dataclass(frozen=True)
@@ -52,6 +88,7 @@ class HostStatePaths:
     managed_backends_dir: Path
     managed_models_dir: Path
     host_logs_dir: Path
+    responses_state_dir: Path
 
     @classmethod
     def from_project_root(cls, project_root: Path) -> "HostStatePaths":
@@ -70,6 +107,7 @@ class HostStatePaths:
             managed_backends_dir=host_dir / MANAGED_BACKENDS_DIRECTORY_NAME,
             managed_models_dir=host_dir / MANAGED_MODELS_DIRECTORY_NAME,
             host_logs_dir=host_dir / HOST_LOGS_DIRECTORY_NAME,
+            responses_state_dir=host_dir / RESPONSES_STATE_DIRECTORY_NAME,
         )
 
     def receipt_path(self, model_name: str) -> Path:
@@ -107,6 +145,10 @@ class HostStatePaths:
     def backend_log_path(self, backend_name: str = PRIMARY_BACKEND) -> Path:
         """Return the persisted backend log path for one backend."""
         return self.host_logs_dir / f"{frontend_model_key(backend_name)}.log"
+
+    def response_state_path(self, response_id: str) -> Path:
+        """Return the persisted response-state path for one response id."""
+        return self.responses_state_dir / f"{response_id}.json"
 
 
 @dataclass(frozen=True)
@@ -312,6 +354,7 @@ class HostStateStore:
         self.paths.managed_backends_dir.mkdir(parents=True, exist_ok=True)
         self.paths.managed_models_dir.mkdir(parents=True, exist_ok=True)
         self.paths.host_logs_dir.mkdir(parents=True, exist_ok=True)
+        self.paths.responses_state_dir.mkdir(parents=True, exist_ok=True)
 
     def list_installed_models(self) -> tuple[InstalledModelRecord, ...]:
         """Return installed models sorted by name."""
@@ -476,6 +519,85 @@ class HostStateStore:
             backend_process=backend_process,
             backend_process_status=backend_process.status if backend_process is not None else "not_started",
         )
+
+    def save_response_state(
+        self,
+        response_id: str,
+        model_name: str,
+        messages: list[dict[str, object]],
+        *,
+        retention_limit: int = DEFAULT_RESPONSE_STATE_RETENTION_LIMIT,
+    ) -> None:
+        """Persist one response conversation state and prune stale entries."""
+        if retention_limit < 1:
+            raise HostStateError("response-state retention limit must be at least 1")
+        self.ensure_storage()
+        stored_state = StoredResponseState(
+            response_id=response_id,
+            model_name=model_name,
+            messages=tuple(deepcopy(message) for message in messages),
+            updated_at=datetime.now(UTC).replace(microsecond=0).isoformat(),
+        )
+        payload = stored_state.as_dict()
+        payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
+        write_json_atomic(self.paths.response_state_path(response_id), payload)
+        self.prune_response_states(retention_limit=retention_limit)
+
+    def load_response_state(self, response_id: str) -> StoredResponseState | None:
+        """Load one persisted response conversation state if present."""
+        payload = load_json_object(self.paths.response_state_path(response_id))
+        if not payload:
+            return None
+        return StoredResponseState.from_dict(payload)
+
+    def count_response_states(self) -> int:
+        """Return the number of persisted response-state entries."""
+        if not self.paths.responses_state_dir.exists():
+            return 0
+        return sum(1 for path in self.paths.responses_state_dir.glob("*.json") if path.is_file())
+
+    def response_state_summary(self) -> dict[str, object]:
+        """Return summary diagnostics for persisted Responses state."""
+        return {
+            "count": self.count_response_states(),
+            "retention_limit": DEFAULT_RESPONSE_STATE_RETENTION_LIMIT,
+            "storage_dir": str(self.paths.responses_state_dir),
+        }
+
+    def prune_response_states(
+        self,
+        *,
+        retention_limit: int = DEFAULT_RESPONSE_STATE_RETENTION_LIMIT,
+    ) -> tuple[str, ...]:
+        """Prune persisted response-state entries beyond the configured retention limit."""
+        if retention_limit < 1:
+            raise HostStateError("response-state retention limit must be at least 1")
+        if not self.paths.responses_state_dir.exists():
+            return ()
+
+        stored_entries: list[tuple[Path, str]] = []
+        for path in self.paths.responses_state_dir.glob("*.json"):
+            if not path.is_file():
+                continue
+            payload = load_json_object(path)
+            if payload:
+                updated_at = _optional_string(payload, "updated_at")
+                stored_entries.append((path, updated_at or ""))
+                continue
+            stored_entries.append((path, ""))
+
+        if len(stored_entries) <= retention_limit:
+            return ()
+
+        stored_entries.sort(
+            key=lambda item: (item[1], item[0].stat().st_mtime),
+            reverse=True,
+        )
+        removed_paths: list[str] = []
+        for path, _updated_at in stored_entries[retention_limit:]:
+            path.unlink(missing_ok=True)
+            removed_paths.append(str(path))
+        return tuple(removed_paths)
 
 
 def _backend_status(installation: HostBackendInstallation | None) -> str:

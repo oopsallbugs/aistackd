@@ -14,6 +14,22 @@ from aistackd.state.host import HostStateStore
 
 
 class HostStateTests(unittest.TestCase):
+    def test_response_state_round_trips_and_prunes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+
+            store.save_response_state("resp_old", "local-model", [{"role": "user", "content": "first"}], retention_limit=1)
+            store.save_response_state("resp_new", "local-model", [{"role": "user", "content": "second"}], retention_limit=1)
+
+            self.assertIsNone(store.load_response_state("resp_old"))
+            persisted = store.load_response_state("resp_new")
+            self.assertIsNotNone(persisted)
+            assert persisted is not None
+            self.assertEqual(persisted.response_id, "resp_new")
+            self.assertEqual(persisted.model_name, "local-model")
+            self.assertEqual(persisted.messages[0]["content"], "second")
+            self.assertEqual(store.count_response_states(), 1)
+
     def test_install_and_activate_model_round_trips_host_runtime_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = HostStateStore(Path(tmpdir))
@@ -90,6 +106,7 @@ class HostStateTests(unittest.TestCase):
             self.assertTrue(store.paths.managed_backends_dir.exists())
             self.assertTrue(store.paths.managed_models_dir.exists())
             self.assertTrue(store.paths.host_logs_dir.exists())
+            self.assertTrue(store.paths.responses_state_dir.exists())
 
 
 def _create_fake_backend_root(root: Path) -> Path:

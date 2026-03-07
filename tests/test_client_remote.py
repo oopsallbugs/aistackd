@@ -43,6 +43,18 @@ class ClientRemoteTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("health returned status 401", result.errors[0])
 
+    def test_validate_remote_runtime_reports_degraded_reason(self) -> None:
+        runtime_config = _runtime_config("AISTACKD_REMOTE_API_KEY")
+
+        with (
+            patch.dict("os.environ", {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+            patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_degraded_urlopen),
+        ):
+            result = validate_remote_runtime(runtime_config)
+
+        self.assertFalse(result.ok)
+        self.assertIn("health returned status 503: degraded (backend_process_exited)", result.errors)
+
     def test_fetch_remote_runtime_decodes_payload(self) -> None:
         runtime_config = _runtime_config("AISTACKD_REMOTE_API_KEY")
 
@@ -161,3 +173,21 @@ def _fake_install_urlopen(request_obj: object, timeout: float = 30) -> _FakeResp
             "active_model": decoded["model"],
         },
     )
+
+
+def _fake_degraded_urlopen(request_obj: object, timeout: float = 5) -> _FakeResponse:
+    url = getattr(request_obj, "full_url")
+    if url.endswith("/health"):
+        return _FakeResponse(503, {"status": "degraded", "status_reason": "backend_process_exited"})
+    if url.endswith("/v1/models"):
+        return _FakeResponse(200, {"object": "list", "active_model": "remote-model", "data": []})
+    if url.endswith("/admin/runtime"):
+        return _FakeResponse(
+            200,
+            {
+                "runtime": {"active_model": "remote-model", "backend_status": "configured", "installed_models": []},
+                "service": {"base_url": "http://127.0.0.1:8000"},
+                "responses_state": {"count": 1, "retention_limit": 128, "storage_dir": "/tmp/responses"},
+            },
+        )
+    raise AssertionError(f"unexpected URL: {url}")

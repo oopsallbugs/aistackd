@@ -61,6 +61,7 @@ def build_runtime_admin_payload(store: HostStateStore, service: HostServiceConfi
     return {
         "runtime": store.load_runtime_state().to_dict(),
         "service": service.normalized().to_dict(),
+        "responses_state": store.response_state_summary(),
     }
 
 
