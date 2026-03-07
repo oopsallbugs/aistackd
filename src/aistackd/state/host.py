@@ -1,4 +1,4 @@
-"""Host-side model inventory and activation state."""
+"""Host-side model inventory, backend adoption, and activation state."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ HOST_DIRECTORY_NAME = "host"
 HOST_RUNTIME_FILE_NAME = "runtime.json"
 INSTALLED_MODELS_FILE_NAME = "installed_models.json"
 MODEL_RECEIPTS_DIRECTORY_NAME = "model_receipts"
+BACKEND_INSTALLATION_FILE_NAME = "backend_installation.json"
 CURRENT_HOST_STATE_SCHEMA_VERSION = "v1alpha1"
 
 
@@ -41,6 +42,7 @@ class HostStatePaths:
     runtime_state_path: Path
     installed_models_path: Path
     model_receipts_dir: Path
+    backend_installation_path: Path
 
     @classmethod
     def from_project_root(cls, project_root: Path) -> "HostStatePaths":
@@ -54,11 +56,49 @@ class HostStatePaths:
             runtime_state_path=host_dir / HOST_RUNTIME_FILE_NAME,
             installed_models_path=host_dir / INSTALLED_MODELS_FILE_NAME,
             model_receipts_dir=host_dir / MODEL_RECEIPTS_DIRECTORY_NAME,
+            backend_installation_path=host_dir / BACKEND_INSTALLATION_FILE_NAME,
         )
 
     def receipt_path(self, model_name: str) -> Path:
         """Return the receipt path for one installed model."""
         return self.model_receipts_dir / f"{frontend_model_key(model_name)}.json"
+
+
+@dataclass(frozen=True)
+class HostBackendInstallation:
+    """Persisted adopted backend installation record."""
+
+    backend: str
+    acquisition_method: str
+    backend_root: str
+    server_binary: str
+    cli_binary: str | None
+    configured_at: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "HostBackendInstallation":
+        """Decode a backend installation from JSON."""
+        return cls(
+            backend=_require_string(payload, "backend"),
+            acquisition_method=_require_string(payload, "acquisition_method"),
+            backend_root=_require_string(payload, "backend_root"),
+            server_binary=_require_string(payload, "server_binary"),
+            cli_binary=_optional_string(payload, "cli_binary"),
+            configured_at=_require_string(payload, "configured_at"),
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation."""
+        payload: dict[str, object] = {
+            "backend": self.backend,
+            "acquisition_method": self.acquisition_method,
+            "backend_root": self.backend_root,
+            "server_binary": self.server_binary,
+            "configured_at": self.configured_at,
+        }
+        if self.cli_binary is not None:
+            payload["cli_binary"] = self.cli_binary
+        return payload
 
 
 @dataclass(frozen=True)
@@ -108,11 +148,13 @@ class HostRuntimeState:
     active_source: str | None
     activation_state: str
     installed_models: tuple[InstalledModelRecord, ...]
+    backend_installation: HostBackendInstallation | None = None
+    backend_status: str = "missing"
     supported_sources: tuple[str, ...] = SUPPORTED_MODEL_SOURCES
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation."""
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "backend": self.backend,
             "backend_policy": self.backend_policy,
@@ -120,13 +162,17 @@ class HostRuntimeState:
             "active_model": self.active_model,
             "active_source": self.active_source,
             "activation_state": self.activation_state,
+            "backend_status": self.backend_status,
             "installed_models": [record.as_dict() for record in self.installed_models],
             "supported_sources": list(self.supported_sources),
         }
+        if self.backend_installation is not None:
+            payload["backend_installation"] = self.backend_installation.as_dict()
+        return payload
 
 
 class HostStateStore:
-    """JSON-backed store for installed host models and activation state."""
+    """JSON-backed store for host models, adopted backend, and activation state."""
 
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root.resolve()
@@ -185,6 +231,22 @@ class HostStateStore:
         write_json_atomic(self.paths.installed_models_path, inventory_payload)
         return record, created
 
+    def load_backend_installation(self) -> HostBackendInstallation | None:
+        """Load the adopted backend installation if present."""
+        payload = load_json_object(self.paths.backend_installation_path)
+        if not payload:
+            return None
+        return HostBackendInstallation.from_dict(payload)
+
+    def save_backend_installation(self, installation: HostBackendInstallation) -> bool:
+        """Persist the adopted backend installation record."""
+        self.ensure_storage()
+        created = not self.paths.backend_installation_path.exists()
+        payload = installation.as_dict()
+        payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
+        write_json_atomic(self.paths.backend_installation_path, payload)
+        return created
+
     def activate_model(self, model_name: str) -> HostRuntimeState:
         """Mark one installed model as active."""
         installed_models = {record.model: record for record in self.list_installed_models()}
@@ -210,6 +272,7 @@ class HostStateStore:
     def load_runtime_state(self) -> HostRuntimeState:
         """Return the current host runtime summary."""
         installed_models = self.list_installed_models()
+        backend_installation = self.load_backend_installation()
         runtime_payload = load_json_object(self.paths.runtime_state_path)
         active_model = _optional_string(runtime_payload, "active_model")
         active_source = _optional_string(runtime_payload, "active_source")
@@ -222,6 +285,7 @@ class HostStateStore:
         else:
             activation_state = "missing_installation"
 
+        backend_status = _backend_status(backend_installation)
         return HostRuntimeState(
             schema_version=CURRENT_HOST_STATE_SCHEMA_VERSION,
             backend=_optional_string(runtime_payload, "backend") or PRIMARY_BACKEND,
@@ -231,7 +295,19 @@ class HostStateStore:
             active_source=active_source,
             activation_state=activation_state,
             installed_models=installed_models,
+            backend_installation=backend_installation,
+            backend_status=backend_status,
         )
+
+
+def _backend_status(installation: HostBackendInstallation | None) -> str:
+    if installation is None:
+        return "missing"
+    if not Path(installation.server_binary).exists():
+        return "stale"
+    if installation.cli_binary is not None and not Path(installation.cli_binary).exists():
+        return "stale"
+    return "configured"
 
 
 def _require_string(payload: dict[str, object], field_name: str) -> str:

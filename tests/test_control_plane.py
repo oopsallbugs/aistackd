@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from aistackd.control_plane import create_control_plane_server
 from aistackd.models.sources import resolve_source_model
+from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
 from aistackd.runtime.host import HostServiceConfig
 from aistackd.state.host import HostStateStore
 
@@ -27,6 +28,10 @@ class ControlPlaneTests(unittest.TestCase):
             self.assertIsNotNone(source_model)
             record, _ = store.install_model(source_model)
             store.activate_model(record.model)
+            backend_root = _create_fake_backend_root(Path(tmpdir))
+            store.save_backend_installation(
+                adopt_backend_installation(discover_llama_cpp_installation(backend_root=backend_root))
+            )
 
             with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
                 server = create_control_plane_server(
@@ -45,8 +50,10 @@ class ControlPlaneTests(unittest.TestCase):
                     token="test-key",
                 )
                 self.assertEqual(health_payload["status"], "ok")
+                self.assertEqual(health_payload["backend_status"], "configured")
                 self.assertEqual(health_payload["active_model"], record.model)
                 self.assertEqual(health_payload["installed_model_count"], 1)
+                self.assertTrue(str(health_payload["server_binary"]).endswith("llama-server"))
 
                 models_payload = _request_json(
                     f"http://127.0.0.1:{port}/v1/models",
@@ -75,3 +82,14 @@ def _request_json(url: str, *, token: str | None = None) -> dict[str, object]:
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=2) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _create_fake_backend_root(root: Path) -> Path:
+    backend_root = root / "llama.cpp"
+    bin_dir = backend_root / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for binary_name in ("llama-server", "llama-cli"):
+        path = bin_dir / binary_name
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+    return backend_root

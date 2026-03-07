@@ -75,12 +75,18 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
             {
                 "status": status,
                 "backend": runtime.backend,
+                "backend_status": runtime.backend_status,
                 "active_model": runtime.active_model,
                 "active_source": runtime.active_source,
                 "activation_state": runtime.activation_state,
                 "installed_model_count": len(runtime.installed_models),
                 "base_url": server.service_config.base_url,
                 "responses_base_url": server.service_config.responses_base_url,
+                "server_binary": (
+                    runtime.backend_installation.server_binary
+                    if runtime.backend_installation is not None
+                    else None
+                ),
             },
         )
 
@@ -161,4 +167,3 @@ def _model_payload(record: object, active_model: str | None) -> dict[str, object
         if field_name in receipt_payload:
             payload[field_name] = receipt_payload[field_name]
     return payload
-

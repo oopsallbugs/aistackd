@@ -71,6 +71,11 @@ class ProjectLayout:
             PathCheck("active_profile_file", str(profile_paths.active_profile_path), profile_paths.active_profile_path.exists()),
             PathCheck("host_state_dir", str(host_paths.host_dir), host_paths.host_dir.exists()),
             PathCheck("host_runtime_file", str(host_paths.runtime_state_path), host_paths.runtime_state_path.exists()),
+            PathCheck(
+                "backend_installation_file",
+                str(host_paths.backend_installation_path),
+                host_paths.backend_installation_path.exists(),
+            ),
             PathCheck("installed_models_file", str(host_paths.installed_models_path), host_paths.installed_models_path.exists()),
             PathCheck("sync_state_dir", str(sync_paths.sync_dir), sync_paths.sync_dir.exists()),
             PathCheck("ownership_manifest_file", str(sync_paths.ownership_manifest_path), sync_paths.ownership_manifest_path.exists()),

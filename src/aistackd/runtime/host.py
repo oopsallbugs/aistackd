@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 
+from aistackd.runtime.backends import backend_installation_errors
 from aistackd.state.host import HostRuntimeState, HostStateStore
 
 DEFAULT_HOST_BIND = "127.0.0.1"
@@ -98,6 +99,8 @@ def validate_host_runtime(
     if not runtime.installed_models:
         errors.append("no installed models are available for host runtime")
 
+    errors.extend(backend_installation_errors(runtime.backend_installation))
+
     if runtime.active_model is None:
         errors.append("no active model is configured for host runtime")
     elif runtime.activation_state != "ready":
@@ -121,4 +124,3 @@ def resolve_api_key(service: HostServiceConfig) -> str:
     if not api_key:
         raise ValueError(f"api key environment variable '{normalized_service.api_key_env}' is not set or empty")
     return api_key
-

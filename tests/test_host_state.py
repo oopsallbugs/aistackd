@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from aistackd.models.sources import resolve_source_model
+from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
 from aistackd.state.host import HostStateStore
 
 
@@ -44,3 +45,28 @@ class HostStateTests(unittest.TestCase):
             self.assertEqual(record.source, "llmfit")
             self.assertEqual(len(store.list_installed_models()), 1)
 
+    def test_backend_installation_round_trips_through_host_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend_root = _create_fake_backend_root(Path(tmpdir))
+            store = HostStateStore(Path(tmpdir))
+            discovery = discover_llama_cpp_installation(backend_root=backend_root)
+            installation = adopt_backend_installation(discovery)
+
+            created = store.save_backend_installation(installation)
+            runtime_state = store.load_runtime_state()
+
+            self.assertTrue(created)
+            self.assertEqual(runtime_state.backend_status, "configured")
+            self.assertIsNotNone(runtime_state.backend_installation)
+            self.assertEqual(runtime_state.backend_installation.server_binary, installation.server_binary)
+
+
+def _create_fake_backend_root(root: Path) -> Path:
+    backend_root = root / "llama.cpp"
+    bin_dir = backend_root / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for binary_name in ("llama-server", "llama-cli"):
+        path = bin_dir / binary_name
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+    return backend_root

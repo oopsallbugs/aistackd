@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from aistackd.control_plane import ControlPlaneError, serve_control_plane
+from aistackd.runtime.backends import adopt_backend_installation
 from aistackd.runtime.host import (
     DEFAULT_HOST_API_KEY_ENV,
     DEFAULT_HOST_BIND,
@@ -15,6 +16,7 @@ from aistackd.runtime.host import (
     HostServiceConfig,
     validate_host_runtime,
 )
+from aistackd.runtime.prereqs import inspect_host_environment
 from aistackd.state.host import HostStateError, HostStateStore
 
 
@@ -31,6 +33,21 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _add_shared_arguments(status_parser)
     _add_format_argument(status_parser)
     status_parser.set_defaults(handler=handle_status)
+
+    inspect_parser = command_parsers.add_parser("inspect", help="inspect prerequisites and backend discovery")
+    _add_shared_arguments(inspect_parser)
+    _add_backend_locator_arguments(inspect_parser)
+    _add_format_argument(inspect_parser)
+    inspect_parser.set_defaults(handler=handle_inspect)
+
+    acquire_parser = command_parsers.add_parser(
+        "acquire-backend",
+        help="adopt an existing llama.cpp installation into host state",
+    )
+    _add_shared_arguments(acquire_parser)
+    _add_backend_locator_arguments(acquire_parser)
+    _add_format_argument(acquire_parser)
+    acquire_parser.set_defaults(handler=handle_acquire_backend)
 
     validate_parser = command_parsers.add_parser("validate", help="validate host runtime readiness")
     _add_shared_arguments(validate_parser)
@@ -59,6 +76,13 @@ def handle_status(args: argparse.Namespace) -> int:
     print(f"backend: {runtime_state.backend}")
     print(f"backend_policy: {runtime_state.backend_policy}")
     print(f"model_source_policy: {runtime_state.model_source_policy}")
+    print(f"backend_status: {runtime_state.backend_status}")
+    if runtime_state.backend_installation is not None:
+        print(f"backend_root: {runtime_state.backend_installation.backend_root}")
+        print(f"server_binary: {runtime_state.backend_installation.server_binary}")
+        print(f"acquisition_method: {runtime_state.backend_installation.acquisition_method}")
+        if runtime_state.backend_installation.cli_binary is not None:
+            print(f"cli_binary: {runtime_state.backend_installation.cli_binary}")
     print(f"active_model: {runtime_state.active_model or 'none'}")
     print(f"active_source: {runtime_state.active_source or 'none'}")
     print(f"activation_state: {runtime_state.activation_state}")
@@ -70,6 +94,69 @@ def handle_status(args: argparse.Namespace) -> int:
                 f"{active_marker} {record.model}: source={record.source} "
                 f"status={record.status} installed_at={record.installed_at}"
             )
+    return 0
+
+
+def handle_inspect(args: argparse.Namespace) -> int:
+    """Inspect host prerequisites and backend discovery state."""
+    report = inspect_host_environment(
+        backend_root=args.backend_root,
+        server_binary=args.server_binary,
+        cli_binary=args.cli_binary,
+    )
+    if args.format == "json":
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0
+
+    print("host inspection")
+    print(f"status: {'ok' if report.ok else 'needs_attention'}")
+    print(f"prerequisites_status: {'ok' if report.prerequisites_ok else 'needs_attention'}")
+    for check in report.prerequisite_checks:
+        label = "ok" if check.ok else "missing"
+        print(f"prerequisite: {check.name} status={label} detail={check.detail}")
+    discovery = report.backend_discovery
+    print(f"backend_discovery: {'found' if discovery.found else 'missing'}")
+    print(f"discovery_mode: {discovery.discovery_mode}")
+    if discovery.backend_root is not None:
+        print(f"backend_root: {discovery.backend_root}")
+    if discovery.server_binary is not None:
+        print(f"server_binary: {discovery.server_binary}")
+    if discovery.cli_binary is not None:
+        print(f"cli_binary: {discovery.cli_binary}")
+    for issue in discovery.issues:
+        print(f"issue: {issue}")
+    return 0
+
+
+def handle_acquire_backend(args: argparse.Namespace) -> int:
+    """Adopt an existing llama.cpp installation into host state."""
+    discovery = inspect_host_environment(
+        backend_root=args.backend_root,
+        server_binary=args.server_binary,
+        cli_binary=args.cli_binary,
+    ).backend_discovery
+    try:
+        installation = adopt_backend_installation(discovery)
+        created = HostStateStore(args.project_root).save_backend_installation(installation)
+    except (HostStateError, ValueError) as exc:
+        return _exit_with_error(str(exc))
+
+    payload = {
+        "action": "adopted" if created else "updated",
+        "backend_installation": installation.as_dict(),
+        "issues": list(discovery.issues),
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print(f"{payload['action']} backend installation")
+    print(f"backend_root: {installation.backend_root}")
+    print(f"server_binary: {installation.server_binary}")
+    if installation.cli_binary is not None:
+        print(f"cli_binary: {installation.cli_binary}")
+    for issue in discovery.issues:
+        print(f"issue: {issue}")
     return 0
 
 
@@ -89,6 +176,9 @@ def handle_validate(args: argparse.Namespace) -> int:
     print(f"base_url: {result.service.base_url}")
     print(f"responses_base_url: {result.service.responses_base_url}")
     print(f"api_key_env: {result.service.api_key_env}")
+    print(f"backend_status: {result.runtime.backend_status}")
+    if result.runtime.backend_installation is not None:
+        print(f"server_binary: {result.runtime.backend_installation.server_binary}")
     print(f"active_model: {result.runtime.active_model or 'none'}")
     print(f"installed_models: {len(result.runtime.installed_models)}")
     for message in result.errors:
@@ -113,6 +203,8 @@ def handle_serve(args: argparse.Namespace) -> int:
     print(f"base_url: {result.service.base_url}")
     print(f"responses_base_url: {result.service.responses_base_url}")
     print(f"api_key_env: {result.service.api_key_env}")
+    if result.runtime.backend_installation is not None:
+        print(f"server_binary: {result.runtime.backend_installation.server_binary}")
     print(f"active_model: {result.runtime.active_model}")
     print("stop: Ctrl+C")
     try:
@@ -131,6 +223,24 @@ def _add_shared_arguments(parser: argparse.ArgumentParser) -> None:
         type=Path,
         default=Path.cwd(),
         help="project root containing the .aistackd state directory",
+    )
+
+
+def _add_backend_locator_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--backend-root",
+        type=Path,
+        help="existing llama.cpp root containing a bin/ directory",
+    )
+    parser.add_argument(
+        "--server-binary",
+        type=Path,
+        help="explicit path to an existing llama-server binary",
+    )
+    parser.add_argument(
+        "--cli-binary",
+        type=Path,
+        help="explicit path to an existing llama-cli binary",
     )
 
 

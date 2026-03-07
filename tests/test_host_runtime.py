@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aistackd.models.sources import resolve_source_model
+from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
 from aistackd.runtime.host import HostServiceConfig, validate_host_runtime
 from aistackd.state.host import HostStateStore
 
@@ -24,6 +25,7 @@ class HostRuntimeTests(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertIn("api key environment variable 'AISTACKD_API_KEY' is not set or empty", result.errors)
             self.assertIn("no installed models are available for host runtime", result.errors)
+            self.assertIn("no backend installation is configured for host runtime", result.errors)
             self.assertIn("no active model is configured for host runtime", result.errors)
 
     def test_validate_host_runtime_succeeds_when_active_model_and_api_key_exist(self) -> None:
@@ -33,6 +35,10 @@ class HostRuntimeTests(unittest.TestCase):
             self.assertIsNotNone(source_model)
             record, _ = store.install_model(source_model)
             store.activate_model(record.model)
+            backend_root = _create_fake_backend_root(Path(tmpdir))
+            store.save_backend_installation(
+                adopt_backend_installation(discover_llama_cpp_installation(backend_root=backend_root))
+            )
 
             with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
                 result = validate_host_runtime(
@@ -46,3 +52,13 @@ class HostRuntimeTests(unittest.TestCase):
             self.assertEqual(result.runtime.active_model, record.model)
             self.assertEqual(result.errors, ())
 
+
+def _create_fake_backend_root(root: Path) -> Path:
+    backend_root = root / "llama.cpp"
+    bin_dir = backend_root / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for binary_name in ("llama-server", "llama-cli"):
+        path = bin_dir / binary_name
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+    return backend_root

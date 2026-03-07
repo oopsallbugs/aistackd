@@ -290,6 +290,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
             self.assertIn("host runtime state", stdout)
+            self.assertIn("backend_status: missing", stdout)
             self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
             self.assertIn("installed_models: 1", stdout)
 
@@ -303,6 +304,50 @@ class CLITests(unittest.TestCase):
                 "api key environment variable 'AISTACKD_API_KEY' is not set or empty",
                 payload["errors"],
             )
+            self.assertIn(
+                "no backend installation is configured for host runtime",
+                payload["errors"],
+            )
+
+            backend_root = _create_fake_backend_root(Path(tmpdir))
+
+            exit_code, stdout, stderr = invoke(
+                [
+                    "host",
+                    "inspect",
+                    "--project-root",
+                    tmpdir,
+                    "--backend-root",
+                    str(backend_root),
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertTrue(payload["backend_discovery"]["found"])
+            self.assertEqual(payload["backend_discovery"]["discovery_mode"], "explicit_root")
+
+            exit_code, stdout, stderr = invoke(
+                [
+                    "host",
+                    "acquire-backend",
+                    "--project-root",
+                    tmpdir,
+                    "--backend-root",
+                    str(backend_root),
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "adopted")
+            self.assertTrue(payload["backend_installation"]["server_binary"].endswith("llama-server"))
 
             with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
                 exit_code, stdout, stderr = invoke(["host", "validate", "--project-root", tmpdir])
@@ -311,6 +356,8 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             self.assertIn("host validation", stdout)
             self.assertIn("status: ok", stdout)
+            self.assertIn("backend_status: configured", stdout)
+            self.assertIn("server_binary:", stdout)
             self.assertIn("base_url: http://127.0.0.1:8000", stdout)
 
             with patch("aistackd.cli.commands.host.serve_control_plane") as serve_mock:
@@ -320,6 +367,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
             self.assertIn("control plane serving", stdout)
+            self.assertIn("server_binary:", stdout)
             self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
             serve_mock.assert_called_once()
 
@@ -458,3 +506,14 @@ class CLITests(unittest.TestCase):
             ownership_payload = json.loads(ownership_manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(ownership_payload["active_profile"], "local")
             self.assertEqual(len(ownership_payload["targets"]), 2)
+
+
+def _create_fake_backend_root(root: Path) -> Path:
+    backend_root = root / "llama.cpp"
+    bin_dir = backend_root / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for binary_name in ("llama-server", "llama-cli"):
+        path = bin_dir / binary_name
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+    return backend_root
