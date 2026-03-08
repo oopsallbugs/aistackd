@@ -77,6 +77,7 @@ class OpenCodeAdapter:
             notes=(
                 "provider settings are merged into project-local opencode.json while preserving unrelated keys",
                 f"synced operator tools default to profile '{runtime_config.active_profile}' at {runtime_config.base_url}",
+                "recommended first-run check: aistackd doctor ready --frontend opencode",
                 "tool-calling examples stay client-managed; the host transports function calls but does not execute repo tools",
             ),
         )

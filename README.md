@@ -16,6 +16,7 @@ Run the scaffold doctor command:
 
 ```bash
 PYTHONPATH=src python -m aistackd doctor
+PYTHONPATH=src AISTACKD_REMOTE_API_KEY=test-key python -m aistackd doctor ready --frontend opencode
 ```
 
 Run the test suite:

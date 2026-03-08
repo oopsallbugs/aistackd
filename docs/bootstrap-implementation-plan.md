@@ -342,11 +342,13 @@ Deliverables:
 2. OpenCode adapter
 3. provider wiring for active profile
 4. baseline skill and tool sync
+5. first-run frontend readiness checks for the remote-backend/local-frontend workflow
 
 Acceptance gates:
 
 1. fresh client can sync supported frontends and use the configured host immediately
 2. repeated sync does not damage unmanaged config
+3. the repo can answer “am I ready to use OpenCode against this host?” in one command
 
 ### Phase 5: Catalog And Discovery
 

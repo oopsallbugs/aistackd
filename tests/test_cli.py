@@ -52,6 +52,77 @@ class CLITests(unittest.TestCase):
         self.assertTrue(scaffold_checks["shared_skills"])
         self.assertTrue(scaffold_checks["shared_tools"])
 
+    def test_doctor_ready_reports_opencode_frontend_as_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--role-hint",
+                    "client",
+                    "--activate",
+                ]
+            )
+            invoke(["sync", "--project-root", tmpdir, "--target", "opencode", "--write"])
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+                patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_remote_client_urlopen),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    ["doctor", "ready", "--project-root", tmpdir, "--frontend", "opencode", "--format", "json"]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["frontend"], "opencode")
+            self.assertEqual(payload["active_profile"], "remote")
+            self.assertTrue(payload["remote_validation"]["ok"])
+            self.assertTrue(payload["smoke"]["ok"])
+
+    def test_doctor_ready_reports_missing_frontend_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--role-hint",
+                    "client",
+                    "--activate",
+                ]
+            )
+
+            with patch.dict(os.environ, {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False):
+                exit_code, stdout, stderr = invoke(
+                    ["doctor", "ready", "--project-root", tmpdir, "--frontend", "opencode", "--format", "json"]
+                )
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertFalse(payload["ok"])
+            self.assertIn("run 'aistackd sync --target opencode --write'", "\n".join(payload["errors"]))
+
     def test_profiles_add_list_show_and_activate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             exit_code, stdout, stderr = invoke(
@@ -1484,6 +1555,19 @@ def _fake_remote_client_urlopen(request_obj: object, timeout: float = 5) -> _Fak
             {
                 "runtime": {"active_model": "remote-model", "backend_status": "configured", "installed_models": []},
                 "service": {"base_url": "http://127.0.0.1:8000"},
+            },
+        )
+    if url.endswith("/v1/responses"):
+        decoded = json.loads(getattr(request_obj, "data").decode("utf-8"))
+        if decoded["input"] != "say hello in one short sentence":
+            raise AssertionError(f"unexpected smoke payload: {decoded}")
+        return _FakeUrlopenResponse(
+            200,
+            {
+                "id": "resp_smoke",
+                "model": "remote-model",
+                "output_text": "Hello from llama-server",
+                "output": [],
             },
         )
     raise AssertionError(f"unexpected URL: {url}")
