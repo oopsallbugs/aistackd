@@ -248,6 +248,72 @@ class CLITests(unittest.TestCase):
             self.assertIn("status: invalid", stdout)
             self.assertIn("health returned status 401", stdout)
 
+    def test_client_smoke_runs_remote_responses_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--role-hint",
+                    "client",
+                    "--activate",
+                ]
+            )
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+                patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_remote_smoke_urlopen),
+            ):
+                exit_code, stdout, stderr = invoke(["client", "smoke", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("client smoke", stdout)
+            self.assertIn("active_profile: remote", stdout)
+            self.assertIn("output_text: Hello from llama-server", stdout)
+
+    def test_client_tool_demo_executes_local_tool_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--role-hint",
+                    "client",
+                    "--activate",
+                ]
+            )
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+                patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_remote_tool_demo_urlopen),
+            ):
+                exit_code, stdout, stderr = invoke(["client", "tool-demo", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("client tool demo", stdout)
+            self.assertIn("tool_calls: 1", stdout)
+            self.assertIn("final_output_text: The time is available.", stdout)
+
     def test_client_models_install_proxies_remote_admin_install(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             invoke(
@@ -1345,6 +1411,70 @@ def _fake_remote_install_urlopen(request_obj: object, timeout: float = 30) -> _F
                 "artifact_path": "/managed/models/glm-remote.gguf",
             },
             "active_model": decoded["model"],
+        },
+    )
+
+
+def _fake_remote_smoke_urlopen(request_obj: object, timeout: float = 30) -> _FakeUrlopenResponse:
+    url = getattr(request_obj, "full_url")
+    if not url.endswith("/v1/responses"):
+        raise AssertionError(f"unexpected URL: {url}")
+    payload = json.loads(getattr(request_obj, "data").decode("utf-8"))
+    if payload["input"] != "say hello in one short sentence":
+        raise AssertionError(f"unexpected smoke payload: {payload}")
+    return _FakeUrlopenResponse(
+        200,
+        {
+            "id": "resp_smoke",
+            "model": "remote-model",
+            "output_text": "Hello from llama-server",
+            "output": [],
+        },
+    )
+
+
+def _fake_remote_tool_demo_urlopen(request_obj: object, timeout: float = 30) -> _FakeUrlopenResponse:
+    payload = json.loads(getattr(request_obj, "data").decode("utf-8"))
+    previous_response_id = payload.get("previous_response_id")
+    if previous_response_id is None:
+        return _FakeUrlopenResponse(
+            200,
+            {
+                "id": "resp_tool",
+                "model": "remote-model",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_123",
+                        "name": "get_local_time",
+                        "arguments": "{}",
+                    }
+                ],
+                "output_text": "",
+            },
+        )
+    if previous_response_id != "resp_tool":
+        raise AssertionError(f"unexpected previous_response_id: {previous_response_id}")
+    tool_outputs = payload.get("input")
+    if not isinstance(tool_outputs, list) or not tool_outputs:
+        raise AssertionError(f"unexpected follow-up payload: {payload}")
+    first_item = tool_outputs[0]
+    if not isinstance(first_item, dict) or first_item.get("type") != "function_call_output":
+        raise AssertionError(f"unexpected tool output payload: {payload}")
+    return _FakeUrlopenResponse(
+        200,
+        {
+            "id": "resp_final",
+            "model": "remote-model",
+            "output": [
+                {
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "The time is available.", "annotations": []}],
+                }
+            ],
+            "output_text": "The time is available.",
         },
     )
 

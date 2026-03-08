@@ -16,6 +16,8 @@ from aistackd.runtime.remote import (
     fetch_remote_runtime,
     install_remote_model,
     recommend_remote_models,
+    run_remote_smoke,
+    run_remote_tool_demo,
     search_remote_models,
     validate_remote_runtime,
 )
@@ -41,6 +43,47 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     runtime_parser = command_parsers.add_parser("runtime", help="fetch remote runtime state")
     _add_common_arguments(runtime_parser)
     runtime_parser.set_defaults(handler=handle_runtime)
+
+    smoke_parser = command_parsers.add_parser("smoke", help="run one remote /v1/responses smoke request")
+    _add_common_arguments(smoke_parser)
+    smoke_parser.add_argument(
+        "prompt",
+        nargs="?",
+        default="say hello in one short sentence",
+        help="smoke prompt to send to the remote host",
+    )
+    smoke_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="request timeout in seconds",
+    )
+    smoke_parser.set_defaults(handler=handle_smoke)
+
+    tool_demo_parser = command_parsers.add_parser(
+        "tool-demo",
+        help="run one local client-managed function-call loop against the remote host",
+    )
+    _add_common_arguments(tool_demo_parser)
+    tool_demo_parser.add_argument(
+        "prompt",
+        nargs="?",
+        default="Use the get_local_time tool and answer with the current UTC time.",
+        help="prompt to send to the remote host",
+    )
+    tool_demo_parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=4,
+        help="maximum function-call rounds to execute",
+    )
+    tool_demo_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="request timeout in seconds",
+    )
+    tool_demo_parser.set_defaults(handler=handle_tool_demo)
 
     models_parser = command_parsers.add_parser("models", help="manage remote models through the active profile")
     _add_common_arguments(models_parser)
@@ -157,6 +200,62 @@ def handle_runtime(args: argparse.Namespace) -> int:
     if isinstance(service, dict):
         print(f"service_base_url: {service.get('base_url')}")
         print(f"responses_base_url: {service.get('responses_base_url')}")
+    return 0
+
+
+def handle_smoke(args: argparse.Namespace) -> int:
+    """Run one remote non-streaming smoke request."""
+    try:
+        runtime_config = _load_runtime_config(args.project_root)
+        payload = run_remote_smoke(runtime_config, args.prompt, timeout_seconds=args.timeout)
+    except (ProfileStoreError, RemoteClientError) as exc:
+        return _exit_with_error(str(exc))
+
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("client smoke")
+    print(f"active_profile: {payload.get('profile')}")
+    print(f"base_url: {payload.get('base_url')}")
+    print(f"model: {payload.get('model')}")
+    print(f"response_id: {payload.get('response_id')}")
+    print(f"output_text: {payload.get('output_text') or ''}")
+    return 0
+
+
+def handle_tool_demo(args: argparse.Namespace) -> int:
+    """Run one local client-managed tool loop against the remote host."""
+    try:
+        runtime_config = _load_runtime_config(args.project_root)
+        payload = run_remote_tool_demo(
+            runtime_config,
+            args.prompt,
+            max_steps=args.max_steps,
+            timeout_seconds=args.timeout,
+        )
+    except (ProfileStoreError, RemoteClientError) as exc:
+        return _exit_with_error(str(exc))
+
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("client tool demo")
+    print(f"active_profile: {payload.get('profile')}")
+    print(f"base_url: {payload.get('base_url')}")
+    print(f"model: {payload.get('model')}")
+    tool_calls = payload.get("tool_calls")
+    print(f"tool_calls: {len(tool_calls) if isinstance(tool_calls, list) else 0}")
+    if isinstance(tool_calls, list):
+        for entry in tool_calls:
+            if not isinstance(entry, dict):
+                continue
+            print(
+                f"call: {entry.get('name')} call_id={entry.get('call_id')} "
+                f"output={json.dumps(entry.get('output'), sort_keys=True)}"
+            )
+    print(f"final_output_text: {payload.get('final_output_text') or ''}")
     return 0
 
 

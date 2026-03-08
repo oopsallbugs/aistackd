@@ -325,11 +325,13 @@ Deliverables:
 1. named backend profiles
 2. remote connectivity validation
 3. remote admin against authenticated LAN hosts
+4. client-side smoke and local tool-loop examples against the active remote profile
 
 Acceptance gates:
 
 1. client-only machine can target an existing host without local model/runtime setup
 2. bad credentials and unreachable hosts fail with actionable errors
+3. the main CLI can prove `/v1/responses` works end to end from the frontend machine without relying on synced scripts
 
 ### Phase 4: Frontend Sync
 

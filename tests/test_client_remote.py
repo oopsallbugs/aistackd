@@ -11,6 +11,8 @@ from aistackd.runtime.config import RuntimeConfig
 from aistackd.runtime.remote import (
     fetch_remote_runtime,
     install_remote_model,
+    run_remote_smoke,
+    run_remote_tool_demo,
     validate_remote_runtime,
 )
 from aistackd.state.profiles import Profile
@@ -86,6 +88,74 @@ class ClientRemoteTests(unittest.TestCase):
         self.assertEqual(payload["action"], "installed")
         self.assertEqual(payload["model"]["source"], "llmfit")
         self.assertEqual(payload["active_model"], "glm-remote")
+
+    def test_run_remote_smoke_posts_prompt_to_responses(self) -> None:
+        runtime_config = _runtime_config("AISTACKD_REMOTE_API_KEY")
+
+        with (
+            patch.dict("os.environ", {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+            patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_smoke_urlopen),
+        ):
+            payload = run_remote_smoke(runtime_config, "say hello")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["output_text"], "Hello from llama-server")
+        self.assertEqual(payload["profile"], "remote")
+
+    def test_run_remote_tool_demo_executes_local_tool_and_posts_follow_up(self) -> None:
+        runtime_config = _runtime_config("AISTACKD_REMOTE_API_KEY")
+        captured_requests: list[dict[str, object]] = []
+
+        def fake_urlopen(request_obj: object, timeout: float = 30) -> _FakeResponse:
+            payload = json.loads(getattr(request_obj, "data").decode("utf-8"))
+            captured_requests.append(payload)
+            if len(captured_requests) == 1:
+                return _FakeResponse(
+                    200,
+                    {
+                        "id": "resp_tool",
+                        "model": "remote-model",
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "call_id": "call_123",
+                                "name": "get_local_time",
+                                "arguments": "{}",
+                            }
+                        ],
+                        "output_text": "",
+                    },
+                )
+            return _FakeResponse(
+                200,
+                {
+                    "id": "resp_final",
+                    "model": "remote-model",
+                    "output": [
+                        {
+                            "type": "message",
+                            "status": "completed",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "The time is available.", "annotations": []}],
+                        }
+                    ],
+                    "output_text": "The time is available.",
+                },
+            )
+
+        with (
+            patch.dict("os.environ", {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+            patch("aistackd.runtime.remote.request.urlopen", side_effect=fake_urlopen),
+        ):
+            payload = run_remote_tool_demo(runtime_config)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["final_output_text"], "The time is available.")
+        self.assertEqual(payload["tool_calls"][0]["name"], "get_local_time")
+        self.assertEqual(captured_requests[0]["tools"][0]["name"], "get_local_time")
+        self.assertEqual(captured_requests[1]["previous_response_id"], "resp_tool")
+        self.assertEqual(captured_requests[1]["input"][0]["type"], "function_call_output")
+        self.assertIn("utc_iso8601", captured_requests[1]["input"][0]["output"])
 
 
 def _runtime_config(api_key_env: str) -> RuntimeConfig:
@@ -191,3 +261,21 @@ def _fake_degraded_urlopen(request_obj: object, timeout: float = 5) -> _FakeResp
             },
         )
     raise AssertionError(f"unexpected URL: {url}")
+
+
+def _fake_smoke_urlopen(request_obj: object, timeout: float = 30) -> _FakeResponse:
+    url = getattr(request_obj, "full_url")
+    if not url.endswith("/v1/responses"):
+        raise AssertionError(f"unexpected URL: {url}")
+    payload = json.loads(getattr(request_obj, "data").decode("utf-8"))
+    if payload["input"] != "say hello":
+        raise AssertionError(f"unexpected smoke payload: {payload}")
+    return _FakeResponse(
+        200,
+        {
+            "id": "resp_smoke",
+            "model": "remote-model",
+            "output_text": "Hello from llama-server",
+            "output": [],
+        },
+    )

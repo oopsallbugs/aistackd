@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+from datetime import UTC, datetime
 from dataclasses import dataclass
 from urllib import error, request
 
@@ -15,11 +17,14 @@ from aistackd.control_plane import (
     ADMIN_RUNTIME_ENDPOINT,
     HEALTH_ENDPOINT,
     MODELS_ENDPOINT,
+    RESPONSES_ENDPOINT,
 )
 from aistackd.runtime.config import RuntimeConfig
 
 DEFAULT_REMOTE_TIMEOUT_SECONDS = 5
 DEFAULT_REMOTE_WRITE_TIMEOUT_SECONDS = 30
+DEFAULT_REMOTE_SMOKE_PROMPT = "say hello in one short sentence"
+DEFAULT_REMOTE_TOOL_DEMO_PROMPT = "Use the get_local_time tool and answer with the current UTC time."
 
 
 class RemoteClientError(RuntimeError):
@@ -239,6 +244,108 @@ def activate_remote_model(
     )
 
 
+def run_remote_smoke(
+    runtime_config: RuntimeConfig,
+    prompt: str = DEFAULT_REMOTE_SMOKE_PROMPT,
+    *,
+    timeout_seconds: int = DEFAULT_REMOTE_WRITE_TIMEOUT_SECONDS,
+) -> dict[str, object]:
+    """Run one non-streaming smoke request against the remote Responses endpoint."""
+    response = post_remote_json(
+        runtime_config,
+        RESPONSES_ENDPOINT,
+        {"input": prompt, "stream": False},
+        timeout_seconds=timeout_seconds,
+    )
+    return {
+        "profile": runtime_config.active_profile,
+        "base_url": runtime_config.base_url,
+        "responses_base_url": runtime_config.responses_base_url,
+        "prompt": prompt,
+        "model": response.get("model", runtime_config.model),
+        "response_id": response.get("id"),
+        "output_text": response.get("output_text"),
+        "response": response,
+        "ok": True,
+    }
+
+
+def run_remote_tool_demo(
+    runtime_config: RuntimeConfig,
+    prompt: str = DEFAULT_REMOTE_TOOL_DEMO_PROMPT,
+    *,
+    max_steps: int = 4,
+    timeout_seconds: int = DEFAULT_REMOTE_WRITE_TIMEOUT_SECONDS,
+) -> dict[str, object]:
+    """Run one client-managed local tool loop against the remote Responses endpoint."""
+    if max_steps <= 0:
+        raise RemoteClientError("--max-steps must be a positive integer")
+
+    tool_calls: list[dict[str, object]] = []
+    previous_response_id: str | None = None
+    pending_input: object = prompt
+
+    for _ in range(max_steps):
+        request_payload: dict[str, object] = {
+            "input": pending_input,
+            "tools": list(_tool_demo_definitions()),
+            "tool_choice": "auto",
+        }
+        if previous_response_id is not None:
+            request_payload["previous_response_id"] = previous_response_id
+
+        response = post_remote_json(
+            runtime_config,
+            RESPONSES_ENDPOINT,
+            request_payload,
+            timeout_seconds=timeout_seconds,
+        )
+        previous_response_id = _require_response_string(response.get("id"), "response.id")
+        output_items = response.get("output")
+        if not isinstance(output_items, list):
+            raise RemoteClientError("responses endpoint returned an invalid output payload")
+
+        function_calls = [item for item in output_items if isinstance(item, dict) and item.get("type") == "function_call"]
+        if not function_calls:
+            return {
+                "profile": runtime_config.active_profile,
+                "base_url": runtime_config.base_url,
+                "responses_base_url": runtime_config.responses_base_url,
+                "prompt": prompt,
+                "model": response.get("model", runtime_config.model),
+                "steps": len(tool_calls) + 1,
+                "tool_calls": tool_calls,
+                "final_output_text": response.get("output_text"),
+                "response": response,
+                "ok": True,
+            }
+
+        follow_up_items: list[dict[str, object]] = []
+        for function_call in function_calls:
+            call_id = _require_response_string(function_call.get("call_id"), "function_call.call_id")
+            tool_name = _require_response_string(function_call.get("name"), "function_call.name")
+            arguments = _parse_tool_arguments(function_call.get("arguments"))
+            output = _execute_local_demo_tool(runtime_config, tool_name, arguments)
+            tool_calls.append(
+                {
+                    "call_id": call_id,
+                    "name": tool_name,
+                    "arguments": arguments,
+                    "output": output,
+                }
+            )
+            follow_up_items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output,
+                }
+            )
+        pending_input = follow_up_items
+
+    raise RemoteClientError(f"tool-call demo exceeded max steps ({max_steps}) without a final assistant message")
+
+
 def get_remote_json(
     runtime_config: RuntimeConfig,
     path: str,
@@ -334,3 +441,74 @@ def _response_error_message(label: str, response: RemoteJsonResponse) -> str:
             )
         return f"{label} returned status {response.status_code}: {status_value.strip()}"
     return f"{label} returned status {response.status_code}"
+
+
+def _tool_demo_definitions() -> tuple[dict[str, object], ...]:
+    return (
+        {
+            "type": "function",
+            "name": "get_local_time",
+            "description": "Return the frontend machine's current local and UTC timestamps.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
+            "name": "get_frontend_context",
+            "description": "Return the frontend hostname and active profile name.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+    )
+
+
+def _execute_local_demo_tool(
+    runtime_config: RuntimeConfig,
+    tool_name: str,
+    arguments: dict[str, object],
+) -> dict[str, object]:
+    if arguments:
+        unexpected = ", ".join(sorted(arguments))
+        raise RemoteClientError(f"local tool '{tool_name}' does not accept arguments: {unexpected}")
+    if tool_name == "get_local_time":
+        now_local = datetime.now().astimezone()
+        now_utc = now_local.astimezone(UTC)
+        return {
+            "local_iso8601": now_local.isoformat(),
+            "utc_iso8601": now_utc.isoformat(),
+            "unix_timestamp": int(now_utc.timestamp()),
+        }
+    if tool_name == "get_frontend_context":
+        return {
+            "hostname": socket.gethostname(),
+            "profile": runtime_config.active_profile,
+            "base_url": runtime_config.base_url,
+        }
+    raise RemoteClientError(f"local tool '{tool_name}' is not implemented in this demo")
+
+
+def _parse_tool_arguments(value: object) -> dict[str, object]:
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value) if value.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise RemoteClientError(f"tool call arguments were not valid JSON: {exc}") from exc
+    else:
+        decoded = value
+    if not isinstance(decoded, dict):
+        raise RemoteClientError("tool call arguments must decode to a JSON object")
+    return decoded
+
+
+def _require_response_string(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise RemoteClientError(f"missing or invalid {field_name}")
+    return value

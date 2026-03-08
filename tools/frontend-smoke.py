@@ -84,11 +84,14 @@ def run_smoke(base_url: str, api_key: str, prompt: str) -> tuple[dict[str, objec
         "health": {
             "status_code": health["status_code"],
             "status": health_payload.get("status"),
+            "status_reason": health_payload.get("status_reason"),
+            "backend_process_status": health_payload.get("backend_process_status"),
             "ok": health["status_code"] == 200,
         },
         "runtime": {
             "status_code": runtime["status_code"],
             "active_model": runtime_state.get("active_model"),
+            "backend_process_status": runtime_state.get("backend_process_status"),
             "ok": runtime["status_code"] == 200,
         },
         "responses": {
@@ -156,8 +159,11 @@ def render_text(payload: dict[str, object]) -> None:
         )
         if section_name == "health":
             print(f"  status: {section.get('status')}")
+            print(f"  status_reason: {section.get('status_reason')}")
+            print(f"  backend_process_status: {section.get('backend_process_status')}")
         elif section_name == "runtime":
             print(f"  active_model: {section.get('active_model') or DEFAULT_MODEL}")
+            print(f"  backend_process_status: {section.get('backend_process_status')}")
         else:
             print(f"  output_text: {section.get('output_text') or ''}")
     print(f"overall: {'ok' if payload.get('ok') else 'failed'}")

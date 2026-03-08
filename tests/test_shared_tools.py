@@ -19,6 +19,23 @@ TOOLS_ROOT = Path(__file__).resolve().parents[1] / "tools"
 
 
 class SharedToolsTests(unittest.TestCase):
+    def test_runtime_status_reports_status_reason_and_response_state(self) -> None:
+        module = load_tool_module("runtime-status.py", "runtime_status_tool")
+
+        with (
+            patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False),
+            patch.object(module.request, "urlopen", side_effect=_fake_runtime_status_urlopen),
+        ):
+            exit_code, stdout, stderr = invoke_tool(
+                module,
+                ["all", "--base-url", "http://127.0.0.1:8000", "--api-key-env", "AISTACKD_API_KEY"],
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("status_reason: ready", stdout)
+        self.assertIn("responses_state_count: 2", stdout)
+
     def test_frontend_smoke_succeeds(self) -> None:
         module = load_tool_module("frontend-smoke.py", "frontend_smoke_tool")
 
@@ -36,6 +53,9 @@ class SharedToolsTests(unittest.TestCase):
         payload = json.loads(stdout)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["health"]["status"], "ok")
+        self.assertEqual(payload["health"]["status_reason"], "ready")
+        self.assertEqual(payload["health"]["backend_process_status"], "running")
+        self.assertEqual(payload["runtime"]["backend_process_status"], "running")
         self.assertEqual(payload["responses"]["output_text"], "Hello from llama-server")
 
     def test_responses_smoke_non_stream_succeeds(self) -> None:
@@ -306,12 +326,43 @@ def _fake_responses_smoke_urlopen(request_obj: object, timeout: float = 15) -> _
     )
 
 
+def _fake_runtime_status_urlopen(request_obj: object, timeout: float = 15) -> _FakeResponse:
+    url = getattr(request_obj, "full_url")
+    if url.endswith("/health"):
+        return _FakeResponse(
+            200,
+            {
+                "status": "ok",
+                "status_reason": "ready",
+                "active_model": "local-model",
+                "backend_process_status": "running",
+            },
+        )
+    if url.endswith("/admin/runtime"):
+        return _FakeResponse(
+            200,
+            {
+                "runtime": {
+                    "active_model": "local-model",
+                    "backend_status": "configured",
+                    "backend_process_status": "running",
+                    "installed_models": [],
+                },
+                "service": {"base_url": "http://127.0.0.1:8000"},
+                "responses_state": {"count": 2, "retention_limit": 128},
+            },
+        )
+    if url.endswith("/v1/models"):
+        return _FakeResponse(200, {"active_model": "local-model", "data": []})
+    raise AssertionError(f"unexpected URL: {url}")
+
+
 def _fake_frontend_smoke_urlopen(request_obj: object, timeout: float = 15) -> _FakeResponse:
     url = getattr(request_obj, "full_url")
     if url.endswith("/health"):
-        return _FakeResponse(200, {"status": "ok"})
+        return _FakeResponse(200, {"status": "ok", "status_reason": "ready", "backend_process_status": "running"})
     if url.endswith("/admin/runtime"):
-        return _FakeResponse(200, {"runtime": {"active_model": "local-model"}})
+        return _FakeResponse(200, {"runtime": {"active_model": "local-model", "backend_process_status": "running"}})
     if url.endswith("/v1/responses"):
         return _FakeResponse(200, {"output_text": "Hello from llama-server"})
     raise AssertionError(f"unexpected URL: {url}")

@@ -151,6 +151,7 @@ def _render_resource_section(resource: str, section: object) -> None:
     if resource == "runtime":
         runtime = body.get("runtime")
         service = body.get("service")
+        responses_state = body.get("responses_state")
         if isinstance(runtime, dict):
             print(f"  active_model: {runtime.get('active_model') or 'none'}")
             print(f"  backend_status: {runtime.get('backend_status')}")
@@ -158,12 +159,15 @@ def _render_resource_section(resource: str, section: object) -> None:
             installed_models = runtime.get("installed_models")
             if isinstance(installed_models, list):
                 print(f"  installed_models: {len(installed_models)}")
+        if isinstance(responses_state, dict):
+            print(f"  responses_state_count: {responses_state.get('count')}")
         if isinstance(service, dict):
             print(f"  service_base_url: {service.get('base_url')}")
         return
 
     if resource == "health":
         print(f"  status: {body.get('status')}")
+        print(f"  status_reason: {body.get('status_reason')}")
         print(f"  active_model: {body.get('active_model') or 'none'}")
         print(f"  backend_process_status: {body.get('backend_process_status')}")
         return
