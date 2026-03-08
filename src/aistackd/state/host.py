@@ -486,7 +486,10 @@ class HostStateStore:
         """Return the current host runtime summary."""
         installed_models = self.list_installed_models()
         backend_installation = self.load_backend_installation()
-        backend_process = _refresh_backend_process_record(self.load_backend_process())
+        persisted_backend_process = self.load_backend_process()
+        backend_process = _refresh_backend_process_record(persisted_backend_process)
+        if backend_process != persisted_backend_process and backend_process is not None:
+            self.save_backend_process(backend_process)
         runtime_payload = load_json_object(self.paths.runtime_state_path)
         active_model = _optional_string(runtime_payload, "active_model")
         active_source = _optional_string(runtime_payload, "active_source")
@@ -618,11 +621,15 @@ def _refresh_installed_model_record(record: InstalledModelRecord) -> InstalledMo
 
 
 def _refresh_backend_process_record(process: HostBackendProcess | None) -> HostBackendProcess | None:
-    if process is None or process.status != "running":
+    if process is None or process.status not in {"running", "starting"}:
         return process
     if _pid_exists(process.pid):
         return process
-    return replace(process, status="exited")
+    return replace(
+        process,
+        status="exited",
+        stopped_at=process.stopped_at or datetime.now(UTC).replace(microsecond=0).isoformat(),
+    )
 
 
 def _pid_exists(pid: int) -> bool:

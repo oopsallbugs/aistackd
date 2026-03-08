@@ -11,6 +11,8 @@ from aistackd.control_plane import ControlPlaneError, serve_control_plane
 from aistackd.runtime.backend_process import (
     BackendProcessError,
     launch_managed_backend_process,
+    restart_managed_backend_process,
+    stop_current_managed_backend_process,
     stop_managed_backend_process,
 )
 from aistackd.runtime.backends import BackendAcquisitionError, acquire_managed_llama_cpp_installation, adopt_backend_installation
@@ -22,6 +24,7 @@ from aistackd.runtime.host import (
     DEFAULT_HOST_BIND,
     DEFAULT_HOST_PORT,
     HostServiceConfig,
+    validate_backend_runtime,
     validate_host_runtime,
 )
 from aistackd.runtime.prereqs import inspect_host_environment
@@ -68,6 +71,17 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _add_service_arguments(validate_parser)
     _add_format_argument(validate_parser)
     validate_parser.set_defaults(handler=handle_validate)
+
+    stop_parser = command_parsers.add_parser("stop", help="stop the managed backend process if it is running")
+    _add_shared_arguments(stop_parser)
+    _add_format_argument(stop_parser)
+    stop_parser.set_defaults(handler=handle_stop)
+
+    restart_parser = command_parsers.add_parser("restart", help="restart the managed backend process")
+    _add_shared_arguments(restart_parser)
+    _add_service_arguments(restart_parser)
+    _add_format_argument(restart_parser)
+    restart_parser.set_defaults(handler=handle_restart)
 
     serve_parser = command_parsers.add_parser("serve", help="run the local authenticated control-plane service")
     _add_shared_arguments(serve_parser)
@@ -349,6 +363,80 @@ def handle_serve(args: argparse.Namespace) -> int:
         return _exit_with_error(str(exc))
     finally:
         stop_managed_backend_process(store, running_process)
+    return 0
+
+
+def handle_stop(args: argparse.Namespace) -> int:
+    """Stop the currently persisted managed backend process."""
+    try:
+        store = HostStateStore(args.project_root)
+        runtime_before = store.load_runtime_state()
+        record = stop_current_managed_backend_process(store)
+        runtime_after = store.load_runtime_state()
+    except (BackendProcessError, HostStateError) as exc:
+        return _exit_with_error(str(exc))
+
+    stopped = runtime_before.backend_process_status in {"running", "starting"} and runtime_after.backend_process_status == "stopped"
+    payload = {
+        "action": "stopped" if stopped else "already_stopped",
+        "before_status": runtime_before.backend_process_status,
+        "after_status": runtime_after.backend_process_status,
+        "backend_process": record.as_dict() if record is not None else None,
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    if stopped:
+        print("managed backend stopped")
+    else:
+        print("managed backend was not running")
+    print(f"before_status: {payload['before_status']}")
+    print(f"after_status: {payload['after_status']}")
+    if record is not None:
+        print(f"backend_pid: {record.pid}")
+        print(f"backend_log_path: {record.log_path}")
+    return 0
+
+
+def handle_restart(args: argparse.Namespace) -> int:
+    """Restart the managed backend process."""
+    try:
+        store = HostStateStore(args.project_root)
+        service = _service_config_from_args(args)
+        result = validate_backend_runtime(store, service)
+    except HostStateError as exc:
+        return _exit_with_error(str(exc))
+
+    if not result.ok:
+        for message in result.errors:
+            print(message, file=sys.stderr)
+        return 1
+
+    before_status = result.runtime.backend_process_status
+    try:
+        running_process = restart_managed_backend_process(store, result.service)
+    except (BackendProcessError, HostStateError) as exc:
+        return _exit_with_error(str(exc))
+
+    payload = {
+        "action": "restarted" if before_status in {"running", "starting"} else "started",
+        "before_status": before_status,
+        "after_status": "running",
+        "backend_process": running_process.record.as_dict(),
+        "service": result.service.to_dict(),
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print(f"managed backend {payload['action']}")
+    print(f"before_status: {payload['before_status']}")
+    print(f"after_status: {payload['after_status']}")
+    print(f"backend_pid: {running_process.record.pid}")
+    print(f"backend_base_url: {running_process.record.base_url}")
+    print(f"backend_log_path: {running_process.record.log_path}")
+    print(f"active_model: {running_process.record.model}")
     return 0
 
 

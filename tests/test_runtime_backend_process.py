@@ -12,6 +12,8 @@ from aistackd.models.sources import local_source_model
 from aistackd.runtime.backend_process import (
     build_backend_launch_plan,
     launch_managed_backend_process,
+    restart_managed_backend_process,
+    stop_current_managed_backend_process,
     stop_managed_backend_process,
 )
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
@@ -52,6 +54,9 @@ class BackendProcessRuntimeTests(unittest.TestCase):
             self.assertIsNotNone(runtime.backend_process)
             self.assertEqual(runtime.backend_process.pid, 4321)
             self.assertTrue(Path(runtime.backend_process.log_path).exists())
+            persisted_record = store.load_backend_process()
+            self.assertIsNotNone(persisted_record)
+            self.assertEqual(persisted_record.status, "running")
 
     def test_stop_managed_backend_process_marks_backend_as_stopped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -70,6 +75,8 @@ class BackendProcessRuntimeTests(unittest.TestCase):
             self.assertTrue(fake_process.terminate_called)
             self.assertEqual(stopped_record.status, "stopped")
             self.assertEqual(runtime.backend_process_status, "stopped")
+            self.assertIsNotNone(runtime.backend_process)
+            self.assertEqual(runtime.backend_process.exit_code, -15)
 
     def test_runtime_state_reports_exited_backend_when_pid_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -98,6 +105,83 @@ class BackendProcessRuntimeTests(unittest.TestCase):
             self.assertEqual(runtime.backend_process_status, "exited")
             self.assertIsNotNone(runtime.backend_process)
             self.assertEqual(runtime.backend_process.status, "exited")
+            self.assertIsNotNone(runtime.backend_process.stopped_at)
+            persisted_record = store.load_backend_process()
+            self.assertIsNotNone(persisted_record)
+            self.assertEqual(persisted_record.status, "exited")
+
+    def test_stop_current_managed_backend_process_stops_persisted_running_pid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir))
+            backend_log_path = store.paths.backend_log_path()
+            backend_log_path.parent.mkdir(parents=True, exist_ok=True)
+            backend_log_path.write_text("", encoding="utf-8")
+            store.save_backend_process(
+                HostBackendProcess(
+                    backend="llama.cpp",
+                    status="running",
+                    pid=4444,
+                    command=("llama-server", "--model", "/tmp/model.gguf"),
+                    bind_host="127.0.0.1",
+                    port=8011,
+                    model="qwen2.5-coder-7b-instruct-q4-k-m",
+                    artifact_path="/tmp/model.gguf",
+                    server_binary="/tmp/llama-server",
+                    log_path=str(backend_log_path),
+                    started_at="2026-03-07T00:00:00+00:00",
+                )
+            )
+
+            with (
+                patch("aistackd.state.host._pid_exists", return_value=True),
+                patch("aistackd.runtime.backend_process._terminate_pid", return_value=-15) as terminate_mock,
+            ):
+                stopped_record = stop_current_managed_backend_process(store)
+
+            self.assertIsNotNone(stopped_record)
+            self.assertEqual(stopped_record.status, "stopped")
+            terminate_mock.assert_called_once_with(4444)
+            runtime = store.load_runtime_state()
+            self.assertEqual(runtime.backend_process_status, "stopped")
+
+    def test_restart_managed_backend_process_replaces_existing_backend_pid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir))
+            backend_log_path = store.paths.backend_log_path()
+            backend_log_path.parent.mkdir(parents=True, exist_ok=True)
+            backend_log_path.write_text("", encoding="utf-8")
+            store.save_backend_process(
+                HostBackendProcess(
+                    backend="llama.cpp",
+                    status="running",
+                    pid=4444,
+                    command=("llama-server", "--model", "/tmp/model.gguf"),
+                    bind_host="127.0.0.1",
+                    port=8011,
+                    model="qwen2.5-coder-7b-instruct-q4-k-m",
+                    artifact_path="/tmp/model.gguf",
+                    server_binary="/tmp/llama-server",
+                    log_path=str(backend_log_path),
+                    started_at="2026-03-07T00:00:00+00:00",
+                )
+            )
+            fake_process = _FakePopen(pid=5555)
+
+            with (
+                patch("aistackd.state.host._pid_exists", return_value=True),
+                patch("aistackd.runtime.backend_process._terminate_pid", return_value=-15) as terminate_mock,
+                patch("aistackd.runtime.backend_process.subprocess.Popen", return_value=fake_process),
+                patch("aistackd.runtime.backend_process.time.sleep", return_value=None),
+                patch("aistackd.runtime.backend_process._pid_exists", side_effect=lambda pid: pid == 5555),
+            ):
+                running_process = restart_managed_backend_process(store, HostServiceConfig())
+                runtime = store.load_runtime_state()
+
+            self.assertEqual(running_process.record.pid, 5555)
+            terminate_mock.assert_called_once_with(4444)
+            self.assertEqual(runtime.backend_process_status, "running")
+            self.assertIsNotNone(runtime.backend_process)
+            self.assertEqual(runtime.backend_process.pid, 5555)
 
 
 class _FakePopen:

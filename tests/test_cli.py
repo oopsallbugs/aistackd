@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 from aistackd.cli.main import build_parser, main
 from aistackd.models.llmfit import LlmfitCommandError
+from aistackd.runtime.host import HostServiceConfig
 from aistackd.runtime.hardware import CURRENT_HARDWARE_PROFILE_SCHEMA_VERSION, HardwareProfile, LlmfitDetectionResult
 from aistackd.state.layout import COMMAND_GROUPS
 
@@ -568,6 +569,74 @@ class CLITests(unittest.TestCase):
             self.assertEqual(len(payload["models"]), 2)
             self.assertEqual(payload["models"][0]["name"], "teichai-glm-4.7-flash-claude-opus-4.5-distill")
             self.assertEqual(payload["models"][0]["quantization"], "q4_k_m")
+
+    def test_host_stop_reports_stopped_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_store = SimpleNamespace(
+                load_runtime_state=unittest.mock.Mock(
+                    side_effect=[
+                        SimpleNamespace(backend_process_status="running"),
+                        SimpleNamespace(backend_process_status="stopped"),
+                    ]
+                )
+            )
+            stopped_record = SimpleNamespace(
+                pid=4242,
+                log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "llama-cpp.log"),
+                as_dict=lambda: {
+                    "status": "stopped",
+                    "pid": 4242,
+                },
+            )
+
+            with (
+                patch("aistackd.cli.commands.host.HostStateStore", return_value=fake_store),
+                patch("aistackd.cli.commands.host.stop_current_managed_backend_process", return_value=stopped_record),
+            ):
+                exit_code, stdout, stderr = invoke(["host", "stop", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("managed backend stopped", stdout)
+            self.assertIn("before_status: running", stdout)
+            self.assertIn("after_status: stopped", stdout)
+            self.assertIn("backend_pid: 4242", stdout)
+
+    def test_host_restart_reports_restarted_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_store = SimpleNamespace()
+            validation_result = SimpleNamespace(
+                ok=True,
+                errors=(),
+                runtime=SimpleNamespace(backend_process_status="running"),
+                service=HostServiceConfig(),
+            )
+            running_process = SimpleNamespace(
+                record=SimpleNamespace(
+                    pid=5151,
+                    base_url="http://127.0.0.1:8011",
+                    log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "llama-cpp.log"),
+                    model="qwen2.5-coder-7b-instruct-q4-k-m",
+                    as_dict=lambda: {
+                        "status": "running",
+                        "pid": 5151,
+                    },
+                )
+            )
+
+            with (
+                patch("aistackd.cli.commands.host.HostStateStore", return_value=fake_store),
+                patch("aistackd.cli.commands.host.validate_backend_runtime", return_value=validation_result),
+                patch("aistackd.cli.commands.host.restart_managed_backend_process", return_value=running_process),
+            ):
+                exit_code, stdout, stderr = invoke(["host", "restart", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("managed backend restarted", stdout)
+            self.assertIn("before_status: running", stdout)
+            self.assertIn("after_status: running", stdout)
+            self.assertIn("backend_pid: 5151", stdout)
 
     def test_models_browse_imports_all_new_ggufs_after_successful_exit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

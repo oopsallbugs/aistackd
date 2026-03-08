@@ -146,6 +146,50 @@ def validate_host_runtime(
     )
 
 
+def validate_backend_runtime(
+    store: HostStateStore,
+    service: HostServiceConfig,
+) -> HostValidationResult:
+    """Validate only the backend-launch prerequisites for the managed host runtime."""
+    runtime = store.load_runtime_state()
+    normalized_service = service.normalized()
+    errors: list[str] = []
+
+    if not normalized_service.backend_bind_host:
+        errors.append("backend_bind_host is required")
+    elif " " in normalized_service.backend_bind_host or not _BIND_HOST_RE.fullmatch(normalized_service.backend_bind_host):
+        errors.append("backend_bind_host must be a non-empty hostname or IPv4 address")
+
+    if not isinstance(normalized_service.backend_port, int) or not (1 <= normalized_service.backend_port <= 65535):
+        errors.append("backend_port must be an integer between 1 and 65535")
+
+    if (
+        normalized_service.bind_host == normalized_service.backend_bind_host
+        and normalized_service.port == normalized_service.backend_port
+    ):
+        errors.append("backend_port must not match the control-plane port on the same bind host")
+
+    if not runtime.installed_models:
+        errors.append("no installed models are available for host runtime")
+
+    errors.extend(backend_installation_errors(runtime.backend_installation))
+
+    if runtime.active_model is None:
+        errors.append("no active model is configured for host runtime")
+    elif runtime.activation_state != "ready":
+        errors.append(
+            f"active model '{runtime.active_model}' is not ready for serving "
+            f"(activation_state={runtime.activation_state})"
+        )
+
+    return HostValidationResult(
+        ok=not errors,
+        errors=tuple(errors),
+        service=normalized_service,
+        runtime=runtime,
+    )
+
+
 def resolve_api_key(service: HostServiceConfig) -> str:
     """Resolve the API key for a validated service config."""
     normalized_service = service.normalized()

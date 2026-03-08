@@ -109,6 +109,7 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 5. keep function-tool execution client-managed in v1; the host transports tool calls but does not execute or advertise repo-owned server tools
 6. defer non-function tools and broader orchestration beyond the basic function-call loop
 7. persist bounded `previous_response_id` state on the host so client-managed tool loops can continue across control-plane restarts and return actionable diagnostics when state is missing
+8. reconcile stale backend-process receipts after crashes or host reboots, and expose explicit stop/restart controls for the managed backend lifecycle
 
 ### Frontend Tooling Notes
 

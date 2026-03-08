@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import subprocess
+import os
+import signal
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,6 +16,7 @@ from aistackd.state.host import HostBackendProcess, HostStateStore
 
 DEFAULT_BACKEND_STARTUP_GRACE_SECONDS = 0.05
 DEFAULT_BACKEND_STOP_TIMEOUT_SECONDS = 1.0
+DEFAULT_BACKEND_STOP_POLL_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -108,9 +111,9 @@ def launch_managed_backend_process(
 ) -> RunningBackendProcess:
     """Launch the managed backend process and persist its running state."""
     runtime = store.load_runtime_state()
-    if runtime.backend_process_status == "running" and runtime.backend_process is not None:
+    if runtime.backend_process_status in {"running", "starting"} and runtime.backend_process is not None:
         raise BackendProcessError(
-            f"backend process is already running for model '{runtime.backend_process.model}' "
+            f"backend process is already active for model '{runtime.backend_process.model}' "
             f"(pid={runtime.backend_process.pid})"
         )
 
@@ -130,6 +133,21 @@ def launch_managed_backend_process(
         except OSError as exc:
             raise BackendProcessError(f"failed to launch backend process: {exc}") from exc
 
+    starting_record = HostBackendProcess(
+        backend=plan.backend,
+        status="starting",
+        pid=process.pid,
+        command=plan.command,
+        bind_host=plan.bind_host,
+        port=plan.port,
+        model=plan.model,
+        artifact_path=plan.artifact_path,
+        server_binary=plan.server_binary,
+        log_path=plan.log_path,
+        started_at=started_at,
+    )
+    _save_backend_process_if_current(store, starting_record, expected_pid=process.pid)
+
     time.sleep(DEFAULT_BACKEND_STARTUP_GRACE_SECONDS)
     exit_code = process.poll()
     if exit_code is not None:
@@ -148,7 +166,7 @@ def launch_managed_backend_process(
             stopped_at=_timestamp_now(),
             exit_code=exit_code,
         )
-        store.save_backend_process(failed_record)
+        _save_backend_process_if_current(store, failed_record, expected_pid=process.pid)
         raise BackendProcessError(
             f"backend process exited immediately with code {exit_code}; see '{plan.log_path}'"
         )
@@ -166,7 +184,7 @@ def launch_managed_backend_process(
         log_path=plan.log_path,
         started_at=started_at,
     )
-    store.save_backend_process(running_record)
+    _save_backend_process_if_current(store, running_record, expected_pid=process.pid)
     return RunningBackendProcess(plan=plan, record=running_record, process=process)
 
 
@@ -207,8 +225,113 @@ def stop_managed_backend_process(
         stopped_at=_timestamp_now(),
         exit_code=exit_code,
     )
-    store.save_backend_process(stopped_record)
-    return stopped_record
+    return _save_backend_process_if_current(
+        store,
+        stopped_record,
+        expected_pid=running_process.record.pid,
+    )
+
+
+def stop_current_managed_backend_process(
+    store: HostStateStore,
+    *,
+    reason: str = "stopped",
+) -> HostBackendProcess | None:
+    """Stop the currently persisted managed backend process if it is still active."""
+    runtime = store.load_runtime_state()
+    current = runtime.backend_process
+    if current is None:
+        return None
+    if current.status not in {"running", "starting"}:
+        return current
+
+    exit_code = _terminate_pid(current.pid)
+    status = "failed" if reason == "failed" else "stopped"
+    stopped_record = HostBackendProcess(
+        backend=current.backend,
+        status=status,
+        pid=current.pid,
+        command=current.command,
+        bind_host=current.bind_host,
+        port=current.port,
+        model=current.model,
+        artifact_path=current.artifact_path,
+        server_binary=current.server_binary,
+        log_path=current.log_path,
+        started_at=current.started_at,
+        stopped_at=_timestamp_now(),
+        exit_code=exit_code,
+    )
+    return _save_backend_process_if_current(store, stopped_record, expected_pid=current.pid)
+
+
+def restart_managed_backend_process(
+    store: HostStateStore,
+    service: HostServiceConfig,
+) -> RunningBackendProcess:
+    """Restart the managed backend process using the current host runtime state."""
+    stop_current_managed_backend_process(store)
+    return launch_managed_backend_process(store, service)
+
+
+def _save_backend_process_if_current(
+    store: HostStateStore,
+    record: HostBackendProcess,
+    *,
+    expected_pid: int,
+) -> HostBackendProcess:
+    current_record = store.load_backend_process()
+    if (
+        current_record is not None
+        and current_record.pid != expected_pid
+        and current_record.status in {"starting", "running"}
+    ):
+        return current_record
+    store.save_backend_process(record)
+    return record
+
+
+def _terminate_pid(pid: int) -> int | None:
+    if pid < 1 or not _pid_exists(pid):
+        return None
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return None
+    except PermissionError as exc:
+        raise BackendProcessError(f"permission denied while stopping backend pid {pid}") from exc
+
+    deadline = time.monotonic() + DEFAULT_BACKEND_STOP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if not _pid_exists(pid):
+            return -int(signal.SIGTERM)
+        time.sleep(DEFAULT_BACKEND_STOP_POLL_SECONDS)
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return -int(signal.SIGTERM)
+    except PermissionError as exc:
+        raise BackendProcessError(f"permission denied while killing backend pid {pid}") from exc
+
+    deadline = time.monotonic() + DEFAULT_BACKEND_STOP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if not _pid_exists(pid):
+            return -int(signal.SIGKILL)
+        time.sleep(DEFAULT_BACKEND_STOP_POLL_SECONDS)
+    raise BackendProcessError(f"backend pid {pid} did not exit after SIGTERM/SIGKILL")
+
+
+def _pid_exists(pid: int) -> bool:
+    if pid < 1:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _timestamp_now() -> str:
