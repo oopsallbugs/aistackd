@@ -641,8 +641,16 @@ class CLITests(unittest.TestCase):
             fake_store = SimpleNamespace(
                 load_runtime_state=unittest.mock.Mock(
                     side_effect=[
-                        SimpleNamespace(backend_process_status="running"),
-                        SimpleNamespace(backend_process_status="stopped"),
+                        SimpleNamespace(
+                            backend_process_status="running",
+                            control_plane_process_status="not_started",
+                            control_plane_process=None,
+                        ),
+                        SimpleNamespace(
+                            backend_process_status="stopped",
+                            control_plane_process_status="not_started",
+                            control_plane_process=None,
+                        ),
                     ]
                 )
             )
@@ -668,13 +676,50 @@ class CLITests(unittest.TestCase):
             self.assertIn("after_status: stopped", stdout)
             self.assertIn("backend_pid: 4242", stdout)
 
+    def test_host_stop_service_reports_stopped_control_plane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_store = SimpleNamespace(
+                load_runtime_state=unittest.mock.Mock(
+                    side_effect=[
+                        SimpleNamespace(
+                            backend_process_status="running",
+                            control_plane_process_status="running",
+                            control_plane_process=SimpleNamespace(pid=3131),
+                        ),
+                        SimpleNamespace(
+                            backend_process_status="running",
+                            control_plane_process_status="stopped",
+                            control_plane_process=SimpleNamespace(pid=3131),
+                        ),
+                    ]
+                )
+            )
+            stopped_record = SimpleNamespace(
+                pid=3131,
+                log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "control-plane.log"),
+                as_dict=lambda: {"status": "stopped", "pid": 3131},
+            )
+
+            with (
+                patch("aistackd.cli.commands.host.HostStateStore", return_value=fake_store),
+                patch("aistackd.cli.commands.host.stop_current_control_plane_process", return_value=stopped_record),
+            ):
+                exit_code, stdout, stderr = invoke(["host", "stop", "--project-root", tmpdir, "--service"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("managed control-plane stopped", stdout)
+            self.assertIn("before_control_plane_status: running", stdout)
+            self.assertIn("after_control_plane_status: stopped", stdout)
+            self.assertIn("control_plane_pid: 3131", stdout)
+
     def test_host_restart_reports_restarted_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_store = SimpleNamespace()
             validation_result = SimpleNamespace(
                 ok=True,
                 errors=(),
-                runtime=SimpleNamespace(backend_process_status="running"),
+                runtime=SimpleNamespace(backend_process_status="running", control_plane_process_status="not_started"),
                 service=HostServiceConfig(),
             )
             running_process = SimpleNamespace(
@@ -703,6 +748,68 @@ class CLITests(unittest.TestCase):
             self.assertIn("before_status: running", stdout)
             self.assertIn("after_status: running", stdout)
             self.assertIn("backend_pid: 5151", stdout)
+
+    def test_host_start_reports_started_control_plane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_store = SimpleNamespace()
+            validation_result = SimpleNamespace(
+                ok=True,
+                errors=(),
+                runtime=SimpleNamespace(control_plane_process_status="not_started"),
+                service=HostServiceConfig(),
+            )
+            running_process = SimpleNamespace(
+                record=SimpleNamespace(
+                    pid=6161,
+                    log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "control-plane.log"),
+                    as_dict=lambda: {"status": "starting", "pid": 6161},
+                )
+            )
+
+            with (
+                patch("aistackd.cli.commands.host.HostStateStore", return_value=fake_store),
+                patch("aistackd.cli.commands.host.validate_host_runtime", return_value=validation_result),
+                patch("aistackd.cli.commands.host.launch_control_plane_process", return_value=running_process),
+            ):
+                exit_code, stdout, stderr = invoke(["host", "start", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("managed control-plane started", stdout)
+            self.assertIn("control_plane_pid: 6161", stdout)
+            self.assertIn("base_url: http://127.0.0.1:8000", stdout)
+
+    def test_host_restart_service_reports_restarted_control_plane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_store = SimpleNamespace()
+            validation_result = SimpleNamespace(
+                ok=True,
+                errors=(),
+                runtime=SimpleNamespace(control_plane_process_status="running"),
+                service=HostServiceConfig(),
+            )
+            running_process = SimpleNamespace(
+                record=SimpleNamespace(
+                    pid=7171,
+                    log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "control-plane.log"),
+                    as_dict=lambda: {"status": "starting", "pid": 7171},
+                )
+            )
+
+            with (
+                patch("aistackd.cli.commands.host.HostStateStore", return_value=fake_store),
+                patch("aistackd.cli.commands.host.validate_host_runtime", return_value=validation_result),
+                patch("aistackd.cli.commands.host.stop_current_control_plane_process"),
+                patch("aistackd.cli.commands.host.launch_control_plane_process", return_value=running_process),
+            ):
+                exit_code, stdout, stderr = invoke(["host", "restart", "--project-root", tmpdir, "--service"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("managed control-plane restarted", stdout)
+            self.assertIn("before_control_plane_status: running", stdout)
+            self.assertIn("after_control_plane_status: starting", stdout)
+            self.assertIn("control_plane_pid: 7171", stdout)
 
     def test_models_browse_imports_all_new_ggufs_after_successful_exit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

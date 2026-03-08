@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import signal
 import sys
 from pathlib import Path
 
@@ -16,6 +18,14 @@ from aistackd.runtime.backend_process import (
     stop_managed_backend_process,
 )
 from aistackd.runtime.backends import BackendAcquisitionError, acquire_managed_llama_cpp_installation, adopt_backend_installation
+from aistackd.runtime.control_plane_process import (
+    ControlPlaneProcessError,
+    build_control_plane_command,
+    launch_control_plane_process,
+    mark_current_control_plane_process_stopped,
+    save_current_control_plane_process,
+    stop_current_control_plane_process,
+)
 from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.runtime.host import (
     DEFAULT_BACKEND_BIND,
@@ -72,15 +82,36 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _add_format_argument(validate_parser)
     validate_parser.set_defaults(handler=handle_validate)
 
+    start_parser = command_parsers.add_parser("start", help="start the managed control-plane service in the background")
+    _add_shared_arguments(start_parser)
+    _add_service_arguments(start_parser)
+    _add_format_argument(start_parser)
+    start_parser.set_defaults(handler=handle_start)
+
     stop_parser = command_parsers.add_parser("stop", help="stop the managed backend process if it is running")
     _add_shared_arguments(stop_parser)
     _add_format_argument(stop_parser)
+    stop_parser.add_argument(
+        "--service",
+        action="store_true",
+        help="stop the managed control-plane service instead of only the backend process",
+    )
+    stop_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="stop both the managed control-plane service and any persisted backend process",
+    )
     stop_parser.set_defaults(handler=handle_stop)
 
     restart_parser = command_parsers.add_parser("restart", help="restart the managed backend process")
     _add_shared_arguments(restart_parser)
     _add_service_arguments(restart_parser)
     _add_format_argument(restart_parser)
+    restart_parser.add_argument(
+        "--service",
+        action="store_true",
+        help="restart the managed control-plane service instead of only the backend process",
+    )
     restart_parser.set_defaults(handler=handle_restart)
 
     serve_parser = command_parsers.add_parser("serve", help="run the local authenticated control-plane service")
@@ -106,6 +137,7 @@ def handle_status(args: argparse.Namespace) -> int:
     print(f"model_source_policy: {runtime_state.model_source_policy}")
     print(f"backend_status: {runtime_state.backend_status}")
     print(f"backend_process_status: {runtime_state.backend_process_status}")
+    print(f"control_plane_process_status: {runtime_state.control_plane_process_status}")
     if runtime_state.backend_installation is not None:
         print(f"backend_root: {runtime_state.backend_installation.backend_root}")
         print(f"server_binary: {runtime_state.backend_installation.server_binary}")
@@ -116,6 +148,10 @@ def handle_status(args: argparse.Namespace) -> int:
         print(f"backend_pid: {runtime_state.backend_process.pid}")
         print(f"backend_base_url: {runtime_state.backend_process.base_url}")
         print(f"backend_log_path: {runtime_state.backend_process.log_path}")
+    if runtime_state.control_plane_process is not None:
+        print(f"control_plane_pid: {runtime_state.control_plane_process.pid}")
+        print(f"control_plane_base_url: {runtime_state.control_plane_process.base_url}")
+        print(f"control_plane_log_path: {runtime_state.control_plane_process.log_path}")
     print(f"active_model: {runtime_state.active_model or 'none'}")
     print(f"active_source: {runtime_state.active_source or 'none'}")
     print(f"activation_state: {runtime_state.activation_state}")
@@ -338,10 +374,31 @@ def handle_serve(args: argparse.Namespace) -> int:
             print(message, file=sys.stderr)
         return 1
 
+    existing_runtime = store.load_runtime_state()
+    existing_control_plane = existing_runtime.control_plane_process
+    if (
+        existing_control_plane is not None
+        and existing_runtime.control_plane_process_status in {"running", "starting"}
+        and existing_control_plane.pid != os.getpid()
+    ):
+        return _exit_with_error(
+            f"control-plane service is already active (pid={existing_control_plane.pid})"
+        )
+
     try:
         running_process = launch_managed_backend_process(store, result.service)
     except (BackendProcessError, HostStateError) as exc:
         return _exit_with_error(str(exc))
+
+    previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
+    control_plane_record = save_current_control_plane_process(
+        store,
+        result.service,
+        status="running",
+        command=tuple(build_control_plane_command(args.project_root, result.service)),
+        pid=os.getpid(),
+    )
+    stop_reason = "stopped"
 
     print("control plane serving")
     print(f"base_url: {result.service.base_url}")
@@ -352,17 +409,59 @@ def handle_serve(args: argparse.Namespace) -> int:
         print(f"server_binary: {result.runtime.backend_installation.server_binary}")
     print(f"backend_pid: {running_process.record.pid}")
     print(f"backend_log_path: {running_process.record.log_path}")
+    print(f"control_plane_pid: {control_plane_record.pid}")
+    print(f"control_plane_log_path: {control_plane_record.log_path}")
     print(f"active_model: {result.runtime.active_model}")
     print("stop: Ctrl+C")
     try:
+        signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
         serve_control_plane(args.project_root, result.service)
     except KeyboardInterrupt:
         print("control plane stopped")
         return 0
     except ControlPlaneError as exc:
+        stop_reason = "failed"
         return _exit_with_error(str(exc))
     finally:
+        signal.signal(signal.SIGTERM, previous_sigterm_handler)
+        mark_current_control_plane_process_stopped(store, reason=stop_reason)
         stop_managed_backend_process(store, running_process)
+    return 0
+
+
+def handle_start(args: argparse.Namespace) -> int:
+    """Start the managed control-plane service in the background."""
+    try:
+        service = _service_config_from_args(args)
+        store = HostStateStore(args.project_root)
+        result = validate_host_runtime(store, service)
+    except HostStateError as exc:
+        return _exit_with_error(str(exc))
+
+    if not result.ok:
+        for message in result.errors:
+            print(message, file=sys.stderr)
+        return 1
+
+    try:
+        running_process = launch_control_plane_process(args.project_root, result.service)
+    except (ControlPlaneProcessError, HostStateError) as exc:
+        return _exit_with_error(str(exc))
+
+    payload = {
+        "action": "started",
+        "control_plane_process": running_process.record.as_dict(),
+        "service": result.service.to_dict(),
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("managed control-plane started")
+    print(f"control_plane_pid: {running_process.record.pid}")
+    print(f"base_url: {result.service.base_url}")
+    print(f"responses_base_url: {result.service.responses_base_url}")
+    print(f"control_plane_log_path: {running_process.record.log_path}")
     return 0
 
 
@@ -371,36 +470,65 @@ def handle_stop(args: argparse.Namespace) -> int:
     try:
         store = HostStateStore(args.project_root)
         runtime_before = store.load_runtime_state()
-        record = stop_current_managed_backend_process(store)
+        if args.service or args.all:
+            control_plane_record = stop_current_control_plane_process(store)
+        else:
+            control_plane_record = runtime_before.control_plane_process
+        backend_record = stop_current_managed_backend_process(store) if not args.service or args.all else None
         runtime_after = store.load_runtime_state()
-    except (BackendProcessError, HostStateError) as exc:
+    except (BackendProcessError, ControlPlaneProcessError, HostStateError) as exc:
         return _exit_with_error(str(exc))
 
-    stopped = runtime_before.backend_process_status in {"running", "starting"} and runtime_after.backend_process_status == "stopped"
+    stopped_backend = (
+        runtime_before.backend_process_status in {"running", "starting"} and runtime_after.backend_process_status == "stopped"
+    )
+    stopped_service = (
+        runtime_before.control_plane_process_status in {"running", "starting"}
+        and runtime_after.control_plane_process_status == "stopped"
+    )
     payload = {
-        "action": "stopped" if stopped else "already_stopped",
+        "action": (
+            "stopped"
+            if stopped_backend or stopped_service
+            else "already_stopped"
+        ),
         "before_status": runtime_before.backend_process_status,
         "after_status": runtime_after.backend_process_status,
-        "backend_process": record.as_dict() if record is not None else None,
+        "backend_process": backend_record.as_dict() if backend_record is not None else None,
+        "before_control_plane_status": runtime_before.control_plane_process_status,
+        "after_control_plane_status": runtime_after.control_plane_process_status,
+        "control_plane_process": control_plane_record.as_dict() if control_plane_record is not None else None,
     }
     if args.format == "json":
         print(json.dumps(payload, indent=2))
         return 0
 
-    if stopped:
+    if stopped_service and stopped_backend and args.all:
+        print("managed control-plane and backend stopped")
+    elif stopped_service:
+        print("managed control-plane stopped")
+    elif stopped_backend:
         print("managed backend stopped")
     else:
-        print("managed backend was not running")
+        print("managed service/backend was not running")
     print(f"before_status: {payload['before_status']}")
     print(f"after_status: {payload['after_status']}")
-    if record is not None:
-        print(f"backend_pid: {record.pid}")
-        print(f"backend_log_path: {record.log_path}")
+    print(f"before_control_plane_status: {payload['before_control_plane_status']}")
+    print(f"after_control_plane_status: {payload['after_control_plane_status']}")
+    if backend_record is not None:
+        print(f"backend_pid: {backend_record.pid}")
+        print(f"backend_log_path: {backend_record.log_path}")
+    if control_plane_record is not None:
+        print(f"control_plane_pid: {control_plane_record.pid}")
+        print(f"control_plane_log_path: {control_plane_record.log_path}")
     return 0
 
 
 def handle_restart(args: argparse.Namespace) -> int:
     """Restart the managed backend process."""
+    if args.service:
+        return _handle_restart_service(args)
+
     try:
         store = HostStateStore(args.project_root)
         service = _service_config_from_args(args)
@@ -437,6 +565,46 @@ def handle_restart(args: argparse.Namespace) -> int:
     print(f"backend_base_url: {running_process.record.base_url}")
     print(f"backend_log_path: {running_process.record.log_path}")
     print(f"active_model: {running_process.record.model}")
+    return 0
+
+
+def _handle_restart_service(args: argparse.Namespace) -> int:
+    try:
+        store = HostStateStore(args.project_root)
+        service = _service_config_from_args(args)
+        result = validate_host_runtime(store, service)
+    except HostStateError as exc:
+        return _exit_with_error(str(exc))
+
+    if not result.ok:
+        for message in result.errors:
+            print(message, file=sys.stderr)
+        return 1
+
+    before_status = result.runtime.control_plane_process_status
+    try:
+        stop_current_control_plane_process(store)
+        running_process = launch_control_plane_process(args.project_root, result.service)
+    except (ControlPlaneProcessError, HostStateError) as exc:
+        return _exit_with_error(str(exc))
+
+    payload = {
+        "action": "restarted" if before_status in {"running", "starting"} else "started",
+        "before_control_plane_status": before_status,
+        "after_control_plane_status": "starting",
+        "control_plane_process": running_process.record.as_dict(),
+        "service": result.service.to_dict(),
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print(f"managed control-plane {payload['action']}")
+    print(f"before_control_plane_status: {payload['before_control_plane_status']}")
+    print(f"after_control_plane_status: {payload['after_control_plane_status']}")
+    print(f"control_plane_pid: {running_process.record.pid}")
+    print(f"base_url: {result.service.base_url}")
+    print(f"control_plane_log_path: {running_process.record.log_path}")
     return 0
 
 
@@ -550,3 +718,7 @@ def _service_config_from_args(args: argparse.Namespace) -> HostServiceConfig:
 def _exit_with_error(message: str) -> int:
     print(message, file=sys.stderr)
     return 1
+
+
+def _raise_keyboard_interrupt(_signum: int, _frame: object) -> None:
+    raise KeyboardInterrupt()

@@ -7,10 +7,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from aistackd.models.sources import local_source_model
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
-from aistackd.state.host import HostStateStore
+from aistackd.state.host import HostControlPlaneProcess, HostStateStore
 
 
 class HostStateTests(unittest.TestCase):
@@ -97,6 +98,59 @@ class HostStateTests(unittest.TestCase):
             self.assertIsNotNone(runtime_state.backend_installation)
             self.assertEqual(runtime_state.backend_installation.server_binary, installation.server_binary)
 
+    def test_control_plane_process_round_trips_through_host_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+            log_path = store.paths.control_plane_log_path()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("", encoding="utf-8")
+
+            created = store.save_control_plane_process(
+                HostControlPlaneProcess(
+                    status="running",
+                    pid=1234,
+                    command=("python3", "-m", "aistackd", "host", "serve"),
+                    bind_host="127.0.0.1",
+                    port=8000,
+                    log_path=str(log_path),
+                    started_at="2026-03-08T00:00:00+00:00",
+                )
+            )
+
+            persisted = store.load_control_plane_process()
+
+            self.assertTrue(created)
+            self.assertIsNotNone(persisted)
+            assert persisted is not None
+            self.assertEqual(persisted.pid, 1234)
+            self.assertEqual(persisted.base_url, "http://127.0.0.1:8000")
+
+    def test_runtime_state_marks_stale_control_plane_process_as_exited(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+            log_path = store.paths.control_plane_log_path()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("", encoding="utf-8")
+            store.save_control_plane_process(
+                HostControlPlaneProcess(
+                    status="running",
+                    pid=999999,
+                    command=("python3", "-m", "aistackd", "host", "serve"),
+                    bind_host="127.0.0.1",
+                    port=8000,
+                    log_path=str(log_path),
+                    started_at="2026-03-08T00:00:00+00:00",
+                )
+            )
+
+            with patch("aistackd.state.host._pid_exists", return_value=False):
+                runtime_state = store.load_runtime_state()
+
+            self.assertEqual(runtime_state.control_plane_process_status, "exited")
+            self.assertIsNotNone(runtime_state.control_plane_process)
+            assert runtime_state.control_plane_process is not None
+            self.assertEqual(runtime_state.control_plane_process.status, "exited")
+
     def test_host_state_storage_creates_managed_backends_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = HostStateStore(Path(tmpdir))
@@ -107,6 +161,7 @@ class HostStateTests(unittest.TestCase):
             self.assertTrue(store.paths.managed_models_dir.exists())
             self.assertTrue(store.paths.host_logs_dir.exists())
             self.assertTrue(store.paths.responses_state_dir.exists())
+            self.assertTrue(store.paths.control_plane_process_path.parent.exists())
 
 
 def _create_fake_backend_root(root: Path) -> Path:

@@ -25,6 +25,7 @@ INSTALLED_MODELS_FILE_NAME = "installed_models.json"
 MODEL_RECEIPTS_DIRECTORY_NAME = "model_receipts"
 BACKEND_INSTALLATION_FILE_NAME = "backend_installation.json"
 BACKEND_PROCESS_FILE_NAME = "backend_process.json"
+CONTROL_PLANE_PROCESS_FILE_NAME = "control_plane_process.json"
 MANAGED_BACKENDS_DIRECTORY_NAME = "backends"
 MANAGED_MODELS_DIRECTORY_NAME = "models"
 HOST_LOGS_DIRECTORY_NAME = "logs"
@@ -85,6 +86,7 @@ class HostStatePaths:
     model_receipts_dir: Path
     backend_installation_path: Path
     backend_process_path: Path
+    control_plane_process_path: Path
     managed_backends_dir: Path
     managed_models_dir: Path
     host_logs_dir: Path
@@ -104,6 +106,7 @@ class HostStatePaths:
             model_receipts_dir=host_dir / MODEL_RECEIPTS_DIRECTORY_NAME,
             backend_installation_path=host_dir / BACKEND_INSTALLATION_FILE_NAME,
             backend_process_path=host_dir / BACKEND_PROCESS_FILE_NAME,
+            control_plane_process_path=host_dir / CONTROL_PLANE_PROCESS_FILE_NAME,
             managed_backends_dir=host_dir / MANAGED_BACKENDS_DIRECTORY_NAME,
             managed_models_dir=host_dir / MANAGED_MODELS_DIRECTORY_NAME,
             host_logs_dir=host_dir / HOST_LOGS_DIRECTORY_NAME,
@@ -145,6 +148,10 @@ class HostStatePaths:
     def backend_log_path(self, backend_name: str = PRIMARY_BACKEND) -> Path:
         """Return the persisted backend log path for one backend."""
         return self.host_logs_dir / f"{frontend_model_key(backend_name)}.log"
+
+    def control_plane_log_path(self) -> Path:
+        """Return the persisted control-plane log path."""
+        return self.host_logs_dir / "control-plane.log"
 
     def response_state_path(self, response_id: str) -> Path:
         """Return the persisted response-state path for one response id."""
@@ -254,6 +261,59 @@ class HostBackendProcess:
 
 
 @dataclass(frozen=True)
+class HostControlPlaneProcess:
+    """Persisted control-plane process record."""
+
+    status: str
+    pid: int
+    command: tuple[str, ...]
+    bind_host: str
+    port: int
+    log_path: str
+    started_at: str
+    stopped_at: str | None = None
+    exit_code: int | None = None
+
+    @property
+    def base_url(self) -> str:
+        """Return the northbound URL for the control-plane process."""
+        return f"http://{self.bind_host}:{self.port}"
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "HostControlPlaneProcess":
+        """Decode one control-plane process record from JSON."""
+        return cls(
+            status=_require_string(payload, "status"),
+            pid=_require_int(payload, "pid"),
+            command=_require_string_tuple(payload, "command"),
+            bind_host=_require_string(payload, "bind_host"),
+            port=_require_int(payload, "port"),
+            log_path=_require_string(payload, "log_path"),
+            started_at=_require_string(payload, "started_at"),
+            stopped_at=_optional_string(payload, "stopped_at"),
+            exit_code=_optional_int(payload, "exit_code"),
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation."""
+        payload: dict[str, object] = {
+            "status": self.status,
+            "pid": self.pid,
+            "command": list(self.command),
+            "bind_host": self.bind_host,
+            "port": self.port,
+            "base_url": self.base_url,
+            "log_path": self.log_path,
+            "started_at": self.started_at,
+        }
+        if self.stopped_at is not None:
+            payload["stopped_at"] = self.stopped_at
+        if self.exit_code is not None:
+            payload["exit_code"] = self.exit_code
+        return payload
+
+
+@dataclass(frozen=True)
 class InstalledModelRecord:
     """Record of an installed host-side model artifact."""
 
@@ -316,6 +376,8 @@ class HostRuntimeState:
     backend_status: str = "missing"
     backend_process: HostBackendProcess | None = None
     backend_process_status: str = "not_started"
+    control_plane_process: HostControlPlaneProcess | None = None
+    control_plane_process_status: str = "not_started"
     supported_sources: tuple[str, ...] = SUPPORTED_MODEL_SOURCES
 
     def to_dict(self) -> dict[str, object]:
@@ -330,6 +392,7 @@ class HostRuntimeState:
             "activation_state": self.activation_state,
             "backend_status": self.backend_status,
             "backend_process_status": self.backend_process_status,
+            "control_plane_process_status": self.control_plane_process_status,
             "installed_models": [record.as_dict() for record in self.installed_models],
             "supported_sources": list(self.supported_sources),
         }
@@ -337,6 +400,8 @@ class HostRuntimeState:
             payload["backend_installation"] = self.backend_installation.as_dict()
         if self.backend_process is not None:
             payload["backend_process"] = self.backend_process.as_dict()
+        if self.control_plane_process is not None:
+            payload["control_plane_process"] = self.control_plane_process.as_dict()
         return payload
 
 
@@ -460,6 +525,22 @@ class HostStateStore:
         write_json_atomic(self.paths.backend_process_path, payload)
         return created
 
+    def load_control_plane_process(self) -> HostControlPlaneProcess | None:
+        """Load the persisted control-plane process record if present."""
+        payload = load_json_object(self.paths.control_plane_process_path)
+        if not payload:
+            return None
+        return HostControlPlaneProcess.from_dict(payload)
+
+    def save_control_plane_process(self, process: HostControlPlaneProcess) -> bool:
+        """Persist the current control-plane process record."""
+        self.ensure_storage()
+        created = not self.paths.control_plane_process_path.exists()
+        payload = process.as_dict()
+        payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
+        write_json_atomic(self.paths.control_plane_process_path, payload)
+        return created
+
     def activate_model(self, model_name: str) -> HostRuntimeState:
         """Mark one installed model as active."""
         installed_models = {record.model: record for record in self.list_installed_models()}
@@ -490,6 +571,10 @@ class HostStateStore:
         backend_process = _refresh_backend_process_record(persisted_backend_process)
         if backend_process != persisted_backend_process and backend_process is not None:
             self.save_backend_process(backend_process)
+        persisted_control_plane_process = self.load_control_plane_process()
+        control_plane_process = _refresh_control_plane_process_record(persisted_control_plane_process)
+        if control_plane_process != persisted_control_plane_process and control_plane_process is not None:
+            self.save_control_plane_process(control_plane_process)
         runtime_payload = load_json_object(self.paths.runtime_state_path)
         active_model = _optional_string(runtime_payload, "active_model")
         active_source = _optional_string(runtime_payload, "active_source")
@@ -521,6 +606,10 @@ class HostStateStore:
             backend_status=backend_status,
             backend_process=backend_process,
             backend_process_status=backend_process.status if backend_process is not None else "not_started",
+            control_plane_process=control_plane_process,
+            control_plane_process_status=(
+                control_plane_process.status if control_plane_process is not None else "not_started"
+            ),
         )
 
     def save_response_state(
@@ -621,6 +710,20 @@ def _refresh_installed_model_record(record: InstalledModelRecord) -> InstalledMo
 
 
 def _refresh_backend_process_record(process: HostBackendProcess | None) -> HostBackendProcess | None:
+    if process is None or process.status not in {"running", "starting"}:
+        return process
+    if _pid_exists(process.pid):
+        return process
+    return replace(
+        process,
+        status="exited",
+        stopped_at=process.stopped_at or datetime.now(UTC).replace(microsecond=0).isoformat(),
+    )
+
+
+def _refresh_control_plane_process_record(
+    process: HostControlPlaneProcess | None,
+) -> HostControlPlaneProcess | None:
     if process is None or process.status not in {"running", "starting"}:
         return process
     if _pid_exists(process.pid):

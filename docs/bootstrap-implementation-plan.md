@@ -110,6 +110,7 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 6. defer non-function tools and broader orchestration beyond the basic function-call loop
 7. persist bounded `previous_response_id` state on the host so client-managed tool loops can continue across control-plane restarts and return actionable diagnostics when state is missing
 8. reconcile stale backend-process receipts after crashes or host reboots, and expose explicit stop/restart controls for the managed backend lifecycle
+9. support a managed background control-plane service with explicit start/stop/restart controls and stale-receipt reconciliation after crashes or host reboots
 
 ### Frontend Tooling Notes
 

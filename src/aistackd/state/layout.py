@@ -81,6 +81,11 @@ class ProjectLayout:
                 str(host_paths.backend_process_path),
                 host_paths.backend_process_path.exists(),
             ),
+            PathCheck(
+                "control_plane_process_file",
+                str(host_paths.control_plane_process_path),
+                host_paths.control_plane_process_path.exists(),
+            ),
             PathCheck("managed_backends_dir", str(host_paths.managed_backends_dir), host_paths.managed_backends_dir.exists()),
             PathCheck("managed_models_dir", str(host_paths.managed_models_dir), host_paths.managed_models_dir.exists()),
             PathCheck("host_logs_dir", str(host_paths.host_logs_dir), host_paths.host_logs_dir.exists()),

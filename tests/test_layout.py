@@ -30,6 +30,7 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("host_state_dir", reserved_checks)
         self.assertIn("backend_installation_file", reserved_checks)
         self.assertIn("backend_process_file", reserved_checks)
+        self.assertIn("control_plane_process_file", reserved_checks)
         self.assertIn("managed_backends_dir", reserved_checks)
         self.assertIn("managed_models_dir", reserved_checks)
         self.assertIn("host_logs_dir", reserved_checks)
