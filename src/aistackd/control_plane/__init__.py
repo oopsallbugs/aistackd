@@ -4,6 +4,7 @@ OPEN_RESPONSES_BASE_PATH = "/v1"
 HEALTH_ENDPOINT = "/health"
 MODELS_ENDPOINT = "/v1/models"
 RESPONSES_ENDPOINT = "/v1/responses"
+CHAT_COMPLETIONS_ENDPOINT = "/v1/chat/completions"
 ADMIN_RUNTIME_ENDPOINT = "/admin/runtime"
 ADMIN_MODELS_SEARCH_ENDPOINT = "/admin/models/search"
 ADMIN_MODELS_RECOMMEND_ENDPOINT = "/admin/models/recommend"
@@ -25,6 +26,7 @@ __all__ = [
     "ADMIN_RUNTIME_ENDPOINT",
     "ControlPlaneError",
     "ControlPlaneServer",
+    "CHAT_COMPLETIONS_ENDPOINT",
     "HEALTH_ENDPOINT",
     "MODELS_ENDPOINT",
     "OPEN_RESPONSES_BASE_PATH",

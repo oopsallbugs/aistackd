@@ -307,10 +307,11 @@ Acceptance gates:
 Deliverables:
 
 1. prerequisite validation
-2. hardware detection
-3. `llama.cpp` acquisition
-4. model recommendation and acquisition
-5. control-plane service lifecycle
+2. bootstrap-managed operator tool install for `llmfit` and `hf`
+3. hardware detection
+4. `llama.cpp` acquisition
+5. model recommendation and acquisition
+6. control-plane service lifecycle
 
 Acceptance gates:
 
@@ -318,6 +319,7 @@ Acceptance gates:
 2. source fallback works when prebuilt acquisition is unavailable
 3. explicit local GGUF install works without network access
 4. successful llmfit browse/import stages all new GGUF artifacts into managed host state without changing the active model
+5. a clean host can bootstrap `llmfit`, `hf`, and managed `llama.cpp` without relying on `git`, `curl`, or `wget`
 
 ### Phase 3: Client Runtime
 

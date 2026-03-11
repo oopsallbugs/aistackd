@@ -22,6 +22,7 @@ from aistackd.state.profiles import RUNTIME_STATE_DIRECTORY_NAME
 HOST_DIRECTORY_NAME = "host"
 HOST_RUNTIME_FILE_NAME = "runtime.json"
 INSTALLED_MODELS_FILE_NAME = "installed_models.json"
+INSTALLED_TOOLS_FILE_NAME = "installed_tools.json"
 MODEL_RECEIPTS_DIRECTORY_NAME = "model_receipts"
 BACKEND_INSTALLATION_FILE_NAME = "backend_installation.json"
 BACKEND_PROCESS_FILE_NAME = "backend_process.json"
@@ -83,6 +84,7 @@ class HostStatePaths:
     host_dir: Path
     runtime_state_path: Path
     installed_models_path: Path
+    installed_tools_path: Path
     model_receipts_dir: Path
     backend_installation_path: Path
     backend_process_path: Path
@@ -103,6 +105,7 @@ class HostStatePaths:
             host_dir=host_dir,
             runtime_state_path=host_dir / HOST_RUNTIME_FILE_NAME,
             installed_models_path=host_dir / INSTALLED_MODELS_FILE_NAME,
+            installed_tools_path=host_dir / INSTALLED_TOOLS_FILE_NAME,
             model_receipts_dir=host_dir / MODEL_RECEIPTS_DIRECTORY_NAME,
             backend_installation_path=host_dir / BACKEND_INSTALLATION_FILE_NAME,
             backend_process_path=host_dir / BACKEND_PROCESS_FILE_NAME,
@@ -361,6 +364,45 @@ class InstalledModelRecord:
 
 
 @dataclass(frozen=True)
+class InstalledToolRecord:
+    """Record of one bootstrap-managed operator tool."""
+
+    tool: str
+    executable_path: str
+    version: str
+    source_url: str
+    checksum: str
+    installed_at: str
+    install_method: str = "bootstrap_installer"
+    status: str = "installed"
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "InstalledToolRecord":
+        return cls(
+            tool=_require_string(payload, "tool"),
+            executable_path=_require_string(payload, "executable_path"),
+            version=_require_string(payload, "version"),
+            source_url=_require_string(payload, "source_url"),
+            checksum=_require_string(payload, "checksum"),
+            installed_at=_require_string(payload, "installed_at"),
+            install_method=_require_string(payload, "install_method"),
+            status=_require_string(payload, "status"),
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "tool": self.tool,
+            "executable_path": self.executable_path,
+            "version": self.version,
+            "source_url": self.source_url,
+            "checksum": self.checksum,
+            "installed_at": self.installed_at,
+            "install_method": self.install_method,
+            "status": self.status,
+        }
+
+
+@dataclass(frozen=True)
 class HostRuntimeState:
     """Current host runtime summary."""
 
@@ -435,6 +477,41 @@ class HostStateStore:
             if isinstance(entry, dict)
         ]
         return tuple(sorted(records, key=lambda record: record.model))
+
+    def list_installed_tools(self) -> tuple[InstalledToolRecord, ...]:
+        """Return installed operator tools sorted by name."""
+        payload = load_json_object(self.paths.installed_tools_path)
+        if not payload:
+            return ()
+        records_payload = payload.get("tools")
+        if not isinstance(records_payload, list):
+            raise HostStateError(f"{self.paths.installed_tools_path} must contain a 'tools' list")
+        records = [
+            _refresh_installed_tool_record(InstalledToolRecord.from_dict(entry))
+            for entry in records_payload
+            if isinstance(entry, dict)
+        ]
+        return tuple(sorted(records, key=lambda record: record.tool))
+
+    def load_installed_tool(self, tool_name: str) -> InstalledToolRecord | None:
+        """Return one installed tool record, if present."""
+        for record in self.list_installed_tools():
+            if record.tool == tool_name:
+                return record
+        return None
+
+    def save_installed_tool(self, record: InstalledToolRecord) -> bool:
+        """Persist one installed operator-tool receipt."""
+        self.ensure_storage()
+        existing_records = {entry.tool: entry for entry in self.list_installed_tools()}
+        created = record.tool not in existing_records
+        existing_records[record.tool] = record
+        payload = {
+            "schema_version": CURRENT_HOST_STATE_SCHEMA_VERSION,
+            "tools": [entry.as_dict() for entry in sorted(existing_records.values(), key=lambda item: item.tool)],
+        }
+        write_json_atomic(self.paths.installed_tools_path, payload)
+        return created
 
     def install_model(
         self,
@@ -709,6 +786,13 @@ def _refresh_installed_model_record(record: InstalledModelRecord) -> InstalledMo
     return replace(record, status=status)
 
 
+def _refresh_installed_tool_record(record: InstalledToolRecord) -> InstalledToolRecord:
+    status = "installed" if Path(record.executable_path).exists() else "missing_binary"
+    if status == record.status:
+        return record
+    return replace(record, status=status)
+
+
 def _refresh_backend_process_record(process: HostBackendProcess | None) -> HostBackendProcess | None:
     if process is None or process.status not in {"running", "starting"}:
         return process
@@ -738,6 +822,14 @@ def _refresh_control_plane_process_record(
 def _pid_exists(pid: int) -> bool:
     if pid < 1:
         return False
+    stat_path = Path("/proc") / str(pid) / "stat"
+    if stat_path.exists():
+        try:
+            stat_fields = stat_path.read_text(encoding="utf-8").split()
+        except OSError:
+            stat_fields = ()
+        if len(stat_fields) >= 3 and stat_fields[2] == "Z":
+            return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

@@ -36,6 +36,7 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("host_logs_dir", reserved_checks)
         self.assertIn("responses_state_dir", reserved_checks)
         self.assertIn("installed_models_file", reserved_checks)
+        self.assertIn("installed_tools_file", reserved_checks)
 
     def test_profile_state_paths_follow_canonical_names(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

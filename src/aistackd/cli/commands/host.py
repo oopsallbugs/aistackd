@@ -18,6 +18,13 @@ from aistackd.runtime.backend_process import (
     stop_managed_backend_process,
 )
 from aistackd.runtime.backends import BackendAcquisitionError, acquire_managed_llama_cpp_installation, adopt_backend_installation
+from aistackd.runtime.bootstrap import (
+    DEFAULT_USER_BIN_DIR,
+    BootstrapError,
+    install_tool,
+    normalize_user_bin_dir,
+    resolve_tool_binary,
+)
 from aistackd.runtime.control_plane_process import (
     ControlPlaneProcessError,
     build_control_plane_command,
@@ -29,6 +36,8 @@ from aistackd.runtime.control_plane_process import (
 from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.runtime.host import (
     DEFAULT_BACKEND_BIND,
+    DEFAULT_BACKEND_CONTEXT_SIZE,
+    DEFAULT_BACKEND_PREDICT_LIMIT,
     DEFAULT_BACKEND_PORT,
     DEFAULT_HOST_API_KEY_ENV,
     DEFAULT_HOST_BIND,
@@ -64,6 +73,27 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _add_llmfit_arguments(inspect_parser)
     _add_format_argument(inspect_parser)
     inspect_parser.set_defaults(handler=handle_inspect)
+
+    install_llmfit_parser = command_parsers.add_parser("install-llmfit", help="install llmfit into a normal user bin directory")
+    _add_shared_arguments(install_llmfit_parser)
+    _add_user_bin_argument(install_llmfit_parser)
+    _add_format_argument(install_llmfit_parser)
+    install_llmfit_parser.set_defaults(handler=handle_install_llmfit)
+
+    install_hf_parser = command_parsers.add_parser("install-hf", help="install the Hugging Face CLI into a normal user bin directory")
+    _add_shared_arguments(install_hf_parser)
+    _add_user_bin_argument(install_hf_parser)
+    _add_format_argument(install_hf_parser)
+    install_hf_parser.set_defaults(handler=handle_install_hf)
+
+    bootstrap_parser = command_parsers.add_parser("bootstrap", help="prepare a clean host with operator tools and a managed backend")
+    _add_shared_arguments(bootstrap_parser)
+    _add_llmfit_arguments(bootstrap_parser)
+    _add_user_bin_argument(bootstrap_parser)
+    _add_service_arguments(bootstrap_parser)
+    _add_backend_acquisition_arguments(bootstrap_parser)
+    _add_format_argument(bootstrap_parser)
+    bootstrap_parser.set_defaults(handler=handle_bootstrap)
 
     acquire_parser = command_parsers.add_parser(
         "acquire-backend",
@@ -168,11 +198,13 @@ def handle_status(args: argparse.Namespace) -> int:
 
 def handle_inspect(args: argparse.Namespace) -> int:
     """Inspect host prerequisites, llmfit hardware detection, and backend discovery state."""
+    resolved_llmfit_binary = _resolve_llmfit_binary(args.project_root, args.llmfit_binary)
     report = inspect_host_environment(
+        project_root=args.project_root,
         backend_root=args.backend_root,
         server_binary=args.server_binary,
         cli_binary=args.cli_binary,
-        llmfit_binary=args.llmfit_binary,
+        llmfit_binary=resolved_llmfit_binary,
     )
     if args.format == "json":
         print(json.dumps(report.to_dict(), indent=2))
@@ -184,6 +216,10 @@ def handle_inspect(args: argparse.Namespace) -> int:
     for check in report.prerequisite_checks:
         label = "ok" if check.ok else "missing"
         print(f"prerequisite: {check.name} status={label} detail={check.detail}")
+    for tool in report.tool_checks:
+        label = "ok" if tool["ok"] else "missing"
+        detail = tool.get("executable_path") or ", ".join(tool.get("issues", [])) or "not available"
+        print(f"tool: {tool['tool']} status={label} source={tool['source']} detail={detail}")
     print(f"hardware_detection: {'ok' if report.hardware_detection_ok else 'needs_attention'}")
     print(f"llmfit_command: {' '.join(report.hardware_detection.command)}")
     if report.hardware_detection.profile is not None:
@@ -233,11 +269,13 @@ def handle_acquire_backend(args: argparse.Namespace) -> int:
             "existing-backend locator flags cannot be combined with managed acquisition inputs"
         )
 
+    resolved_llmfit_binary = _resolve_llmfit_binary(args.project_root, args.llmfit_binary)
     report = inspect_host_environment(
+        project_root=args.project_root,
         backend_root=args.backend_root,
         server_binary=args.server_binary,
         cli_binary=args.cli_binary,
-        llmfit_binary=args.llmfit_binary,
+        llmfit_binary=resolved_llmfit_binary,
     )
     discovery = report.backend_discovery
     try:
@@ -269,10 +307,14 @@ def handle_acquire_backend(args: argparse.Namespace) -> int:
             detail = "; ".join(issue for issue in issues if issue) or "unable to plan backend acquisition"
             return _exit_with_error(detail)
         else:
-            installation = None
-            acquisition = None
-            created = False
-            action = "planned"
+            acquisition = acquire_managed_llama_cpp_installation(
+                args.project_root,
+                report.acquisition_plan,
+                jobs=args.jobs,
+            )
+            installation = acquisition.installation
+            created = HostStateStore(args.project_root).save_backend_installation(installation)
+            action = "acquired" if created else "updated"
     except (BackendAcquisitionError, HostStateError, ValueError) as exc:
         return _exit_with_error(str(exc))
 
@@ -358,6 +400,90 @@ def handle_validate(args: argparse.Namespace) -> int:
     for message in result.errors:
         print(f"error: {message}")
     return 0 if result.ok else 1
+
+
+def handle_install_llmfit(args: argparse.Namespace) -> int:
+    """Install llmfit into a normal user bin directory."""
+    try:
+        result = install_tool(
+            args.project_root,
+            "llmfit",
+            user_bin_dir=normalize_user_bin_dir(args.user_bin_dir),
+        )
+    except (BootstrapError, HostStateError) as exc:
+        return _exit_with_error(str(exc))
+    return _print_tool_install_result(result, output_format=args.format)
+
+
+def handle_install_hf(args: argparse.Namespace) -> int:
+    """Install the Hugging Face CLI into a normal user bin directory."""
+    try:
+        result = install_tool(
+            args.project_root,
+            "hf",
+            user_bin_dir=normalize_user_bin_dir(args.user_bin_dir),
+        )
+    except (BootstrapError, HostStateError) as exc:
+        return _exit_with_error(str(exc))
+    return _print_tool_install_result(result, output_format=args.format)
+
+
+def handle_bootstrap(args: argparse.Namespace) -> int:
+    """Prepare a clean host with operator tools and a managed backend."""
+    payload: dict[str, object] = {
+        "tool_installs": [],
+    }
+    try:
+        user_bin_dir = normalize_user_bin_dir(args.user_bin_dir)
+        for tool_name in ("llmfit", "hf"):
+            tool_result = install_tool(args.project_root, tool_name, user_bin_dir=user_bin_dir)
+            payload["tool_installs"].append(tool_result.to_dict())
+        resolved_llmfit_binary = _resolve_llmfit_binary(args.project_root, args.llmfit_binary)
+        report = inspect_host_environment(
+            project_root=args.project_root,
+            llmfit_binary=resolved_llmfit_binary,
+        )
+        payload["inspection"] = report.to_dict()
+        if report.acquisition_plan is None:
+            issues = "; ".join(report.hardware_detection.issues) or "hardware detection did not produce a backend acquisition plan"
+            raise BootstrapError(issues)
+        acquisition = acquire_managed_llama_cpp_installation(
+            args.project_root,
+            report.acquisition_plan,
+            prebuilt_root=args.prebuilt_root,
+            prebuilt_archive=args.prebuilt_archive,
+            source_root=args.source_root,
+            jobs=args.jobs,
+        )
+        created = HostStateStore(args.project_root).save_backend_installation(acquisition.installation)
+        payload["backend"] = {
+            "action": "acquired" if created else "updated",
+            "installation": acquisition.installation.as_dict(),
+            "acquisition": acquisition.to_dict(),
+        }
+        payload["next_steps"] = [
+            "aistackd models install ...",
+            "aistackd models activate <model>",
+            "AISTACKD_API_KEY=... aistackd host start",
+            "aistackd sync --write",
+            "AISTACKD_REMOTE_API_KEY=... aistackd doctor ready --frontend opencode",
+        ]
+    except (BootstrapError, BackendAcquisitionError, HostStateError, ValueError) as exc:
+        return _exit_with_error(str(exc))
+
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("host bootstrap complete")
+    for tool_payload in payload["tool_installs"]:
+        print(f"{tool_payload['action']}: tool={tool_payload['tool']['tool']} path={tool_payload['tool']['executable_path']}")
+    backend = payload["backend"]
+    print(f"{backend['action']}: backend_root={backend['installation']['backend_root']}")
+    print("next_steps:")
+    for step in payload["next_steps"]:
+        print(f"- {step}")
+    return 0
 
 
 def handle_serve(args: argparse.Namespace) -> int:
@@ -666,6 +792,15 @@ def _add_backend_acquisition_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_user_bin_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--user-bin-dir",
+        type=Path,
+        default=DEFAULT_USER_BIN_DIR,
+        help=f"user bin directory for bootstrap-installed operator tools (default: {DEFAULT_USER_BIN_DIR})",
+    )
+
+
 def _add_service_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--bind-host",
@@ -694,6 +829,18 @@ def _add_service_arguments(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_BACKEND_PORT,
         help=f"bind port for the managed llama.cpp process (default: {DEFAULT_BACKEND_PORT})",
     )
+    parser.add_argument(
+        "--backend-context-size",
+        type=int,
+        default=DEFAULT_BACKEND_CONTEXT_SIZE,
+        help=f"context size for the managed llama.cpp process (default: {DEFAULT_BACKEND_CONTEXT_SIZE})",
+    )
+    parser.add_argument(
+        "--backend-predict-limit",
+        type=int,
+        default=DEFAULT_BACKEND_PREDICT_LIMIT,
+        help=f"token prediction limit for the managed llama.cpp process (default: {DEFAULT_BACKEND_PREDICT_LIMIT})",
+    )
 
 
 def _add_format_argument(parser: argparse.ArgumentParser) -> None:
@@ -712,12 +859,32 @@ def _service_config_from_args(args: argparse.Namespace) -> HostServiceConfig:
         api_key_env=args.api_key_env,
         backend_bind_host=args.backend_bind_host,
         backend_port=args.backend_port,
+        backend_context_size=args.backend_context_size,
+        backend_predict_limit=args.backend_predict_limit,
     ).normalized()
 
 
 def _exit_with_error(message: str) -> int:
     print(message, file=sys.stderr)
     return 1
+
+
+def _resolve_llmfit_binary(project_root: Path, requested_binary: str) -> str:
+    try:
+        return resolve_tool_binary(project_root, "llmfit", requested=requested_binary)
+    except BootstrapError:
+        return requested_binary
+
+
+def _print_tool_install_result(result: object, *, output_format: str) -> int:
+    payload = result.to_dict()
+    if output_format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+    print(f"{payload['action']} tool '{payload['tool']['tool']}'")
+    print(f"path: {payload['tool']['executable_path']}")
+    print(f"version: {payload['tool']['version']}")
+    return 0
 
 
 def _raise_keyboard_interrupt(_signum: int, _frame: object) -> None:

@@ -74,6 +74,18 @@ class SyncWriteTests(unittest.TestCase):
                 payload["manifest"]["targets"][0]["provider_payload"]["provider"]["aistackd"]["models"]["lab-model"]["name"],
                 "lab-model",
             )
+            self.assertEqual(
+                payload["manifest"]["targets"][0]["provider_payload"]["provider"]["aistackd"]["options"]["apiKey"],
+                "{env:AISTACKD_API_KEY}",
+            )
+            self.assertEqual(
+                payload["manifest"]["targets"][0]["provider_payload"]["provider"]["aistackd"]["models"]["lab-model"]["limit"]["context"],
+                32768,
+            )
+            self.assertEqual(
+                payload["manifest"]["targets"][0]["provider_payload"]["provider"]["aistackd"]["models"]["lab-model"]["limit"]["output"],
+                8192,
+            )
             ownership_payload = json.loads(Path(result.ownership_manifest_path).read_text(encoding="utf-8"))
             self.assertEqual(ownership_payload["targets"][0]["frontend"], "opencode")
 

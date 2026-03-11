@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from aistackd.models.sources import local_source_model
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
-from aistackd.state.host import HostControlPlaneProcess, HostStateStore
+from aistackd.state.host import HostControlPlaneProcess, HostStateStore, InstalledToolRecord
 
 
 class HostStateTests(unittest.TestCase):
@@ -162,6 +162,29 @@ class HostStateTests(unittest.TestCase):
             self.assertTrue(store.paths.host_logs_dir.exists())
             self.assertTrue(store.paths.responses_state_dir.exists())
             self.assertTrue(store.paths.control_plane_process_path.parent.exists())
+
+    def test_installed_tool_round_trips_through_host_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+            record = InstalledToolRecord(
+                tool="llmfit",
+                executable_path=str(Path(tmpdir) / ".local" / "bin" / "llmfit"),
+                version="llmfit 0.6.2",
+                source_url="https://llmfit.axjns.dev/install.sh",
+                checksum="abc123",
+                installed_at="2026-03-10T00:00:00+00:00",
+            )
+            Path(record.executable_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(record.executable_path).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+
+            created = store.save_installed_tool(record)
+            persisted = store.load_installed_tool("llmfit")
+
+            self.assertTrue(created)
+            self.assertIsNotNone(persisted)
+            assert persisted is not None
+            self.assertEqual(persisted.executable_path, record.executable_path)
+            self.assertEqual(persisted.version, "llmfit 0.6.2")
 
 
 def _create_fake_backend_root(root: Path) -> Path:

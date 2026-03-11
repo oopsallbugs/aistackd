@@ -11,6 +11,7 @@ from unittest.mock import patch
 from aistackd.models.sources import local_source_model
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
 from aistackd.runtime.control_plane_process import (
+    build_control_plane_command,
     launch_control_plane_process,
     stop_current_control_plane_process,
 )
@@ -19,6 +20,17 @@ from aistackd.state.host import HostControlPlaneProcess, HostStateStore
 
 
 class ControlPlaneProcessRuntimeTests(unittest.TestCase):
+    def test_build_control_plane_command_includes_backend_limits(self) -> None:
+        command = build_control_plane_command(
+            Path("/tmp/project"),
+            HostServiceConfig(backend_context_size=16384, backend_predict_limit=2048),
+        )
+
+        self.assertIn("--backend-context-size", command)
+        self.assertIn("16384", command)
+        self.assertIn("--backend-predict-limit", command)
+        self.assertIn("2048", command)
+
     def test_launch_control_plane_process_persists_starting_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir))

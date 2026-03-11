@@ -13,6 +13,7 @@ from urllib import error, request
 from uuid import uuid4
 
 from aistackd.runtime.host import HostServiceConfig
+from aistackd.models.selection import frontend_model_key
 from aistackd.state.host import (
     DEFAULT_RESPONSE_STATE_RETENTION_LIMIT,
     HostRuntimeState,
@@ -22,6 +23,7 @@ from aistackd.state.host import (
 )
 
 CHAT_COMPLETIONS_ENDPOINT = "/v1/chat/completions"
+MODEL_PROVIDER_PREFIX = "aistackd/"
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,28 @@ class ResponsesStateCache:
         with self._lock:
             self._responses[response_id] = hydrated_state
         return hydrated_state
+
+
+@dataclass
+class ChatCompletionsStreamSession:
+    """One proxied chat-completions SSE session."""
+
+    upstream_response: Any
+    _closed: bool = False
+
+    def iter_frames(self) -> Iterator[str]:
+        """Yield backend SSE data frames, including the terminal ``[DONE]`` marker."""
+        for data in _iter_sse_data_frames(self.upstream_response):
+            yield data
+
+    def close(self) -> None:
+        """Close the upstream backend response if it is still open."""
+        if self._closed:
+            return
+        close = getattr(self.upstream_response, "close", None)
+        if callable(close):
+            close()
+        self._closed = True
 
 
 @dataclass(frozen=True)
@@ -503,6 +527,29 @@ def open_responses_stream(
     )
 
 
+def proxy_chat_completions_request(
+    store: HostStateStore,
+    service: HostServiceConfig,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    """Proxy one OpenAI-compatible chat-completions request to the active backend."""
+    runtime = store.load_runtime_state()
+    backend_payload = _build_openai_chat_completions_payload(runtime, payload, stream=False)
+    return _invoke_backend_chat_completion(runtime, service, backend_payload)
+
+
+def open_chat_completions_stream(
+    store: HostStateStore,
+    service: HostServiceConfig,
+    payload: dict[str, object],
+) -> ChatCompletionsStreamSession:
+    """Open one streaming OpenAI-compatible chat-completions session."""
+    runtime = store.load_runtime_state()
+    backend_payload = _build_openai_chat_completions_payload(runtime, payload, stream=True)
+    upstream_response = _open_backend_chat_completion_stream(runtime, service, backend_payload)
+    return ChatCompletionsStreamSession(upstream_response=upstream_response)
+
+
 def parse_json_request_body(body: bytes) -> dict[str, object]:
     """Decode one JSON request body into an object payload."""
     try:
@@ -522,6 +569,11 @@ def is_streaming_request(payload: dict[str, object]) -> bool:
     if stream is True:
         return True
     raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "stream must be a boolean when provided")
+
+
+def is_streaming_chat_completions_request(payload: dict[str, object]) -> bool:
+    """Validate and return whether one chat-completions request is streaming."""
+    return is_streaming_request(payload)
 
 
 def _resolve_requested_model(runtime: HostRuntimeState, payload: dict[str, object]) -> str:
@@ -551,12 +603,51 @@ def _resolve_requested_model(runtime: HostRuntimeState, payload: dict[str, objec
     if not isinstance(requested_model, str) or not requested_model.strip():
         raise ResponsesProxyError(HTTPStatus.BAD_REQUEST, "model must be a non-empty string when provided")
     normalized_model = requested_model.strip()
-    if normalized_model != active_model:
+    if not _matches_active_model(active_model, normalized_model):
         raise ResponsesProxyError(
             HTTPStatus.BAD_REQUEST,
             f"requested model '{normalized_model}' does not match active model '{active_model}'",
         )
-    return normalized_model
+    return active_model
+
+
+def _matches_active_model(active_model: str, requested_model: str) -> bool:
+    if requested_model == active_model:
+        return True
+    active_key = frontend_model_key(active_model)
+    if requested_model == active_key:
+        return True
+    if requested_model == f"{MODEL_PROVIDER_PREFIX}{active_key}":
+        return True
+    return False
+
+
+def _build_openai_chat_completions_payload(
+    runtime: HostRuntimeState,
+    payload: dict[str, object],
+    *,
+    stream: bool,
+) -> dict[str, object]:
+    model_name = _resolve_requested_model(runtime, payload)
+    messages_value = payload.get("messages")
+    if not isinstance(messages_value, list) or not messages_value:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            "messages must be a non-empty list for chat completions",
+        )
+    for index, message in enumerate(messages_value):
+        if not isinstance(message, dict):
+            raise ResponsesProxyError(
+                HTTPStatus.BAD_REQUEST,
+                f"messages[{index}] must be an object",
+            )
+
+    backend_payload = deepcopy(payload)
+    backend_payload["model"] = model_name
+    backend_payload["stream"] = stream
+    if "max_completion_tokens" in backend_payload and "max_tokens" not in backend_payload:
+        backend_payload["max_tokens"] = backend_payload.pop("max_completion_tokens")
+    return backend_payload
 
 
 def _build_backend_chat_payload(

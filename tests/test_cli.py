@@ -1176,8 +1176,36 @@ class CLITests(unittest.TestCase):
             self.assertTrue(payload["acquisition"]["attempts"][2]["ok"])
             self.assertTrue(payload["model"]["model"].startswith("glm-4.7-flash-claude-4.5-opus"))
 
-    def test_host_acquire_backend_plans_from_llmfit_when_backend_is_missing(self) -> None:
+    def test_host_acquire_backend_downloads_from_llmfit_plan_when_backend_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            installation = SimpleNamespace(
+                as_dict=lambda: {
+                    "backend": "llama.cpp",
+                    "acquisition_method": "downloaded_source_build",
+                    "backend_root": str(Path(tmpdir) / ".aistackd" / "host" / "backends" / "llama.cpp" / "install"),
+                    "server_binary": str(Path(tmpdir) / ".aistackd" / "host" / "backends" / "llama.cpp" / "install" / "bin" / "llama-server"),
+                    "cli_binary": str(Path(tmpdir) / ".aistackd" / "host" / "backends" / "llama.cpp" / "install" / "bin" / "llama-cli"),
+                    "configured_at": "2026-03-10T00:00:00+00:00",
+                }
+            )
+            acquisition = SimpleNamespace(
+                strategy="downloaded_source_build",
+                installation=installation,
+                attempts=(
+                    SimpleNamespace(strategy="downloaded_prebuilt", ok=False, detail="no supported official prebuilt asset is pinned"),
+                    SimpleNamespace(strategy="downloaded_source_build", ok=True, detail="downloaded and built source fallback"),
+                ),
+                to_dict=lambda: {
+                    "strategy": "downloaded_source_build",
+                    "installation": installation.as_dict(),
+                    "attempts": [
+                        {"strategy": "downloaded_prebuilt", "ok": False, "detail": "no supported official prebuilt asset is pinned"},
+                        {"strategy": "downloaded_source_build", "ok": True, "detail": "downloaded and built source fallback"},
+                    ],
+                    "warnings": [],
+                },
+            )
+
             with (
                 patch(
                     "aistackd.runtime.prereqs.detect_hardware_with_llmfit",
@@ -1188,6 +1216,7 @@ class CLITests(unittest.TestCase):
                     ),
                 ),
                 patch("aistackd.runtime.backends.shutil.which", return_value=None),
+                patch("aistackd.cli.commands.host.acquire_managed_llama_cpp_installation", return_value=acquisition),
             ):
                 exit_code, stdout, stderr = invoke(
                     ["host", "acquire-backend", "--project-root", tmpdir, "--format", "json"]
@@ -1196,12 +1225,87 @@ class CLITests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
             payload = json.loads(stdout)
-            self.assertEqual(payload["action"], "planned")
+            self.assertEqual(payload["action"], "acquired")
             self.assertEqual(payload["acquisition_plan"]["flavor"], "rocm")
+            self.assertEqual(payload["acquisition"]["strategy"], "downloaded_source_build")
             self.assertEqual(
                 payload["acquisition_plan"]["source_environment"]["HSA_OVERRIDE_GFX_VERSION"],
                 "11.0.0",
             )
+
+    def test_host_install_llmfit_reports_installed_tool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            install_result = SimpleNamespace(
+                to_dict=lambda: {
+                    "action": "installed",
+                    "tool": {
+                        "tool": "llmfit",
+                        "executable_path": str(Path(tmpdir) / "bin" / "llmfit"),
+                        "version": "llmfit 0.6.2",
+                    },
+                }
+            )
+
+            with patch("aistackd.cli.commands.host.install_tool", return_value=install_result):
+                exit_code, stdout, stderr = invoke(["host", "install-llmfit", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("installed tool 'llmfit'", stdout)
+            self.assertIn("version: llmfit 0.6.2", stdout)
+
+    def test_host_bootstrap_reports_tool_installs_and_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_store = SimpleNamespace(save_backend_installation=unittest.mock.Mock(return_value=True))
+            llmfit_result = SimpleNamespace(
+                to_dict=lambda: {
+                    "action": "installed",
+                    "tool": {
+                        "tool": "llmfit",
+                        "executable_path": str(Path(tmpdir) / "bin" / "llmfit"),
+                    },
+                }
+            )
+            hf_result = SimpleNamespace(
+                to_dict=lambda: {
+                    "action": "installed",
+                    "tool": {
+                        "tool": "hf",
+                        "executable_path": str(Path(tmpdir) / "bin" / "hf"),
+                    },
+                }
+            )
+            report = SimpleNamespace(
+                acquisition_plan=SimpleNamespace(to_dict=lambda: {"flavor": "cpu"}),
+                hardware_detection=SimpleNamespace(issues=(), to_dict=lambda: {"ok": True}),
+                to_dict=lambda: {"ok": True, "tool_checks": [], "acquisition_plan": {"flavor": "cpu"}},
+            )
+            installation = SimpleNamespace(
+                as_dict=lambda: {
+                    "backend_root": str(Path(tmpdir) / ".aistackd" / "host" / "backends" / "llama.cpp" / "install"),
+                }
+            )
+            acquisition = SimpleNamespace(
+                installation=installation,
+                to_dict=lambda: {
+                    "strategy": "downloaded_prebuilt",
+                },
+            )
+
+            with (
+                patch("aistackd.cli.commands.host.install_tool", side_effect=[llmfit_result, hf_result]),
+                patch("aistackd.cli.commands.host.inspect_host_environment", return_value=report),
+                patch("aistackd.cli.commands.host.acquire_managed_llama_cpp_installation", return_value=acquisition),
+                patch("aistackd.cli.commands.host.HostStateStore", return_value=fake_store),
+            ):
+                exit_code, stdout, stderr = invoke(["host", "bootstrap", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("host bootstrap complete", stdout)
+            self.assertIn("tool=llmfit", stdout)
+            self.assertIn("tool=hf", stdout)
+            self.assertIn("backend_root=", stdout)
 
     def test_host_acquire_backend_from_prebuilt_root_creates_managed_install(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1339,8 +1443,20 @@ class CLITests(unittest.TestCase):
             self.assertIn("aistackd", opencode_payload["provider"])
             self.assertEqual(opencode_payload["model"], "aistackd/local-model")
             self.assertEqual(
+                opencode_payload["provider"]["aistackd"]["options"]["apiKey"],
+                "{env:AISTACKD_API_KEY}",
+            )
+            self.assertEqual(
                 opencode_payload["provider"]["aistackd"]["models"]["local-model"]["name"],
                 "local-model",
+            )
+            self.assertEqual(
+                opencode_payload["provider"]["aistackd"]["models"]["local-model"]["limit"]["context"],
+                32768,
+            )
+            self.assertEqual(
+                opencode_payload["provider"]["aistackd"]["models"]["local-model"]["limit"]["output"],
+                8192,
             )
 
             codex_payload = tomllib.loads(

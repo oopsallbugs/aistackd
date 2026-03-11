@@ -33,6 +33,7 @@ from aistackd.models.sources import (
     resolve_source_model,
     search_models,
 )
+from aistackd.runtime.bootstrap import BootstrapError, resolve_tool_binary
 from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.state.host import HostStateError, HostStateStore, InstalledModelNotFoundError
 from aistackd.state.profiles import Profile, ProfileStore, ProfileStoreError
@@ -203,7 +204,10 @@ def handle_set(args: argparse.Namespace) -> int:
 def handle_search(args: argparse.Namespace) -> int:
     """Search the live llmfit catalog."""
     try:
-        models = search_models(args.query, llmfit_binary=args.llmfit_binary)
+        models = search_models(
+            args.query,
+            llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary),
+        )
     except (ModelSourceError, ValueError) as exc:
         return _exit_with_error(str(exc))
 
@@ -229,7 +233,7 @@ def handle_search(args: argparse.Namespace) -> int:
 def handle_recommend(args: argparse.Namespace) -> int:
     """Show policy-ranked llmfit recommendations."""
     try:
-        models = recommend_models(llmfit_binary=args.llmfit_binary)
+        models = recommend_models(llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary))
     except (ModelSourceError, ValueError) as exc:
         return _exit_with_error(str(exc))
 
@@ -257,7 +261,9 @@ def handle_browse(args: argparse.Namespace) -> int:
     before = snapshot_gguf_roots(watch_roots)
 
     try:
-        command, llmfit_exit_code = launch_llmfit_browser(llmfit_binary=args.llmfit_binary)
+        command, llmfit_exit_code = launch_llmfit_browser(
+            llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary)
+        )
     except LlmfitCommandError as exc:
         return _exit_with_error(str(exc))
 
@@ -359,7 +365,7 @@ def handle_install(args: argparse.Namespace) -> int:
             requested_model_name,
             source=args.source,
             gguf_path=args.gguf_path,
-            llmfit_binary=args.llmfit_binary,
+            llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary),
             prefer_hugging_face=hf_repo is not None,
         )
         acquisition = acquire_managed_model_artifact(
@@ -370,8 +376,8 @@ def handle_install(args: argparse.Namespace) -> int:
             preferred_source=args.source,
             hugging_face_repo=hf_repo,
             hugging_face_file=hf_file,
-            hugging_face_cli=args.hf_cli,
-            llmfit_binary=args.llmfit_binary,
+            hugging_face_cli=_resolve_hf_binary(args.project_root, args.hf_cli),
+            llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary),
             llmfit_quant=args.quant,
             llmfit_budget_gb=args.budget_gb,
         )
@@ -565,3 +571,17 @@ def _exit_with_error(message: str) -> int:
     """Print an error message and return a failing exit code."""
     print(message, file=sys.stderr)
     return 1
+
+
+def _resolve_llmfit_binary(project_root: Path, requested_binary: str) -> str:
+    try:
+        return resolve_tool_binary(project_root, "llmfit", requested=requested_binary)
+    except BootstrapError:
+        return requested_binary
+
+
+def _resolve_hf_binary(project_root: Path, requested_binary: str) -> str:
+    try:
+        return resolve_tool_binary(project_root, "hf", requested=requested_binary)
+    except BootstrapError:
+        return requested_binary

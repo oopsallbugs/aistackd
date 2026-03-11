@@ -26,6 +26,7 @@ from aistackd.models.sources import (
     resolve_source_model,
     search_models,
 )
+from aistackd.runtime.bootstrap import BootstrapError, resolve_tool_binary
 from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.runtime.host import HostServiceConfig
 from aistackd.state.host import HostStateError, HostStateStore, InstalledModelNotFoundError
@@ -65,10 +66,14 @@ def build_runtime_admin_payload(store: HostStateStore, service: HostServiceConfi
     }
 
 
-def search_models_admin(payload: dict[str, object]) -> dict[str, object]:
+def search_models_admin(payload: dict[str, object], project_root: Path | None = None) -> dict[str, object]:
     """Search the live llmfit catalog for the admin API."""
     query = _optional_string(payload, "query")
-    llmfit_binary = _string_or_default(payload.get("llmfit_binary"), default=LLMFIT_BINARY_NAME)
+    llmfit_binary = _resolve_tool_binary(
+        project_root or Path.cwd(),
+        "llmfit",
+        _string_or_default(payload.get("llmfit_binary"), default=LLMFIT_BINARY_NAME),
+    )
     try:
         models = search_models(query, llmfit_binary=llmfit_binary)
     except (ModelSourceError, ValueError) as exc:
@@ -80,9 +85,13 @@ def search_models_admin(payload: dict[str, object]) -> dict[str, object]:
     }
 
 
-def recommend_models_admin(payload: dict[str, object]) -> dict[str, object]:
+def recommend_models_admin(payload: dict[str, object], project_root: Path | None = None) -> dict[str, object]:
     """Return llmfit recommendations for the admin API."""
-    llmfit_binary = _string_or_default(payload.get("llmfit_binary"), default=LLMFIT_BINARY_NAME)
+    llmfit_binary = _resolve_tool_binary(
+        project_root or Path.cwd(),
+        "llmfit",
+        _string_or_default(payload.get("llmfit_binary"), default=LLMFIT_BINARY_NAME),
+    )
     try:
         models = recommend_models(llmfit_binary=llmfit_binary)
     except (ModelSourceError, ValueError) as exc:
@@ -104,8 +113,16 @@ def install_model_admin(project_root: Path, payload: dict[str, object]) -> dict[
 
     explicit_gguf_path = _optional_path(payload, "gguf_path")
     local_roots = _path_list(payload.get("local_roots"), field_name="local_roots")
-    hugging_face_cli = _string_or_default(payload.get("hf_cli"), default=DEFAULT_HUGGING_FACE_CLI)
-    llmfit_binary = _string_or_default(payload.get("llmfit_binary"), default=LLMFIT_BINARY_NAME)
+    hugging_face_cli = _resolve_tool_binary(
+        project_root,
+        "hf",
+        _string_or_default(payload.get("hf_cli"), default=DEFAULT_HUGGING_FACE_CLI),
+    )
+    llmfit_binary = _resolve_tool_binary(
+        project_root,
+        "llmfit",
+        _string_or_default(payload.get("llmfit_binary"), default=LLMFIT_BINARY_NAME),
+    )
     llmfit_quant = _optional_string(payload, "quant")
     llmfit_budget_gb = _optional_positive_number(payload.get("budget_gb"), field_name="budget_gb")
     activate = _bool_or_default(payload.get("activate"), field_name="activate", default=False)
@@ -280,6 +297,13 @@ def _path_list(value: object, *, field_name: str) -> tuple[Path, ...]:
             raise AdminApiError(HTTPStatus.BAD_REQUEST, f"{field_name} entries must be non-empty path strings")
         paths.append(Path(entry).expanduser())
     return tuple(paths)
+
+
+def _resolve_tool_binary(project_root: Path, tool_name: str, requested_binary: str) -> str:
+    try:
+        return resolve_tool_binary(project_root, tool_name, requested=requested_binary)
+    except BootstrapError:
+        return requested_binary
 
 
 def _bool_or_default(value: object, *, field_name: str, default: bool) -> bool:

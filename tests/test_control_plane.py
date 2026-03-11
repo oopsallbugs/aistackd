@@ -251,6 +251,170 @@ class ControlPlaneTests(unittest.TestCase):
                 backend_server.server_close()
                 backend_thread.join(timeout=1)
 
+    def test_control_plane_proxies_chat_completions_requests_to_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend_server = _create_fake_backend_server()
+            backend_thread = threading.Thread(target=backend_server.serve_forever, daemon=True)
+            backend_thread.start()
+
+            try:
+                backend_port = backend_server.server_address[1]
+                _create_ready_host_state(Path(tmpdir), backend_port=backend_port)
+
+                with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                    server = create_control_plane_server(
+                        Path(tmpdir),
+                        HostServiceConfig(
+                            bind_host="127.0.0.1",
+                            port=0,
+                            api_key_env="AISTACKD_API_KEY",
+                            backend_bind_host="127.0.0.1",
+                            backend_port=backend_port,
+                        ),
+                    )
+
+                try:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    time.sleep(0.02)
+                    port = server.server_address[1]
+
+                    chat_payload = _request_json(
+                        f"http://127.0.0.1:{port}/v1/chat/completions",
+                        token="test-key",
+                        method="POST",
+                        payload={
+                            "messages": [{"role": "user", "content": "say hello"}],
+                            "stream": False,
+                        },
+                    )
+
+                    self.assertEqual(chat_payload["object"], "chat.completion")
+                    self.assertEqual(chat_payload["choices"][0]["message"]["content"], "Hello from llama-server")
+
+                    backend_request = backend_server.last_request_payload
+                    self.assertIsNotNone(backend_request)
+                    self.assertEqual(backend_request["model"], "qwen2.5-coder-7b-instruct-q4-k-m")
+                    self.assertEqual(backend_request["messages"][0]["content"], "say hello")
+                    self.assertFalse(backend_request["stream"])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=1)
+            finally:
+                backend_server.shutdown()
+                backend_server.server_close()
+                backend_thread.join(timeout=1)
+
+    def test_control_plane_accepts_provider_prefixed_frontend_model_key_for_chat_completions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend_server = _create_fake_backend_server()
+            backend_thread = threading.Thread(target=backend_server.serve_forever, daemon=True)
+            backend_thread.start()
+
+            try:
+                backend_port = backend_server.server_address[1]
+                _create_ready_host_state(Path(tmpdir), backend_port=backend_port)
+
+                with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                    server = create_control_plane_server(
+                        Path(tmpdir),
+                        HostServiceConfig(
+                            bind_host="127.0.0.1",
+                            port=0,
+                            api_key_env="AISTACKD_API_KEY",
+                            backend_bind_host="127.0.0.1",
+                            backend_port=backend_port,
+                        ),
+                    )
+
+                try:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    time.sleep(0.02)
+                    port = server.server_address[1]
+
+                    chat_payload = _request_json(
+                        f"http://127.0.0.1:{port}/v1/chat/completions",
+                        token="test-key",
+                        method="POST",
+                        payload={
+                            "model": "aistackd/qwen2-5-coder-7b-instruct-q4-k-m",
+                            "messages": [{"role": "user", "content": "say hello"}],
+                            "stream": False,
+                        },
+                    )
+
+                    self.assertEqual(chat_payload["object"], "chat.completion")
+                    backend_request = backend_server.last_request_payload
+                    self.assertIsNotNone(backend_request)
+                    self.assertEqual(
+                        backend_request["model"],
+                        "qwen2.5-coder-7b-instruct-q4-k-m",
+                    )
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=1)
+            finally:
+                backend_server.shutdown()
+                backend_server.server_close()
+                backend_thread.join(timeout=1)
+
+    def test_control_plane_streams_chat_completions_chunks_from_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend_server = _create_fake_backend_server()
+            backend_thread = threading.Thread(target=backend_server.serve_forever, daemon=True)
+            backend_thread.start()
+
+            try:
+                backend_port = backend_server.server_address[1]
+                _create_ready_host_state(Path(tmpdir), backend_port=backend_port)
+
+                with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                    server = create_control_plane_server(
+                        Path(tmpdir),
+                        HostServiceConfig(
+                            bind_host="127.0.0.1",
+                            port=0,
+                            api_key_env="AISTACKD_API_KEY",
+                            backend_bind_host="127.0.0.1",
+                            backend_port=backend_port,
+                        ),
+                    )
+
+                try:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    time.sleep(0.02)
+                    port = server.server_address[1]
+
+                    content_type, events = _request_sse_events(
+                        f"http://127.0.0.1:{port}/v1/chat/completions",
+                        token="test-key",
+                        payload={
+                            "messages": [{"role": "user", "content": "say hello"}],
+                            "stream": True,
+                        },
+                    )
+
+                    self.assertTrue(content_type.startswith("text/event-stream"))
+                    self.assertEqual(events[0]["object"], "chat.completion.chunk")
+                    self.assertEqual(events[0]["choices"][0]["delta"]["content"], "Hello")
+                    self.assertEqual(events[1]["choices"][0]["delta"]["content"], " from llama-server")
+
+                    backend_request = backend_server.last_request_payload
+                    self.assertIsNotNone(backend_request)
+                    self.assertTrue(backend_request["stream"])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=1)
+            finally:
+                backend_server.shutdown()
+                backend_server.server_close()
+                backend_thread.join(timeout=1)
+
     def test_control_plane_streams_function_tool_events_and_allows_follow_up(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend_server = _create_fake_backend_server()
@@ -667,13 +831,17 @@ def _request_sse_events(
             line = raw_line.decode("utf-8").rstrip("\r\n")
             if not line:
                 if data_lines:
-                    events.append(json.loads("\n".join(data_lines)))
+                    payload = "\n".join(data_lines)
+                    if payload != "[DONE]":
+                        events.append(json.loads(payload))
                     data_lines = []
                 continue
             if line.startswith("data:"):
                 data_lines.append(line[5:].lstrip())
         if data_lines:
-            events.append(json.loads("\n".join(data_lines)))
+            payload = "\n".join(data_lines)
+            if payload != "[DONE]":
+                events.append(json.loads(payload))
     return content_type, events
 
 

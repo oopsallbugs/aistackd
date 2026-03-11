@@ -13,8 +13,10 @@ from unittest.mock import patch
 from aistackd.control_plane.responses import (
     ResponsesProxyError,
     ResponsesStateCache,
+    open_chat_completions_stream,
     open_responses_stream,
     parse_json_request_body,
+    proxy_chat_completions_request,
     proxy_responses_request,
 )
 from aistackd.models.sources import local_source_model
@@ -115,6 +117,171 @@ class ControlPlaneResponsesTests(unittest.TestCase):
             self.assertEqual(backend_payload["max_tokens"], 64)
             self.assertEqual(backend_payload["temperature"], 0.1)
             self.assertFalse(backend_payload["stream"])
+
+    def test_proxy_chat_completions_request_passes_openai_payload_to_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+            captured_request: dict[str, object] = {}
+
+            class _FakeResponse:
+                def __init__(self, payload: dict[str, object]) -> None:
+                    self._payload = payload
+
+                def read(self) -> bytes:
+                    return json.dumps(self._payload).encode("utf-8")
+
+                def __enter__(self) -> "_FakeResponse":
+                    return self
+
+                def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                    return False
+
+            def fake_urlopen(request_obj: object, timeout: float = 30) -> _FakeResponse:
+                from urllib.request import Request
+
+                assert isinstance(request_obj, Request)
+                captured_request["url"] = request_obj.full_url
+                captured_request["payload"] = json.loads(request_obj.data.decode("utf-8"))
+                return _FakeResponse(
+                    {
+                        "id": "chatcmpl_fake",
+                        "object": "chat.completion",
+                        "created": 1741305600,
+                        "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "stop",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "Hello from llama-server",
+                                },
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 5,
+                            "total_tokens": 15,
+                        },
+                    }
+                )
+
+            with patch("aistackd.control_plane.responses.request.urlopen", side_effect=fake_urlopen):
+                payload = proxy_chat_completions_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "messages": [{"role": "user", "content": "say hello"}],
+                        "temperature": 0.3,
+                        "max_completion_tokens": 32,
+                    },
+                )
+
+            self.assertEqual(payload["object"], "chat.completion")
+            self.assertEqual(payload["choices"][0]["message"]["content"], "Hello from llama-server")
+            self.assertEqual(captured_request["url"], "http://127.0.0.1:8011/v1/chat/completions")
+            backend_payload = captured_request["payload"]
+            self.assertEqual(backend_payload["model"], "qwen2.5-coder-7b-instruct-q4-k-m")
+            self.assertEqual(backend_payload["messages"][0]["content"], "say hello")
+            self.assertEqual(backend_payload["temperature"], 0.3)
+            self.assertEqual(backend_payload["max_tokens"], 32)
+            self.assertNotIn("max_completion_tokens", backend_payload)
+            self.assertFalse(backend_payload["stream"])
+
+    def test_proxy_chat_completions_request_accepts_frontend_model_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+            captured_request: dict[str, object] = {}
+
+            class _FakeResponse:
+                def __init__(self, payload: dict[str, object]) -> None:
+                    self._payload = payload
+
+                def read(self) -> bytes:
+                    return json.dumps(self._payload).encode("utf-8")
+
+                def __enter__(self) -> "_FakeResponse":
+                    return self
+
+                def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                    return False
+
+            def fake_urlopen(request_obj: object, timeout: float = 30) -> _FakeResponse:
+                from urllib.request import Request
+
+                assert isinstance(request_obj, Request)
+                captured_request["payload"] = json.loads(request_obj.data.decode("utf-8"))
+                return _FakeResponse(
+                    {
+                        "id": "chatcmpl_fake",
+                        "object": "chat.completion",
+                        "created": 1741305600,
+                        "model": "qwen2.5-coder-7b-instruct-q4-k-m",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "stop",
+                                "message": {"role": "assistant", "content": "Hello"},
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                    }
+                )
+
+            with patch("aistackd.control_plane.responses.request.urlopen", side_effect=fake_urlopen):
+                payload = proxy_chat_completions_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "model": "aistackd/qwen2-5-coder-7b-instruct-q4-k-m",
+                        "messages": [{"role": "user", "content": "say hello"}],
+                    },
+                )
+
+            self.assertEqual(payload["object"], "chat.completion")
+            self.assertEqual(
+                captured_request["payload"]["model"],
+                "qwen2.5-coder-7b-instruct-q4-k-m",
+            )
+
+    def test_open_chat_completions_stream_passes_sse_frames_through(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+
+            class _FakeResponse:
+                def __iter__(self):
+                    frames = (
+                        'data: {"id":"chatcmpl_fake","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n\n',
+                        'data: {"id":"chatcmpl_fake","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}\n\n',
+                        "data: [DONE]\n\n",
+                    )
+                    for frame in frames:
+                        for line in frame.splitlines(keepends=True):
+                            yield line.encode("utf-8")
+
+                def close(self) -> None:
+                    return None
+
+            with patch("aistackd.control_plane.responses.request.urlopen", return_value=_FakeResponse()):
+                session = open_chat_completions_stream(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "messages": [{"role": "user", "content": "say hello"}],
+                        "stream": True,
+                    },
+                )
+                frames = list(session.iter_frames())
+                session.close()
+
+            self.assertEqual(
+                frames,
+                [
+                    '{"id":"chatcmpl_fake","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}',
+                    '{"id":"chatcmpl_fake","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}',
+                    "[DONE]",
+                ],
+            )
 
     def test_proxy_responses_request_translates_function_tool_calls_and_follow_up_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

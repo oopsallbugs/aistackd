@@ -31,6 +31,8 @@ class BackendLaunchPlan:
     artifact_path: str
     server_binary: str
     log_path: str
+    context_size: int
+    predict_limit: int
 
     @property
     def base_url(self) -> str:
@@ -49,6 +51,8 @@ class BackendLaunchPlan:
             "artifact_path": self.artifact_path,
             "server_binary": self.server_binary,
             "log_path": self.log_path,
+            "context_size": self.context_size,
+            "predict_limit": self.predict_limit,
         }
 
 
@@ -92,6 +96,10 @@ def build_backend_launch_plan(store: HostStateStore, service: HostServiceConfig)
         normalized_service.backend_bind_host,
         "--port",
         str(normalized_service.backend_port),
+        "--ctx-size",
+        str(normalized_service.backend_context_size),
+        "--predict",
+        str(normalized_service.backend_predict_limit),
     )
     return BackendLaunchPlan(
         backend=runtime.backend,
@@ -102,6 +110,8 @@ def build_backend_launch_plan(store: HostStateStore, service: HostServiceConfig)
         artifact_path=active_record.artifact_path,
         server_binary=runtime.backend_installation.server_binary,
         log_path=str(log_path),
+        context_size=normalized_service.backend_context_size,
+        predict_limit=normalized_service.backend_predict_limit,
     )
 
 
@@ -325,6 +335,14 @@ def _terminate_pid(pid: int) -> int | None:
 def _pid_exists(pid: int) -> bool:
     if pid < 1:
         return False
+    stat_path = Path("/proc") / str(pid) / "stat"
+    if stat_path.exists():
+        try:
+            stat_fields = stat_path.read_text(encoding="utf-8").split()
+        except OSError:
+            stat_fields = ()
+        if len(stat_fields) >= 3 and stat_fields[2] == "Z":
+            return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

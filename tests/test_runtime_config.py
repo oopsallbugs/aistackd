@@ -28,6 +28,8 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(runtime_config.responses_base_url, "http://127.0.0.1:8000/v1")
         self.assertEqual(runtime_config.model, "local-model")
         self.assertEqual(runtime_config.frontend_model_key, "local-model")
+        self.assertEqual(runtime_config.frontend_context_limit, 32768)
+        self.assertEqual(runtime_config.frontend_output_limit, 8192)
         self.assertEqual(runtime_config.frontend_targets, ("codex",))
 
     def test_sync_manifest_uses_runtime_config_targets(self) -> None:
@@ -55,5 +57,13 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(
             manifest.targets[1].provider_payload["provider"]["aistackd"]["models"]["lab-model"]["name"],
             "lab-model",
+        )
+        self.assertEqual(
+            manifest.targets[1].provider_payload["provider"]["aistackd"]["models"]["lab-model"]["limit"]["context"],
+            32768,
+        )
+        self.assertEqual(
+            manifest.targets[1].provider_payload["provider"]["aistackd"]["models"]["lab-model"]["limit"]["output"],
+            8192,
         )
         self.assertTrue(manifest.targets[0].managed_paths)

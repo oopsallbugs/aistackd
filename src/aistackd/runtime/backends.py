@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from aistackd.models.sources import BACKEND_ACQUISITION_POLICY, PRIMARY_BACKEND
+from aistackd.runtime.bootstrap import (
+    LLAMA_CPP_BOOTSTRAP_MANIFEST,
+    BootstrapError,
+    download_url_to_path,
+    extract_archive,
+    resolve_llama_cpp_prebuilt_asset,
+)
 from aistackd.runtime.hardware import HardwareProfile
 from aistackd.state.host import HostBackendInstallation, HostStatePaths
 
@@ -267,14 +276,57 @@ def acquire_managed_llama_cpp_installation(
     """Acquire a managed llama.cpp installation using the planned strategy order."""
     if prebuilt_root is not None and prebuilt_archive is not None:
         raise ValueError("provide only one prebuilt source: --prebuilt-root or --prebuilt-archive")
-    if prebuilt_root is None and prebuilt_archive is None and source_root is None:
-        raise ValueError(
-            "no managed backend acquisition input was provided; use --prebuilt-root, --prebuilt-archive, or --source-root"
-        )
 
     paths = HostStatePaths.from_project_root(project_root.resolve())
     attempts: list[BackendAcquisitionAttempt] = []
     warnings = list(plan.warnings)
+
+    if prebuilt_root is None and prebuilt_archive is None and source_root is None:
+        remote_asset = resolve_llama_cpp_prebuilt_asset(plan.flavor)
+        if remote_asset is not None:
+            try:
+                installation = _acquire_from_remote_prebuilt(paths, remote_asset)
+            except BackendAcquisitionError as exc:
+                attempts.append(BackendAcquisitionAttempt(strategy="downloaded_prebuilt", ok=False, detail=str(exc)))
+            else:
+                attempts.append(
+                    BackendAcquisitionAttempt(strategy="downloaded_prebuilt", ok=True, detail="downloaded managed prebuilt")
+                )
+                return BackendAcquisitionResult(
+                    strategy="downloaded_prebuilt",
+                    installation=installation,
+                    attempts=tuple(attempts),
+                    warnings=tuple(warnings),
+                )
+        else:
+            attempts.append(
+                BackendAcquisitionAttempt(
+                    strategy="downloaded_prebuilt",
+                    ok=False,
+                    detail=(
+                        "no supported official prebuilt asset is pinned for "
+                        f"{platform.system().lower()}/{platform.machine().lower()} flavor={plan.flavor}"
+                    ),
+                )
+            )
+
+        try:
+            installation = _acquire_from_remote_source(paths, plan, jobs=jobs)
+        except BackendAcquisitionError as exc:
+            attempts.append(BackendAcquisitionAttempt(strategy="downloaded_source_build", ok=False, detail=str(exc)))
+        else:
+            attempts.append(
+                BackendAcquisitionAttempt(strategy="downloaded_source_build", ok=True, detail="downloaded and built source fallback")
+            )
+            return BackendAcquisitionResult(
+                strategy="downloaded_source_build",
+                installation=installation,
+                attempts=tuple(attempts),
+                warnings=tuple(warnings),
+            )
+
+        detail = " ; ".join(f"{attempt.strategy}: {attempt.detail}" for attempt in attempts) or "no acquisition attempt was made"
+        raise BackendAcquisitionError(detail)
 
     if prebuilt_root is not None:
         try:
@@ -427,6 +479,7 @@ def _acquire_from_source_build(
         raise BackendAcquisitionError(f"source root '{normalized_source}' is not a directory")
     if not (normalized_source / "CMakeLists.txt").exists():
         raise BackendAcquisitionError(f"source root '{normalized_source}' does not contain a CMakeLists.txt file")
+    _ensure_source_build_toolchain()
 
     workspace_root = paths.backend_workspace_dir(PRIMARY_BACKEND)
     source_copy_root = paths.backend_source_dir(PRIMARY_BACKEND)
@@ -475,6 +528,80 @@ def _acquire_from_source_build(
     return adopt_backend_installation(discovery, acquisition_method="acquired_source_build")
 
 
+def _acquire_from_remote_prebuilt(paths: HostStatePaths, asset: LlamaCppPrebuiltAsset) -> HostBackendInstallation:
+    workspace_root = paths.backend_workspace_dir(PRIMARY_BACKEND)
+    extract_root = paths.backend_extract_dir(PRIMARY_BACKEND)
+    _reset_backend_workspace(workspace_root)
+    archive_name = Path(asset.url).name or "llama.cpp-prebuilt.zip"
+    archive_path = workspace_root / archive_name
+    try:
+        checksum = download_url_to_path(asset.url, archive_path)
+    except BootstrapError as exc:
+        raise BackendAcquisitionError(str(exc)) from exc
+    if asset.checksum is not None and checksum != asset.checksum:
+        raise BackendAcquisitionError(
+            f"downloaded prebuilt checksum mismatch for '{asset.url}': expected {asset.checksum}, got {checksum}"
+        )
+    try:
+        extract_archive(archive_path, extract_root, archive_kind=asset.archive_kind)
+    except BootstrapError as exc:
+        raise BackendAcquisitionError(str(exc)) from exc
+
+    candidate_root = _find_archive_backend_root(extract_root)
+    if candidate_root is None:
+        raise BackendAcquisitionError(f"downloaded prebuilt '{asset.url}' did not contain a llama.cpp installation")
+
+    install_root = paths.backend_install_dir(PRIMARY_BACKEND)
+    shutil.copytree(candidate_root, install_root)
+    discovery = discover_llama_cpp_installation(backend_root=install_root)
+    if not discovery.found:
+        issues = "; ".join(discovery.issues) if discovery.issues else "no llama-server binary was found after downloading prebuilt"
+        raise BackendAcquisitionError(issues)
+    return adopt_backend_installation(discovery, acquisition_method="downloaded_prebuilt")
+
+
+def _acquire_from_remote_source(
+    paths: HostStatePaths,
+    plan: LlamaCppAcquisitionPlan,
+    *,
+    jobs: int | None,
+) -> HostBackendInstallation:
+    workspace_root = paths.backend_workspace_dir(PRIMARY_BACKEND)
+    _reset_backend_workspace(workspace_root)
+    archive_path = workspace_root / f"llama.cpp-{LLAMA_CPP_BOOTSTRAP_MANIFEST.version}.tar.gz"
+    try:
+        checksum = download_url_to_path(LLAMA_CPP_BOOTSTRAP_MANIFEST.source_url, archive_path)
+    except BootstrapError as exc:
+        raise BackendAcquisitionError(str(exc)) from exc
+    if (
+        LLAMA_CPP_BOOTSTRAP_MANIFEST.source_checksum is not None
+        and checksum != LLAMA_CPP_BOOTSTRAP_MANIFEST.source_checksum
+    ):
+        raise BackendAcquisitionError(
+            "downloaded source checksum mismatch for "
+            f"'{LLAMA_CPP_BOOTSTRAP_MANIFEST.source_url}': expected "
+            f"{LLAMA_CPP_BOOTSTRAP_MANIFEST.source_checksum}, got {checksum}"
+        )
+    with tempfile.TemporaryDirectory(prefix="aistackd-llama-source-") as tmpdir:
+        extract_root = Path(tmpdir) / "extract"
+        try:
+            extract_archive(archive_path, extract_root, archive_kind="tar.gz")
+        except BootstrapError as exc:
+            raise BackendAcquisitionError(str(exc)) from exc
+        source_root = _find_source_tree_root(extract_root)
+        if source_root is None:
+            raise BackendAcquisitionError("downloaded llama.cpp source archive did not contain a buildable source tree")
+        installation = _acquire_from_source_build(paths, plan, source_root, jobs=jobs)
+    return HostBackendInstallation(
+        backend=installation.backend,
+        acquisition_method="downloaded_source_build",
+        backend_root=installation.backend_root,
+        server_binary=installation.server_binary,
+        cli_binary=installation.cli_binary,
+        configured_at=installation.configured_at,
+    )
+
+
 def _reset_backend_workspace(workspace_root: Path) -> None:
     if workspace_root.exists():
         shutil.rmtree(workspace_root)
@@ -488,6 +615,24 @@ def _find_archive_backend_root(extract_root: Path) -> Path | None:
         if discovery.found:
             return candidate
     return None
+
+
+def _find_source_tree_root(extract_root: Path) -> Path | None:
+    candidates = [extract_root, *(path for path in sorted(extract_root.rglob("*")) if path.is_dir())]
+    for candidate in candidates:
+        if (candidate / "CMakeLists.txt").exists():
+            return candidate
+    return None
+
+
+def _ensure_source_build_toolchain() -> None:
+    gcc = shutil.which("gcc")
+    gxx = shutil.which("g++")
+    clang = shutil.which("clang")
+    clangxx = shutil.which("clang++")
+    if (gcc is not None and gxx is not None) or (clang is not None and clangxx is not None):
+        return
+    raise BackendAcquisitionError("source fallback requires gcc/g++ or clang/clang++ on PATH")
 
 
 def _run_backend_command(

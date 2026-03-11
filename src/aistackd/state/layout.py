@@ -91,6 +91,7 @@ class ProjectLayout:
             PathCheck("host_logs_dir", str(host_paths.host_logs_dir), host_paths.host_logs_dir.exists()),
             PathCheck("responses_state_dir", str(host_paths.responses_state_dir), host_paths.responses_state_dir.exists()),
             PathCheck("installed_models_file", str(host_paths.installed_models_path), host_paths.installed_models_path.exists()),
+            PathCheck("installed_tools_file", str(host_paths.installed_tools_path), host_paths.installed_tools_path.exists()),
             PathCheck("sync_state_dir", str(sync_paths.sync_dir), sync_paths.sync_dir.exists()),
             PathCheck("ownership_manifest_file", str(sync_paths.ownership_manifest_path), sync_paths.ownership_manifest_path.exists()),
         )

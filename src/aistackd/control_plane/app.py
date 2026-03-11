@@ -15,6 +15,7 @@ from aistackd.control_plane import (
     ADMIN_MODELS_RECOMMEND_ENDPOINT,
     ADMIN_MODELS_SEARCH_ENDPOINT,
     ADMIN_RUNTIME_ENDPOINT,
+    CHAT_COMPLETIONS_ENDPOINT,
     HEALTH_ENDPOINT,
     MODELS_ENDPOINT,
     RESPONSES_ENDPOINT,
@@ -29,11 +30,15 @@ from aistackd.control_plane.admin import (
     search_models_admin,
 )
 from aistackd.control_plane.responses import (
+    ChatCompletionsStreamSession,
     ResponsesProxyError,
     ResponsesStateCache,
+    is_streaming_chat_completions_request,
     is_streaming_request,
+    open_chat_completions_stream,
     open_responses_stream,
     parse_json_request_body,
+    proxy_chat_completions_request,
     proxy_responses_request,
 )
 from aistackd.runtime.host import HostServiceConfig, resolve_api_key
@@ -101,11 +106,14 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == RESPONSES_ENDPOINT:
             self._handle_responses(server)
             return
+        if path == CHAT_COMPLETIONS_ENDPOINT:
+            self._handle_chat_completions(server)
+            return
         if path == ADMIN_MODELS_SEARCH_ENDPOINT:
-            self._handle_admin_models_search()
+            self._handle_admin_models_search(server)
             return
         if path == ADMIN_MODELS_RECOMMEND_ENDPOINT:
-            self._handle_admin_models_recommend()
+            self._handle_admin_models_recommend(server)
             return
         if path == ADMIN_MODELS_INSTALL_ENDPOINT:
             self._handle_admin_models_install(server)
@@ -210,23 +218,59 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
 
         self._write_json(HTTPStatus.OK, response_payload)
 
-    def _handle_admin_models_search(self) -> None:
+    def _handle_chat_completions(self, server: ControlPlaneServer) -> None:
+        request_body = self._read_request_body()
+        if request_body is None:
+            return
+        try:
+            request_payload = parse_json_request_body(request_body)
+            if is_streaming_chat_completions_request(request_payload):
+                stream_session = open_chat_completions_stream(
+                    server.store,
+                    server.service_config,
+                    request_payload,
+                )
+            else:
+                response_payload = proxy_chat_completions_request(
+                    server.store,
+                    server.service_config,
+                    request_payload,
+                )
+        except ResponsesProxyError as exc:
+            self._write_json(exc.status, exc.to_payload())
+            return
+
+        if is_streaming_chat_completions_request(request_payload):
+            assert isinstance(stream_session, ChatCompletionsStreamSession)
+            try:
+                self._write_sse_headers()
+                for frame in stream_session.iter_frames():
+                    self._write_sse_event(frame, raw=True)
+            except OSError:
+                return
+            finally:
+                stream_session.close()
+            return
+
+        self._write_json(HTTPStatus.OK, response_payload)
+
+    def _handle_admin_models_search(self, server: ControlPlaneServer) -> None:
         request_payload = self._read_optional_json_body()
         if request_payload is None:
             return
         try:
-            payload = search_models_admin(request_payload)
+            payload = search_models_admin(request_payload, project_root=server.store.project_root)
         except AdminApiError as exc:
             self._write_json(exc.status, exc.to_payload())
             return
         self._write_json(HTTPStatus.OK, payload)
 
-    def _handle_admin_models_recommend(self) -> None:
+    def _handle_admin_models_recommend(self, server: ControlPlaneServer) -> None:
         request_payload = self._read_optional_json_body()
         if request_payload is None:
             return
         try:
-            payload = recommend_models_admin(request_payload)
+            payload = recommend_models_admin(request_payload, project_root=server.store.project_root)
         except AdminApiError as exc:
             self._write_json(exc.status, exc.to_payload())
             return
@@ -282,8 +326,9 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
 
-    def _write_sse_event(self, payload: dict[str, object]) -> None:
-        body = f"data: {json.dumps(payload)}\n\n".encode("utf-8")
+    def _write_sse_event(self, payload: dict[str, object] | str, *, raw: bool = False) -> None:
+        body_value = payload if raw else json.dumps(payload)
+        body = f"data: {body_value}\n\n".encode("utf-8")
         self.wfile.write(body)
         self.wfile.flush()
 

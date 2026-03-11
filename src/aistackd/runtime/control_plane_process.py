@@ -97,8 +97,7 @@ def launch_control_plane_process(
 
 def stop_current_control_plane_process(store: HostStateStore) -> HostControlPlaneProcess | None:
     """Stop the current managed control-plane service if it is active."""
-    runtime = store.load_runtime_state()
-    current = runtime.control_plane_process
+    current = store.load_control_plane_process()
     if current is None:
         return None
     if current.status not in {"running", "starting"}:
@@ -188,6 +187,10 @@ def build_control_plane_command(project_root: Path, service: HostServiceConfig) 
         service.backend_bind_host,
         "--backend-port",
         str(service.backend_port),
+        "--backend-context-size",
+        str(service.backend_context_size),
+        "--backend-predict-limit",
+        str(service.backend_predict_limit),
     ]
 
 
@@ -225,6 +228,14 @@ def _terminate_pid(pid: int) -> int | None:
 def _pid_exists(pid: int) -> bool:
     if pid < 1:
         return False
+    stat_path = Path("/proc") / str(pid) / "stat"
+    if stat_path.exists():
+        try:
+            stat_fields = stat_path.read_text(encoding="utf-8").split()
+        except OSError:
+            stat_fields = ()
+        if len(stat_fields) >= 3 and stat_fields[2] == "Z":
+            return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

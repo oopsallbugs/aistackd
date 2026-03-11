@@ -50,12 +50,18 @@ class OpenCodeAdapter:
                 OPENCODE_PROVIDER_KEY: {
                     "npm": OPENCODE_PROVIDER_NPM,
                     "name": "aistackd",
-                    "options": {"baseURL": runtime_config.responses_base_url},
+                    "options": {
+                        "baseURL": runtime_config.responses_base_url,
+                        "apiKey": f"{{env:{runtime_config.api_key_env}}}",
+                    },
                     "models": {
                         runtime_config.frontend_model_key: {
                             "name": runtime_config.model,
                             "tools": True,
-                            "limit": {"context": 32768, "output": 8192},
+                            "limit": {
+                                "context": runtime_config.frontend_context_limit,
+                                "output": runtime_config.frontend_output_limit,
+                            },
                         }
                     },
                 }

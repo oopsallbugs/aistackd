@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from aistackd.frontends.catalog import normalize_frontend_targets
 from aistackd.models.selection import frontend_model_key
+from aistackd.runtime.host import DEFAULT_BACKEND_CONTEXT_SIZE, DEFAULT_BACKEND_PREDICT_LIMIT
 from aistackd.runtime.modes import RuntimeMode
 from aistackd.state.profiles import Profile
 
@@ -25,6 +26,8 @@ class RuntimeConfig:
     api_key_env: str
     model: str
     frontend_model_key: str
+    frontend_context_limit: int
+    frontend_output_limit: int
     profile_role_hint: str | None = None
     frontend_targets: tuple[str, ...] = ()
 
@@ -48,6 +51,8 @@ class RuntimeConfig:
             api_key_env=normalized_profile.api_key_env,
             model=model,
             frontend_model_key=frontend_model_key(model),
+            frontend_context_limit=DEFAULT_BACKEND_CONTEXT_SIZE,
+            frontend_output_limit=min(DEFAULT_BACKEND_PREDICT_LIMIT, DEFAULT_BACKEND_CONTEXT_SIZE),
             profile_role_hint=normalized_profile.role_hint,
             frontend_targets=normalized_frontends,
         )
@@ -63,6 +68,8 @@ class RuntimeConfig:
             "api_key_env": self.api_key_env,
             "model": self.model,
             "frontend_model_key": self.frontend_model_key,
+            "frontend_context_limit": self.frontend_context_limit,
+            "frontend_output_limit": self.frontend_output_limit,
             "frontend_targets": list(self.frontend_targets),
         }
         if self.profile_role_hint is not None:

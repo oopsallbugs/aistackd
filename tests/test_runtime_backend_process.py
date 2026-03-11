@@ -32,9 +32,13 @@ class BackendProcessRuntimeTests(unittest.TestCase):
             self.assertIn("--model", plan.command)
             self.assertIn("--host", plan.command)
             self.assertIn("--port", plan.command)
+            self.assertIn("--ctx-size", plan.command)
+            self.assertIn("--predict", plan.command)
             self.assertEqual(plan.model, "qwen2.5-coder-7b-instruct-q4-k-m")
             self.assertTrue(plan.artifact_path.endswith(".gguf"))
             self.assertTrue(plan.log_path.endswith(".aistackd/host/logs/llama-cpp.log"))
+            self.assertEqual(plan.context_size, 32768)
+            self.assertEqual(plan.predict_limit, 8192)
 
     def test_launch_managed_backend_process_persists_running_process_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
