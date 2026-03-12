@@ -117,7 +117,11 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 1. tool calling is client-managed only
 2. the host transports function calls but does not own or advertise executable repo tools
 3. synced `tools/` scripts are operator utilities, not model-executed server tools
-4. the next near-term focus is frontend ergonomics and remote-usage polish for the remote-backend/local-frontend workflow
+4. the near-term roadmap is:
+   - Phase 5 project-local skill and discovery workflow
+   - acceptance and hardening from live use
+   - OpenHands adapter
+   - broader frontend polish after that
 
 ### Backend Acquisition
 
@@ -156,7 +160,10 @@ Host-side prerequisite installation is out of scope by design. The repo will val
    - same normalized model id with different content gets a short-hash suffix instead of silent overwrite
 14. `models install --hf-url` is a first-class escape hatch and must accept file-specific Hugging Face URLs, including `show_file_info=<file>.gguf`
 15. `llmfit` integration stays JSON-first, but search integration must tolerate non-JSON output when `llmfit search --json` does not honor the requested machine format in practice
-16. for the current native `llmfit` TUI workflow, the `Inst` column is the practical install-compatibility signal; `L` indicates `llama.cpp` compatibility, and visible models without `L` may still require explicit Hugging Face file install instead of `llmfit` pull
+16. for the current native `llmfit` TUI workflow, the `Inst` column is the practical install-compatibility signal; `L` indicates `llama.cpp` compatibility, and operators should prefer models marked `L`
+17. even when a specific model cannot be pulled through `llmfit`, the TUI remains the primary discovery and recommendation surface
+18. if `llmfit` model pulling fails, operators should use explicit manual Hugging Face file-URL install:
+    - `PYTHONPATH=src python -m aistackd models install --hf-url "<huggingface-gguf-url>"`
 
 ### Frontend Integration
 
@@ -359,13 +366,14 @@ Deliverables:
 
 1. baseline content catalog
 2. `find-skills`
-3. project-local skill install workflow
+3. documented project-local skill install workflow using external/manual local-first installs in v1
 4. ownership and provenance tracking for managed content
 
 Acceptance gates:
 
 1. project-specific skills can be added without polluting the global baseline
 2. vendored external content records provenance clearly
+3. the manual/external project-local install flow is documented clearly enough for operators to use `find-skills` without native `aistackd` package-management semantics
 
 ## 11. Must-Pass Scenarios
 
@@ -375,7 +383,7 @@ The implementation is not complete until these scenarios pass:
 2. Linux `host` plus LAN `client`
 3. client-only machine connecting to an already-running host
 4. frontend sync after switching active profiles
-5. `llmfit` download path failure with controlled Hugging Face fallback
+5. `llmfit` model pulling failure is recoverable via explicit Hugging Face file-URL install
 6. prebuilt backend unavailable with successful source fallback
 7. explicit local GGUF install succeeds and is activated from managed host state
 8. missing model in llmfit search still installs from an explicit Hugging Face file URL
@@ -397,7 +405,7 @@ Control:
 Control:
 
 1. keep detection/recommendation and download responsibilities separate
-2. preserve Hugging Face fallback from the start
+2. keep explicit Hugging Face file-URL install available when `llmfit` pulling is insufficient
 3. keep native llmfit TUI browsing separate from managed runtime artifact ownership
 4. prefer JSON integration, but tolerate search-output format drift without breaking model discovery
 

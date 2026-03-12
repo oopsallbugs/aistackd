@@ -418,6 +418,7 @@ If you keep only a handful of ideas from the old repo, keep these:
 5. explicit frontend adapters with dry-run sync
 6. `find-skills` as a baseline global skill
 7. selective vendoring with provenance for adopted external skills
+8. keep project-local skill installs external/manual in v1 rather than reintroducing native package-management scope too early
 
 ## 8. Files That Were Most Useful For This Salvage Pass
 

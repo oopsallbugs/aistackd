@@ -34,6 +34,13 @@ Deferred targets:
 1. OpenHands
 2. any additional agent frontend
 
+The roadmap order after the current Codex/OpenCode work is:
+
+1. Phase 5 project-local skill and discovery workflow
+2. acceptance and hardening from live use
+3. OpenHands adapter
+4. broader frontend polish after that
+
 ## 3. Product Boundaries
 
 ### In Scope
@@ -153,6 +160,7 @@ Project-local install policy:
 2. explicit target frontend selection
 3. provenance captured for external content
 4. global install of non-baseline content remains opt-in
+5. in v1 this remains an external/manual workflow, not a native `aistackd` install command
 
 The goal is:
 
@@ -182,7 +190,7 @@ The goal is:
 ### Phase D: Discovery Workflow
 
 1. baseline `find-skills`
-2. project-local install flow
+2. project-local install flow documented around external/manual local-first installs
 3. external content provenance tracking
 
 ## 10. Acceptance Criteria
@@ -194,3 +202,4 @@ This slice is complete for v1 when:
 3. unmanaged content survives repeated syncs
 4. `find-skills` is available in the global baseline
 5. project-specific additions can be installed locally without polluting the shared baseline
+6. the project-local install flow is documented clearly without adding native package-management semantics to sync
