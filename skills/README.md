@@ -11,7 +11,7 @@ Project-local skills are intentionally separate from this managed baseline in v1
 - Baseline sync owns only the repo-managed skills written into frontend-specific managed roots.
 - Project-specific additions should stay local-first and external/manual.
 - For Codex and OpenCode, prefer project-local external installs under `./.agents/skills/`.
-- For future OpenHands project-local installs, prefer `./.openhands/skills/`.
+- For OpenHands, prefer project-local additions under `./.openhands/microagents/`.
 - Adopted external skills may record provenance in `aistackd-skill-provenance.json` beside `SKILL.md`.
 
 Example provenance payload:

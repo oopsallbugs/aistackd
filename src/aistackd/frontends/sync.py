@@ -295,13 +295,17 @@ def apply_sync_manifest(project_root: Path, manifest: SyncManifest) -> SyncWrite
             {tool_name for target in manifest.targets for tool_name in target.baseline_tools}
         )
         skill_contents = load_baseline_skill_contents(skill_names)
-        tool_contents = load_baseline_tool_contents(
-            tool_names,
-            active_profile=manifest.active_profile,
-            base_url=_derive_tool_base_url(manifest),
-            responses_base_url=_derive_tool_responses_base_url(manifest),
-            api_key_env=_derive_tool_api_key_env(manifest),
-            model=_derive_tool_model(manifest),
+        tool_contents = (
+            load_baseline_tool_contents(
+                tool_names,
+                active_profile=manifest.active_profile,
+                base_url=_derive_tool_base_url(manifest),
+                responses_base_url=_derive_tool_responses_base_url(manifest),
+                api_key_env=_derive_tool_api_key_env(manifest),
+                model=_derive_tool_model(manifest),
+            )
+            if tool_names
+            else {}
         )
 
         removed_paths = _prune_stale_managed_paths(root, manifest, current_ownership)

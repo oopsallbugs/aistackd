@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-SUPPORTED_FRONTENDS = ("codex", "opencode")
+SUPPORTED_FRONTENDS = ("codex", "opencode", "openhands")
 
 
 def normalize_frontend_targets(targets: Sequence[str] | None) -> tuple[str, ...]:

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from aistackd.frontends.adapters.base import FrontendAdapter
 from aistackd.frontends.adapters.codex import CodexAdapter
+from aistackd.frontends.adapters.openhands import OpenHandsAdapter
 from aistackd.frontends.adapters.opencode import OpenCodeAdapter
 
 _FRONTEND_ADAPTERS: dict[str, FrontendAdapter] = {
     "codex": CodexAdapter(),
     "opencode": OpenCodeAdapter(),
+    "openhands": OpenHandsAdapter(),
 }
 
 

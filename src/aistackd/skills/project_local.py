@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 PROJECT_LOCAL_SHARED_SKILLS_ROOT = Path(".agents") / "skills"
-PROJECT_LOCAL_OPENHANDS_SKILLS_ROOT = Path(".openhands") / "skills"
+PROJECT_LOCAL_OPENHANDS_SKILLS_ROOT = Path(".openhands") / "microagents"
 PROJECT_LOCAL_SKILL_PROVENANCE_FILE_NAME = "aistackd-skill-provenance.json"
 
 

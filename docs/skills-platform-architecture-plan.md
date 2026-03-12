@@ -28,18 +28,15 @@ First-class targets:
 
 1. Codex
 2. OpenCode
+3. OpenHands
 
 Deferred targets:
 
-1. OpenHands
-2. any additional agent frontend
+1. any additional agent frontend
 
-The roadmap order after the current Codex/OpenCode work is:
+The roadmap order after the OpenHands adapter is:
 
-1. Phase 5 project-local skill and discovery workflow
-2. acceptance and hardening from live use
-3. OpenHands adapter
-4. broader frontend polish after that
+1. broader frontend polish
 
 ## 3. Product Boundaries
 
@@ -94,7 +91,7 @@ V1 sync should render baseline tool templates with the active profile defaults a
 Canonical shared agents are deferred until:
 
 1. the runtime and profile model are stable
-2. Codex and OpenCode sync semantics are proven
+2. Codex, OpenCode, and OpenHands sync semantics are proven
 3. the team has a clearer shared-agent authoring model
 
 ## 5. Content Source Policy
@@ -162,7 +159,8 @@ Project-local install policy:
 4. global install of non-baseline content remains opt-in
 5. in v1 this remains an external/manual workflow, not a native `aistackd` install command
 6. for Codex and OpenCode, prefer `./.agents/skills/` for project-local additions so they stay distinct from the repo-managed baseline written by sync
-7. adopted external skills may record provenance beside `SKILL.md` in `aistackd-skill-provenance.json`
+7. for OpenHands, prefer `./.openhands/microagents/`; synced baseline microagents and unmanaged project-local additions may coexist there
+8. adopted external skills may record provenance beside `SKILL.md` or the installed microagent in `aistackd-skill-provenance.json`
 
 The goal is:
 
@@ -181,7 +179,8 @@ The goal is:
 
 1. Codex adapter contract
 2. OpenCode adapter contract
-3. ownership manifest shape
+3. OpenHands adapter contract
+4. ownership manifest shape
 
 ### Phase C: Sync Engine
 
@@ -199,7 +198,7 @@ The goal is:
 
 This slice is complete for v1 when:
 
-1. Codex and OpenCode can be synced from an active profile without manual config editing
+1. Codex, OpenCode, and OpenHands can be synced from an active profile without manual config editing
 2. synced baseline skills and tools are usable immediately
 3. unmanaged content survives repeated syncs
 4. `find-skills` is available in the global baseline

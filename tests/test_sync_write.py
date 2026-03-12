@@ -23,7 +23,7 @@ class SyncWriteTests(unittest.TestCase):
             api_key_env="AISTACKD_API_KEY",
             model="local-model",
         )
-        runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode"))
+        runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode", "openhands"))
         manifest = SyncManifest.create(runtime_config, SyncRequest.create(runtime_config.frontend_targets))
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -32,15 +32,18 @@ class SyncWriteTests(unittest.TestCase):
             first_result = apply_sync_manifest(project_root, manifest)
             first_opencode = (project_root / "opencode.json").read_text(encoding="utf-8")
             first_codex = (project_root / ".codex" / "config.toml").read_text(encoding="utf-8")
+            first_openhands = (project_root / ".openhands" / "config.toml").read_text(encoding="utf-8")
             first_codex_tool = (project_root / ".codex" / "tools" / "runtime-status.py").read_text(encoding="utf-8")
 
             second_result = apply_sync_manifest(project_root, manifest)
             second_opencode = (project_root / "opencode.json").read_text(encoding="utf-8")
             second_codex = (project_root / ".codex" / "config.toml").read_text(encoding="utf-8")
+            second_openhands = (project_root / ".openhands" / "config.toml").read_text(encoding="utf-8")
             second_codex_tool = (project_root / ".codex" / "tools" / "runtime-status.py").read_text(encoding="utf-8")
 
             self.assertEqual(first_opencode, second_opencode)
             self.assertEqual(first_codex, second_codex)
+            self.assertEqual(first_openhands, second_openhands)
             self.assertEqual(first_codex_tool, second_codex_tool)
             self.assertEqual(
                 first_result.ownership_manifest_path,
@@ -89,6 +92,31 @@ class SyncWriteTests(unittest.TestCase):
             )
             ownership_payload = json.loads(Path(result.ownership_manifest_path).read_text(encoding="utf-8"))
             self.assertEqual(ownership_payload["targets"][0]["frontend"], "opencode")
+
+    def test_sync_write_result_reports_openhands_paths(self) -> None:
+        profile = Profile(
+            name="lab-host",
+            base_url="http://10.0.0.25:8000",
+            api_key_env="AISTACKD_API_KEY",
+            model="lab-model",
+        )
+        runtime_config = RuntimeConfig.for_client(profile, ("openhands",))
+        manifest = SyncManifest.create(
+            runtime_config,
+            SyncRequest.create(runtime_config.frontend_targets, dry_run=False),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = apply_sync_manifest(Path(tmpdir), manifest)
+
+            payload = result.to_dict()
+            self.assertIn(".openhands/config.toml", "\n".join(payload["written_paths"]))
+            self.assertIn(".openhands/microagents/find-skills.md", "\n".join(payload["written_paths"]))
+            self.assertEqual(payload["manifest"]["targets"][0]["baseline_tools"], [])
+            self.assertEqual(
+                payload["manifest"]["targets"][0]["provider_payload"]["llm"]["model"],
+                "openai/lab-model",
+            )
 
     def test_sync_write_prunes_removed_target_paths_and_preserves_unmanaged_config(self) -> None:
         profile = Profile(
@@ -274,6 +302,39 @@ class SyncWriteTests(unittest.TestCase):
             self.assertTrue((unmanaged_skill_dir / PROJECT_LOCAL_SKILL_PROVENANCE_FILE_NAME).exists())
             self.assertNotIn(str(unmanaged_skill_dir / "SKILL.md"), first_result.written_paths)
             self.assertNotIn(str(unmanaged_skill_dir / "SKILL.md"), second_result.written_paths)
+
+    def test_sync_write_prunes_openhands_config_and_preserves_unmanaged_microagents(self) -> None:
+        profile = Profile(
+            name="local",
+            base_url="http://127.0.0.1:8000",
+            api_key_env="AISTACKD_API_KEY",
+            model="local-model",
+        )
+        full_runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode", "openhands"))
+        reduced_runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode"))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            full_manifest = SyncManifest.create(
+                full_runtime_config,
+                SyncRequest.create(full_runtime_config.frontend_targets, dry_run=False),
+            )
+            apply_sync_manifest(project_root, full_manifest)
+
+            unmanaged_microagent = project_root / ".openhands" / "microagents" / "custom-local.md"
+            unmanaged_microagent.parent.mkdir(parents=True, exist_ok=True)
+            unmanaged_microagent.write_text("# Custom Local\n", encoding="utf-8")
+
+            manifest = SyncManifest.create(
+                reduced_runtime_config,
+                SyncRequest.create(reduced_runtime_config.frontend_targets, dry_run=False),
+            )
+            result = apply_sync_manifest(project_root, manifest)
+
+            self.assertFalse((project_root / ".openhands" / "config.toml").exists())
+            self.assertFalse((project_root / ".openhands" / "microagents" / "find-skills.md").exists())
+            self.assertTrue(unmanaged_microagent.exists())
+            self.assertIn(str(project_root / ".openhands" / "config.toml"), result.removed_paths)
 
     def test_sync_write_renders_executable_tools_with_runtime_defaults(self) -> None:
         profile = Profile(

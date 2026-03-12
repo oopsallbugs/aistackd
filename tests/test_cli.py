@@ -99,6 +99,45 @@ class CLITests(unittest.TestCase):
                 "aistackd-skill-provenance.json",
             )
 
+    def test_doctor_ready_reports_openhands_frontend_as_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--role-hint",
+                    "client",
+                    "--activate",
+                ]
+            )
+            invoke(["sync", "--project-root", tmpdir, "--target", "openhands", "--write"])
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+                patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_remote_client_urlopen),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    ["doctor", "ready", "--project-root", tmpdir, "--frontend", "openhands", "--format", "json"]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["frontend"], "openhands")
+            self.assertEqual(payload["active_profile"], "remote")
+            sync_labels = {entry["label"]: entry["detail"] for entry in payload["sync_checks"]}
+            self.assertIn(".openhands/microagents", sync_labels["project_local_skill_roots"])
+
     def test_doctor_ready_reports_missing_frontend_sync(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             invoke(
@@ -261,7 +300,7 @@ class CLITests(unittest.TestCase):
             self.assertIn("active_profile: local", stdout)
             self.assertIn("responses_base_url: http://127.0.0.1:8000/v1", stdout)
             self.assertIn("model: local-model", stdout)
-            self.assertIn("frontend_targets: codex, opencode", stdout)
+            self.assertIn("frontend_targets: codex, opencode, openhands", stdout)
 
     def test_client_validate_reports_remote_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1442,6 +1481,56 @@ class CLITests(unittest.TestCase):
             self.assertIn("change: create frontend=codex kind=tool path=.codex/tools/frontend-smoke.py", stdout)
             self.assertIn("change: create frontend=codex kind=tool path=.codex/tools/tool-call-demo.py", stdout)
 
+    def test_sync_manifest_preview_reports_openhands_provider_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "local",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_API_KEY",
+                    "--model",
+                    "local-model",
+                    "--activate",
+                ]
+            )
+
+            exit_code, stdout, stderr = invoke(
+                ["sync", "--project-root", tmpdir, "--target", "openhands", "--format", "json"]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+
+            payload = json.loads(stdout)
+            self.assertEqual(payload["active_profile"], "local")
+            self.assertEqual(payload["targets"][0]["frontend"], "openhands")
+            self.assertEqual(payload["targets"][0]["provider_config_path"], ".openhands/config.toml")
+            self.assertEqual(payload["targets"][0]["baseline_tools"], [])
+            self.assertEqual(
+                payload["targets"][0]["provider_payload"]["llm"]["model"],
+                "openai/local-model",
+            )
+
+            exit_code, stdout, stderr = invoke(["sync", "--project-root", tmpdir, "--target", "openhands"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("change_summary: create=2", stdout)
+            self.assertIn(
+                "change: create frontend=openhands kind=provider_config path=.openhands/config.toml",
+                stdout,
+            )
+            self.assertIn(
+                "change: create frontend=openhands kind=skill path=.openhands/microagents/find-skills.md",
+                stdout,
+            )
+
     def test_sync_requires_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             exit_code, stdout, stderr = invoke(["sync", "--project-root", tmpdir])
@@ -1490,6 +1579,7 @@ class CLITests(unittest.TestCase):
             self.assertIn("sync write", stdout)
             self.assertIn("ownership_manifest:", stdout)
             self.assertIn(".agents/skills", stdout)
+            self.assertIn(".openhands/microagents", stdout)
             self.assertIn("aistackd-skill-provenance.json", stdout)
 
             opencode_payload = json.loads(opencode_path.read_text(encoding="utf-8"))
@@ -1534,6 +1624,8 @@ class CLITests(unittest.TestCase):
 
             opencode_skill = Path(tmpdir) / ".opencode" / "skills" / "find-skills" / "SKILL.md"
             codex_skill = Path(tmpdir) / ".codex" / "skills" / "find-skills" / "SKILL.md"
+            openhands_config = Path(tmpdir) / ".openhands" / "config.toml"
+            openhands_microagent = Path(tmpdir) / ".openhands" / "microagents" / "find-skills.md"
             opencode_tool = Path(tmpdir) / ".opencode" / "tools" / "runtime-status.py"
             codex_tool = Path(tmpdir) / ".codex" / "tools" / "model-admin.py"
             opencode_smoke_tool = Path(tmpdir) / ".opencode" / "tools" / "responses-smoke.py"
@@ -1542,6 +1634,8 @@ class CLITests(unittest.TestCase):
             codex_tool_call_demo = Path(tmpdir) / ".codex" / "tools" / "tool-call-demo.py"
             self.assertTrue(opencode_skill.exists())
             self.assertTrue(codex_skill.exists())
+            self.assertTrue(openhands_config.exists())
+            self.assertTrue(openhands_microagent.exists())
             self.assertTrue(opencode_tool.exists())
             self.assertTrue(codex_tool.exists())
             self.assertTrue(opencode_smoke_tool.exists())
@@ -1549,6 +1643,11 @@ class CLITests(unittest.TestCase):
             self.assertTrue(opencode_frontend_smoke_tool.exists())
             self.assertTrue(codex_tool_call_demo.exists())
             self.assertIn("name: find-skills", opencode_skill.read_text(encoding="utf-8"))
+            openhands_payload = tomllib.loads(openhands_config.read_text(encoding="utf-8"))
+            self.assertEqual(openhands_payload["llm"]["model"], "openai/local-model")
+            self.assertEqual(openhands_payload["llm"]["base_url"], "http://127.0.0.1:8000/v1")
+            self.assertTrue(openhands_payload["agent"]["enable_prompt_extensions"])
+            self.assertIn("# Find Skills", openhands_microagent.read_text(encoding="utf-8"))
             self.assertIn('DEFAULT_BASE_URL = "http://127.0.0.1:8000"', opencode_tool.read_text(encoding="utf-8"))
             self.assertIn('DEFAULT_API_KEY_ENV = "AISTACKD_API_KEY"', codex_tool.read_text(encoding="utf-8"))
             self.assertIn('DEFAULT_BASE_URL = "http://127.0.0.1:8000"', opencode_smoke_tool.read_text(encoding="utf-8"))
@@ -1561,7 +1660,7 @@ class CLITests(unittest.TestCase):
             )
             ownership_payload = json.loads(ownership_manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(ownership_payload["active_profile"], "local")
-            self.assertEqual(len(ownership_payload["targets"]), 2)
+            self.assertEqual(len(ownership_payload["targets"]), 3)
 
 
 def _create_fake_backend_root(root: Path) -> Path:

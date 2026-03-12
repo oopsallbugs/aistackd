@@ -31,6 +31,7 @@ Use this skill to discover project-relevant skills on `skills.sh` and avoid bloa
 - Do not recommend `-g` as the default path.
 - Warning: omitting `--agent` can install to many agents/frontends unintentionally.
 - For Codex and OpenCode in this repo, prefer project-local installs under `./.agents/skills/` so they stay clearly separate from the baseline content managed by `aistackd sync`.
+- For OpenHands in this repo, prefer project-local additions under `./.openhands/microagents/`; synced baseline microagents live there too, and sync preserves unmanaged additions.
 - If you adopt an external skill into project-local workflow long-term, you may record provenance in `aistackd-skill-provenance.json` beside the installed `SKILL.md`.
 
 ## Workflow
@@ -44,7 +45,7 @@ Use this skill to discover project-relevant skills on `skills.sh` and avoid bloa
    - `npx skills add vercel-labs/skills/find-skills --agent codex opencode openhands`
 5. Verify multi-frontend project-local paths as needed:
    - `ls ./.agents/skills/find-skills`
-   - `ls ./.openhands/skills/find-skills`
+   - `ls ./.openhands/microagents`
 6. Optional: record provenance for an adopted external skill beside the installed `SKILL.md`:
    - create `aistackd-skill-provenance.json` with upstream source and snapshot date
 7. Optional global install (only when explicitly requested):
@@ -60,7 +61,7 @@ Use this skill to discover project-relevant skills on `skills.sh` and avoid bloa
   - retry on a stable network and verify skills.sh is reachable.
 - Skill installed but not recognized:
   - restart the agent host process and re-check the install target path:
-    - project-local: `./.agents/skills/find-skills` (or `./.openhands/skills/find-skills` for OpenHands)
+    - project-local: `./.agents/skills/find-skills` (or `./.openhands/microagents/` for OpenHands)
     - global (`-g` only): `~/.codex/skills/find-skills`
 
 ## Boundaries

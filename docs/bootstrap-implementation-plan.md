@@ -23,7 +23,7 @@ Deliver a system that supports these operator stories:
 
 1. Configure a Linux machine as an AI host that can run a local backend and expose it to other machines on the same LAN.
 2. Configure a laptop or workstation as a client that targets a local host or a remote LAN host through a named profile.
-3. Sync frontend configuration so Codex and OpenCode can use the selected backend immediately.
+3. Sync frontend configuration so Codex, OpenCode, and OpenHands can use the selected backend immediately.
 4. Ship a small baseline of useful shared skills and tools, including `find-skills`, then allow project-specific skill installs on top.
 
 ## 3. Scope And Non-Goals
@@ -35,15 +35,14 @@ Deliver a system that supports these operator stories:
 3. `llama.cpp` acquisition and runtime management
 4. `llmfit`-first model search and download with Hugging Face fallback
 5. a managed control-plane service that exposes an Open Responses-compatible API plus repo-owned extensions
-6. Codex and OpenCode config sync
+6. Codex, OpenCode, and OpenHands config sync
 7. baseline shared skills and tools
 8. project-local discovery of additional skills via `find-skills`
 
 ### Out Of Scope For V1
 
 1. embeddings, reranking, DAG, and RAG systems
-2. OpenHands support
-3. auto-discovery of LAN hosts
+2. auto-discovery of LAN hosts
 4. TLS termination inside the platform
 5. full machine bootstrap from a bare OS
 6. canonical baseline agents
@@ -118,10 +117,7 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 2. the host transports function calls but does not own or advertise executable repo tools
 3. synced `tools/` scripts are operator utilities, not model-executed server tools
 4. the near-term roadmap is:
-   - Phase 5 project-local skill and discovery workflow
-   - acceptance and hardening from live use
-   - OpenHands adapter
-   - broader frontend polish after that
+   - broader frontend polish after the OpenHands adapter
 
 ### Backend Acquisition
 
@@ -167,7 +163,7 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 
 ### Frontend Integration
 
-1. first-class targets: Codex and OpenCode
+1. first-class targets: Codex, OpenCode, and OpenHands
 2. frontend sync owns:
    - provider endpoint wiring
    - provider credentials wiring
@@ -240,7 +236,7 @@ The control plane must expose:
 2. health inspection
 3. active model and installed model listing
 4. authenticated admin operations for search, download, activate, and runtime inspection
-5. authenticated tool discovery for repo-owned function-tool exposure and execution policy
+5. no repo-owned server-tool discovery surface in v1; tool execution remains client-managed
 
 ## 8. Frontend Sync Contract
 
@@ -429,7 +425,7 @@ Control:
 
 1. keep v1 baseline small
 2. defer canonical agents
-3. ship only Codex and OpenCode initially
+3. ship only Codex, OpenCode, and OpenHands in v1
 
 ## 13. References
 
