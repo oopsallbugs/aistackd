@@ -286,6 +286,7 @@ def acquire_managed_model_artifact(
                 artifact_path, size_bytes, sha256, source_path = _acquire_from_llmfit(
                     paths,
                     source_model.name,
+                    project_root=project_root,
                     llmfit_binary=llmfit_binary,
                     quant=llmfit_quant,
                     budget_gb=llmfit_budget_gb,
@@ -636,6 +637,7 @@ def _acquire_from_llmfit(
     paths: HostStatePaths,
     model_name: str,
     *,
+    project_root: Path,
     llmfit_binary: str,
     quant: str | None,
     budget_gb: float | None,
@@ -649,6 +651,7 @@ def _acquire_from_llmfit(
             llmfit_binary=llmfit_binary,
             quant=quant,
             budget_gb=budget_gb,
+            project_root=project_root,
         )
     except LlmfitCommandError as exc:
         raise ModelAcquisitionError(str(exc)) from exc

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from aistackd.models.sources import recommend_models, search_models
+from aistackd.state.host import HostBackendInstallation, HostStateStore
 
 
 class ModelSourceTests(unittest.TestCase):
@@ -105,3 +109,35 @@ Found 1 model(s)
             results = recommend_models()
 
         self.assertEqual([result.recommended_rank for result in results], [1, 2])
+
+    def test_search_models_prepends_managed_llama_cpp_bin_to_path(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            backend_bin = project_root / ".aistackd" / "host" / "backends" / "llama.cpp" / "build" / "bin"
+            backend_bin.mkdir(parents=True)
+            HostStateStore(project_root).save_backend_installation(
+                HostBackendInstallation(
+                    backend="llama.cpp",
+                    acquisition_method="downloaded_source_build",
+                    backend_root=str(backend_bin.parent),
+                    server_binary=str(backend_bin / "llama-server"),
+                    cli_binary=str(backend_bin / "llama-cli"),
+                    configured_at="2026-03-12T00:00:00+00:00",
+                )
+            )
+            captured_env: dict[str, str] = {}
+
+            def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+                nonlocal captured_env
+                captured_env = dict(kwargs["env"])
+                return subprocess.CompletedProcess(
+                    args=("llmfit", "search", "glm", "--json"),
+                    returncode=0,
+                    stdout=json.dumps({"models": []}),
+                    stderr="",
+                )
+
+            with patch("aistackd.models.llmfit.subprocess.run", side_effect=fake_run):
+                search_models("glm", project_root=project_root)
+
+            self.assertEqual(captured_env["PATH"].split(os.pathsep)[0], str(backend_bin))

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from aistackd.models.selection import derive_model_name_from_artifact_name, infer_quantization_from_artifact_name
+from aistackd.tool_env import build_operator_tool_env
 
 LLMFIT_BINARY_NAME = "llmfit"
 
@@ -44,6 +45,7 @@ def run_llmfit_json_command(
     subcommand: tuple[str, ...],
     *,
     llmfit_binary: str = LLMFIT_BINARY_NAME,
+    project_root: Path | None = None,
 ) -> tuple[tuple[str, ...], object]:
     """Run one llmfit JSON command and return the parsed payload."""
     resolved_binary = resolve_llmfit_binary(llmfit_binary)
@@ -55,6 +57,7 @@ def run_llmfit_json_command(
             check=False,
             capture_output=True,
             text=True,
+            env=build_operator_tool_env(project_root),
         )
     except OSError as exc:
         raise LlmfitCommandError(f"failed to run llmfit command: {exc}") from exc
@@ -78,12 +81,16 @@ def run_llmfit_json_command(
     return command, payload
 
 
-def launch_llmfit_browser(*, llmfit_binary: str = LLMFIT_BINARY_NAME) -> tuple[tuple[str, ...], int]:
+def launch_llmfit_browser(
+    *,
+    llmfit_binary: str = LLMFIT_BINARY_NAME,
+    project_root: Path | None = None,
+) -> tuple[tuple[str, ...], int]:
     """Launch the native llmfit TUI in the current terminal."""
     resolved_binary = resolve_llmfit_binary(llmfit_binary)
     command = (resolved_binary,)
     try:
-        completed = subprocess.run(command, check=False)
+        completed = subprocess.run(command, check=False, env=build_operator_tool_env(project_root))
     except OSError as exc:
         raise LlmfitCommandError(f"failed to launch llmfit browser: {exc}") from exc
     return command, int(completed.returncode)
@@ -95,6 +102,7 @@ def run_llmfit_download(
     llmfit_binary: str = LLMFIT_BINARY_NAME,
     quant: str | None = None,
     budget_gb: float | None = None,
+    project_root: Path | None = None,
 ) -> LlmfitDownloadInvocation:
     """Run one llmfit download command and return its parsed payload."""
     resolved_binary = resolve_llmfit_binary(llmfit_binary)
@@ -110,6 +118,7 @@ def run_llmfit_download(
             check=False,
             capture_output=True,
             text=True,
+            env=build_operator_tool_env(project_root),
         )
     except OSError as exc:
         raise LlmfitCommandError(f"failed to run llmfit download: {exc}") from exc

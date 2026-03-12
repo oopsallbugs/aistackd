@@ -75,7 +75,7 @@ def search_models_admin(payload: dict[str, object], project_root: Path | None = 
         _string_or_default(payload.get("llmfit_binary"), default=LLMFIT_BINARY_NAME),
     )
     try:
-        models = search_models(query, llmfit_binary=llmfit_binary)
+        models = search_models(query, llmfit_binary=llmfit_binary, project_root=project_root)
     except (ModelSourceError, ValueError) as exc:
         raise AdminApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
     return {
@@ -93,7 +93,7 @@ def recommend_models_admin(payload: dict[str, object], project_root: Path | None
         _string_or_default(payload.get("llmfit_binary"), default=LLMFIT_BINARY_NAME),
     )
     try:
-        models = recommend_models(llmfit_binary=llmfit_binary)
+        models = recommend_models(llmfit_binary=llmfit_binary, project_root=project_root)
     except (ModelSourceError, ValueError) as exc:
         raise AdminApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
     return {
@@ -139,6 +139,7 @@ def install_model_admin(project_root: Path, payload: dict[str, object]) -> dict[
             source=source,
             gguf_path=explicit_gguf_path,
             llmfit_binary=llmfit_binary,
+            project_root=project_root,
             prefer_hugging_face=hf_repo is not None,
         )
         acquisition = acquire_managed_model_artifact(
@@ -229,6 +230,7 @@ def _resolve_install_source_model(
     source: str | None,
     gguf_path: Path | None,
     llmfit_binary: str,
+    project_root: Path,
     prefer_hugging_face: bool,
 ) -> SourceModel:
     if prefer_hugging_face:
@@ -244,7 +246,12 @@ def _resolve_install_source_model(
     match: SourceModel | None = None
     if source in (None, PRIMARY_MODEL_SOURCE):
         try:
-            match = resolve_source_model(model_name, source=PRIMARY_MODEL_SOURCE, llmfit_binary=llmfit_binary)
+            match = resolve_source_model(
+                model_name,
+                source=PRIMARY_MODEL_SOURCE,
+                llmfit_binary=llmfit_binary,
+                project_root=project_root,
+            )
         except ModelSourceError:
             match = None
     if match is not None:

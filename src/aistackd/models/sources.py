@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from aistackd.models.llmfit import (
     LlmfitCommandError,
@@ -94,26 +95,31 @@ def search_models(
     *,
     llmfit_binary: str = LLMFIT_BINARY_NAME,
     recommended_only: bool = False,
+    project_root: Path | None = None,
 ) -> tuple[SourceModel, ...]:
     """Search the live llmfit catalog."""
     if recommended_only:
-        models = recommend_models(llmfit_binary=llmfit_binary)
+        models = recommend_models(llmfit_binary=llmfit_binary, project_root=project_root)
         return tuple(model for model in models if model.matches_query(query))
 
     subcommand = ("search",)
     if query and query.strip():
         subcommand = ("search", query.strip())
     try:
-        _, payload = run_llmfit_json_command(subcommand, llmfit_binary=llmfit_binary)
+        _, payload = run_llmfit_json_command(subcommand, llmfit_binary=llmfit_binary, project_root=project_root)
     except LlmfitCommandError as exc:
         raise ModelSourceError(str(exc)) from exc
     return _parse_llmfit_models(payload, query=query)
 
 
-def recommend_models(*, llmfit_binary: str = LLMFIT_BINARY_NAME) -> tuple[SourceModel, ...]:
+def recommend_models(
+    *,
+    llmfit_binary: str = LLMFIT_BINARY_NAME,
+    project_root: Path | None = None,
+) -> tuple[SourceModel, ...]:
     """Return the policy-ranked llmfit recommendations."""
     try:
-        _, payload = run_llmfit_json_command(("recommend",), llmfit_binary=llmfit_binary)
+        _, payload = run_llmfit_json_command(("recommend",), llmfit_binary=llmfit_binary, project_root=project_root)
     except LlmfitCommandError as exc:
         raise ModelSourceError(str(exc)) from exc
     return _parse_llmfit_models(payload, recommended=True)
@@ -124,12 +130,13 @@ def resolve_source_model(
     *,
     source: str | None = None,
     llmfit_binary: str = LLMFIT_BINARY_NAME,
+    project_root: Path | None = None,
 ) -> SourceModel | None:
     """Resolve one exact model name from the configured sources."""
     for source_name in model_source_order(source):
         if source_name != PRIMARY_MODEL_SOURCE:
             continue
-        matches = search_models(model_name, llmfit_binary=llmfit_binary)
+        matches = search_models(model_name, llmfit_binary=llmfit_binary, project_root=project_root)
         normalized_name = normalize_model_name(model_name).lower()
         for match in matches:
             if match.name.lower() == normalized_name:

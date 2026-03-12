@@ -973,6 +973,7 @@ def _fake_admin_llmfit_search_subprocess_run(
     check: bool = False,
     capture_output: bool = True,
     text: bool = True,
+    **kwargs: object,
 ) -> subprocess.CompletedProcess[str]:
     args = tuple(command)
     if Path(args[0]).name != "llmfit" or args[1] != "search":

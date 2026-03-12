@@ -156,6 +156,7 @@ Host-side prerequisite installation is out of scope by design. The repo will val
    - same normalized model id with different content gets a short-hash suffix instead of silent overwrite
 14. `models install --hf-url` is a first-class escape hatch and must accept file-specific Hugging Face URLs, including `show_file_info=<file>.gguf`
 15. `llmfit` integration stays JSON-first, but search integration must tolerate non-JSON output when `llmfit search --json` does not honor the requested machine format in practice
+16. for the current native `llmfit` TUI workflow, the `Inst` column is the practical install-compatibility signal; `L` indicates `llama.cpp` compatibility, and visible models without `L` may still require explicit Hugging Face file install instead of `llmfit` pull
 
 ### Frontend Integration
 

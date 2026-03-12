@@ -85,6 +85,7 @@ class ControlPlaneAdminTests(unittest.TestCase):
                 check: bool = False,
                 capture_output: bool = True,
                 text: bool = True,
+                **kwargs: object,
             ) -> subprocess.CompletedProcess[str]:
                 if command[1] == "search":
                     return subprocess.CompletedProcess(
@@ -161,6 +162,7 @@ def _fake_llmfit_search_then_recommend_subprocess_run(
     check: bool = False,
     capture_output: bool = True,
     text: bool = True,
+    **kwargs: object,
 ) -> subprocess.CompletedProcess[str]:
     args = tuple(command)
     executable_name = Path(args[0]).name

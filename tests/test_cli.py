@@ -20,6 +20,7 @@ from aistackd.models.llmfit import LlmfitCommandError
 from aistackd.runtime.host import HostServiceConfig
 from aistackd.runtime.hardware import CURRENT_HARDWARE_PROFILE_SCHEMA_VERSION, HardwareProfile, LlmfitDetectionResult
 from aistackd.state.layout import COMMAND_GROUPS
+from aistackd.state.host import HostBackendInstallation, HostStateStore
 
 
 def invoke(argv: list[str]) -> tuple[int, str, str]:
@@ -886,8 +887,23 @@ class CLITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)
             watch_root = project_root / "llmfit-cache"
+            backend_bin = project_root / ".aistackd" / "host" / "backends" / "llama.cpp" / "build" / "bin"
+            backend_bin.mkdir(parents=True)
+            HostStateStore(project_root).save_backend_installation(
+                HostBackendInstallation(
+                    backend="llama.cpp",
+                    acquisition_method="downloaded_source_build",
+                    backend_root=str(backend_bin.parent),
+                    server_binary=str(backend_bin / "llama-server"),
+                    cli_binary=str(backend_bin / "llama-cli"),
+                    configured_at="2026-03-12T00:00:00+00:00",
+                )
+            )
+            captured_path = ""
 
             def fake_browse_run(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[object]:
+                nonlocal captured_path
+                captured_path = str(dict(kwargs["env"])["PATH"])
                 _create_fake_gguf(watch_root, "GLM-4.7-Flash-Claude-4.5-Opus.q4_k_m.gguf")
                 _create_fake_gguf(watch_root, "Qwen2.5-Coder-7B-Instruct.Q4_K_M.gguf", payload=b"GGUF\x00qwen\n")
                 return subprocess.CompletedProcess(args=command, returncode=0, stdout=None, stderr=None)
@@ -911,6 +927,7 @@ class CLITests(unittest.TestCase):
             payload = json.loads(stdout)
             self.assertEqual(payload["llmfit_exit_code"], 0)
             self.assertEqual(payload["imports"]["imported_count"], 2)
+            self.assertEqual(captured_path.split(os.pathsep)[0], str(backend_bin))
 
             exit_code, stdout, stderr = invoke(["models", "installed", "--project-root", tmpdir, "--format", "json"])
             self.assertEqual(exit_code, 0)
@@ -978,12 +995,27 @@ class CLITests(unittest.TestCase):
 
     def test_models_install_uses_llmfit_download_with_quant_and_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
             llmfit_root = Path(tmpdir) / "llmfit-downloads"
+            backend_bin = project_root / ".aistackd" / "host" / "backends" / "llama.cpp" / "build" / "bin"
+            backend_bin.mkdir(parents=True)
+            HostStateStore(project_root).save_backend_installation(
+                HostBackendInstallation(
+                    backend="llama.cpp",
+                    acquisition_method="downloaded_source_build",
+                    backend_root=str(backend_bin.parent),
+                    server_binary=str(backend_bin / "llama-server"),
+                    cli_binary=str(backend_bin / "llama-cli"),
+                    configured_at="2026-03-12T00:00:00+00:00",
+                )
+            )
+            captured_paths: list[str] = []
 
             def fake_llmfit_run(
                 command: tuple[str, ...],
                 **kwargs: object,
             ) -> subprocess.CompletedProcess[str]:
+                captured_paths.append(str(dict(kwargs["env"])["PATH"]))
                 if command[1] == "search":
                     return _fake_llmfit_search_result(
                         command,
@@ -1027,6 +1059,8 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["model"]["acquisition_method"], "llmfit_download")
             self.assertEqual(payload["acquisition"]["source"], "llmfit")
             self.assertTrue(Path(payload["model"]["artifact_path"]).exists())
+            self.assertTrue(captured_paths)
+            self.assertTrue(all(path_value.split(os.pathsep)[0] == str(backend_bin) for path_value in captured_paths))
 
     def test_models_install_fails_when_llmfit_download_finds_no_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

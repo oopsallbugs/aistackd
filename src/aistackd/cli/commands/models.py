@@ -207,6 +207,7 @@ def handle_search(args: argparse.Namespace) -> int:
         models = search_models(
             args.query,
             llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary),
+            project_root=args.project_root,
         )
     except (ModelSourceError, ValueError) as exc:
         return _exit_with_error(str(exc))
@@ -233,7 +234,10 @@ def handle_search(args: argparse.Namespace) -> int:
 def handle_recommend(args: argparse.Namespace) -> int:
     """Show policy-ranked llmfit recommendations."""
     try:
-        models = recommend_models(llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary))
+        models = recommend_models(
+            llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary),
+            project_root=args.project_root,
+        )
     except (ModelSourceError, ValueError) as exc:
         return _exit_with_error(str(exc))
 
@@ -262,7 +266,8 @@ def handle_browse(args: argparse.Namespace) -> int:
 
     try:
         command, llmfit_exit_code = launch_llmfit_browser(
-            llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary)
+            llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary),
+            project_root=args.project_root,
         )
     except LlmfitCommandError as exc:
         return _exit_with_error(str(exc))
@@ -366,6 +371,7 @@ def handle_install(args: argparse.Namespace) -> int:
             source=args.source,
             gguf_path=args.gguf_path,
             llmfit_binary=_resolve_llmfit_binary(args.project_root, args.llmfit_binary),
+            project_root=args.project_root,
             prefer_hugging_face=hf_repo is not None,
         )
         acquisition = acquire_managed_model_artifact(
@@ -541,6 +547,7 @@ def _resolve_install_source_model(
     source: str | None,
     gguf_path: Path | None,
     llmfit_binary: str,
+    project_root: Path,
     prefer_hugging_face: bool,
 ) -> SourceModel:
     if prefer_hugging_face:
@@ -556,7 +563,12 @@ def _resolve_install_source_model(
     match: SourceModel | None = None
     if source in (None, PRIMARY_MODEL_SOURCE):
         try:
-            match = resolve_source_model(model_name, source=PRIMARY_MODEL_SOURCE, llmfit_binary=llmfit_binary)
+            match = resolve_source_model(
+                model_name,
+                source=PRIMARY_MODEL_SOURCE,
+                llmfit_binary=llmfit_binary,
+                project_root=project_root,
+            )
         except ModelSourceError:
             match = None
     if match is not None:
