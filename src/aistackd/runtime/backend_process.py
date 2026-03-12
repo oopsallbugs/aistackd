@@ -62,7 +62,8 @@ class RunningBackendProcess:
 
     plan: BackendLaunchPlan
     record: HostBackendProcess
-    process: subprocess.Popen[str]
+    process: subprocess.Popen[str] | None
+    reused_existing: bool = False
 
 
 class BackendProcessError(RuntimeError):
@@ -121,13 +122,20 @@ def launch_managed_backend_process(
 ) -> RunningBackendProcess:
     """Launch the managed backend process and persist its running state."""
     runtime = store.load_runtime_state()
+    plan = build_backend_launch_plan(store, service)
     if runtime.backend_process_status in {"running", "starting"} and runtime.backend_process is not None:
+        if _backend_process_matches_launch_plan(runtime.backend_process, plan):
+            return RunningBackendProcess(
+                plan=plan,
+                record=runtime.backend_process,
+                process=None,
+                reused_existing=True,
+            )
         raise BackendProcessError(
             f"backend process is already active for model '{runtime.backend_process.model}' "
             f"(pid={runtime.backend_process.pid})"
         )
 
-    plan = build_backend_launch_plan(store, service)
     log_path = Path(plan.log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started_at = _timestamp_now()
@@ -206,6 +214,9 @@ def stop_managed_backend_process(
 ) -> HostBackendProcess:
     """Stop one running managed backend process and persist the terminal state."""
     process = running_process.process
+    if running_process.reused_existing or process is None:
+        current = store.load_runtime_state().backend_process
+        return current if current is not None else running_process.record
     exit_code = process.poll()
 
     if exit_code is None:
@@ -239,6 +250,18 @@ def stop_managed_backend_process(
         store,
         stopped_record,
         expected_pid=running_process.record.pid,
+    )
+
+
+def _backend_process_matches_launch_plan(process: HostBackendProcess, plan: BackendLaunchPlan) -> bool:
+    return (
+        process.backend == plan.backend
+        and process.bind_host == plan.bind_host
+        and process.port == plan.port
+        and process.model == plan.model
+        and process.artifact_path == plan.artifact_path
+        and process.server_binary == plan.server_binary
+        and process.command == plan.command
     )
 
 

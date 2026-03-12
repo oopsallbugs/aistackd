@@ -37,8 +37,39 @@ class BackendProcessRuntimeTests(unittest.TestCase):
             self.assertEqual(plan.model, "qwen2.5-coder-7b-instruct-q4-k-m")
             self.assertTrue(plan.artifact_path.endswith(".gguf"))
             self.assertTrue(plan.log_path.endswith(".aistackd/host/logs/llama-cpp.log"))
-            self.assertEqual(plan.context_size, 32768)
-            self.assertEqual(plan.predict_limit, 8192)
+            self.assertEqual(plan.context_size, 24576)
+            self.assertEqual(plan.predict_limit, 4096)
+
+    def test_launch_managed_backend_process_reuses_matching_running_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir))
+            plan = build_backend_launch_plan(store, HostServiceConfig())
+            store.save_backend_process(
+                HostBackendProcess(
+                    backend=plan.backend,
+                    status="running",
+                    pid=4321,
+                    command=plan.command,
+                    bind_host=plan.bind_host,
+                    port=plan.port,
+                    model=plan.model,
+                    artifact_path=plan.artifact_path,
+                    server_binary=plan.server_binary,
+                    log_path=plan.log_path,
+                    started_at="2026-03-12T00:00:00+00:00",
+                )
+            )
+
+            with (
+                patch("aistackd.runtime.backend_process.subprocess.Popen") as popen_mock,
+                patch("aistackd.state.host._pid_exists", return_value=True),
+            ):
+                running_process = launch_managed_backend_process(store, HostServiceConfig())
+
+            self.assertTrue(running_process.reused_existing)
+            self.assertIsNone(running_process.process)
+            self.assertEqual(running_process.record.pid, 4321)
+            popen_mock.assert_not_called()
 
     def test_launch_managed_backend_process_persists_running_process_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

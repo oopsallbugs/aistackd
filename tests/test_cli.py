@@ -975,18 +975,22 @@ class CLITests(unittest.TestCase):
             _create_fake_gguf(watch_root, "GLM-4.7-Flash-Claude-4.5-Opus.q4_k_m.gguf")
             _create_fake_gguf(watch_root, "Qwen2.5-Coder-7B-Instruct.Q4_K_M.gguf", payload=b"GGUF\x00qwen\n")
 
-            exit_code, stdout, stderr = invoke(
-                [
-                    "models",
-                    "import-llmfit",
-                    "--project-root",
-                    tmpdir,
-                    "--watch-root",
-                    str(watch_root),
-                    "--format",
-                    "json",
-                ]
-            )
+            with patch(
+                "aistackd.cli.commands.models.iter_llmfit_watch_roots",
+                return_value=(watch_root.resolve(),),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "models",
+                        "import-llmfit",
+                        "--project-root",
+                        tmpdir,
+                        "--watch-root",
+                        str(watch_root),
+                        "--format",
+                        "json",
+                    ]
+                )
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
@@ -1486,11 +1490,11 @@ class CLITests(unittest.TestCase):
             )
             self.assertEqual(
                 opencode_payload["provider"]["aistackd"]["models"]["local-model"]["limit"]["context"],
-                32768,
+                24576,
             )
             self.assertEqual(
                 opencode_payload["provider"]["aistackd"]["models"]["local-model"]["limit"]["output"],
-                8192,
+                4096,
             )
 
             codex_payload = tomllib.loads(
