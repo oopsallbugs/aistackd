@@ -114,6 +114,29 @@ The repo is still intentionally thin overall. Function-tool transport is impleme
 
 The Linux reference-host path is the currently validated path. Broader platform claims should remain conservative until the acceptance matrix expands.
 
+## Live Validation Notes
+
+The current live-tested same-machine Linux flow has already exercised:
+
+- bootstrap-managed `llmfit` and `hf` installs
+- source fallback for managed `llama.cpp`
+- explicit Hugging Face file-URL install when `llmfit` pulling is insufficient
+- `llmfit` browse plus managed GGUF import
+- OpenCode sync, readiness checks, and prompt traffic through the control plane
+
+The current default managed backend limits are tuned from that live run:
+
+- `backend_context_size = 24576`
+- `backend_predict_limit = 4096`
+
+You can override them when restarting the host:
+
+```bash
+PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host restart --service --backend-context-size 16384 --backend-predict-limit 2048
+```
+
+`aistackd host`, `/health`, and `/admin/runtime` now surface the active backend limits so tuning is visible instead of hidden in the raw backend command.
+
 ## Project-Local Skills
 
 Baseline skills shipped by `aistackd sync` remain repo-managed and intentionally small. Project-specific additions are local-first and external/manual in v1.

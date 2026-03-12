@@ -390,6 +390,12 @@ The implementation is not complete until these scenarios pass:
 9. successful llmfit browse session imports multiple new GGUFs without auto-activation
 10. Arch host manual acceptance
 
+Current live status:
+
+1. a same-machine Linux flow has already exercised source fallback, explicit Hugging Face file-URL install, llmfit browse import, OpenCode sync, and prompt traffic through the control plane
+2. LAN-client-only acceptance, profile-switch sync acceptance, explicit local GGUF live acceptance, and Arch manual acceptance remain tracked work
+3. the Linux reference-host path should continue to be treated as the canonical validated path, even when manual live runs happen on other Linux environments
+
 ## 12. Risks And Controls
 
 ### Risk: Distro-specific host setup drift
@@ -408,6 +414,14 @@ Control:
 2. keep explicit Hugging Face file-URL install available when `llmfit` pulling is insufficient
 3. keep native llmfit TUI browsing separate from managed runtime artifact ownership
 4. prefer JSON integration, but tolerate search-output format drift without breaking model discovery
+
+### Risk: live backend tuning is opaque to operators
+
+Control:
+
+1. keep the managed backend context and predict defaults explicit in runtime docs
+2. surface active backend limits in host and health/admin output
+3. document the restart flags used to tune limits after real model-load and OOM testing
 
 ### Risk: Frontend sync becomes too broad
 

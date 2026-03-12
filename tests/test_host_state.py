@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from aistackd.models.sources import local_source_model
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
-from aistackd.state.host import HostControlPlaneProcess, HostStateStore, InstalledToolRecord
+from aistackd.state.host import HostBackendProcess, HostControlPlaneProcess, HostStateStore, InstalledToolRecord
 
 
 class HostStateTests(unittest.TestCase):
@@ -124,6 +124,38 @@ class HostStateTests(unittest.TestCase):
             assert persisted is not None
             self.assertEqual(persisted.pid, 1234)
             self.assertEqual(persisted.base_url, "http://127.0.0.1:8000")
+
+    def test_backend_process_inferrs_limits_from_persisted_command(self) -> None:
+        record = HostBackendProcess.from_dict(
+            {
+                "backend": "llama.cpp",
+                "status": "running",
+                "pid": 4242,
+                "command": [
+                    "/tmp/llama-server",
+                    "--model",
+                    "/tmp/model.gguf",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    "8011",
+                    "--ctx-size",
+                    "24576",
+                    "--predict",
+                    "4096",
+                ],
+                "bind_host": "127.0.0.1",
+                "port": 8011,
+                "model": "local-model",
+                "artifact_path": "/tmp/model.gguf",
+                "server_binary": "/tmp/llama-server",
+                "log_path": "/tmp/llama-cpp.log",
+                "started_at": "2026-03-12T00:00:00+00:00",
+            }
+        )
+
+        self.assertEqual(record.context_size, 24576)
+        self.assertEqual(record.predict_limit, 4096)
 
     def test_runtime_state_marks_stale_control_plane_process_as_exited(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -161,6 +161,16 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
                     if runtime.backend_installation is not None
                     else None
                 ),
+                "backend_context_size": (
+                    runtime.backend_process.context_size
+                    if runtime.backend_process is not None
+                    else None
+                ),
+                "backend_predict_limit": (
+                    runtime.backend_process.predict_limit
+                    if runtime.backend_process is not None
+                    else None
+                ),
                 "backend_process": (
                     runtime.backend_process.as_dict()
                     if runtime.backend_process is not None

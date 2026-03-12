@@ -54,6 +54,10 @@ class ControlPlaneTests(unittest.TestCase):
                         str((backend_root / "bin" / "llama-server").resolve()),
                         "--model",
                         record.artifact_path,
+                        "--ctx-size",
+                        "24576",
+                        "--predict",
+                        "4096",
                     ),
                     bind_host="127.0.0.1",
                     port=8011,
@@ -62,6 +66,8 @@ class ControlPlaneTests(unittest.TestCase):
                     server_binary=str((backend_root / "bin" / "llama-server").resolve()),
                     log_path=str(backend_log_path),
                     started_at="2026-03-07T00:00:00+00:00",
+                    context_size=24576,
+                    predict_limit=4096,
                 )
             )
 
@@ -89,6 +95,8 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertEqual(health_payload["status_reason"], "ready")
                 self.assertEqual(health_payload["responses_state"]["count"], 0)
                 self.assertEqual(health_payload["backend_base_url"], "http://127.0.0.1:8011")
+                self.assertEqual(health_payload["backend_context_size"], 24576)
+                self.assertEqual(health_payload["backend_predict_limit"], 4096)
                 self.assertTrue(str(health_payload["server_binary"]).endswith("llama-server"))
 
                 models_payload = _request_json(

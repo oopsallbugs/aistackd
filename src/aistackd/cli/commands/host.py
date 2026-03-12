@@ -178,6 +178,10 @@ def handle_status(args: argparse.Namespace) -> int:
         print(f"backend_pid: {runtime_state.backend_process.pid}")
         print(f"backend_base_url: {runtime_state.backend_process.base_url}")
         print(f"backend_log_path: {runtime_state.backend_process.log_path}")
+        if runtime_state.backend_process.context_size is not None:
+            print(f"backend_context_size: {runtime_state.backend_process.context_size}")
+        if runtime_state.backend_process.predict_limit is not None:
+            print(f"backend_predict_limit: {runtime_state.backend_process.predict_limit}")
     if runtime_state.control_plane_process is not None:
         print(f"control_plane_pid: {runtime_state.control_plane_process.pid}")
         print(f"control_plane_base_url: {runtime_state.control_plane_process.base_url}")
@@ -535,6 +539,10 @@ def handle_serve(args: argparse.Namespace) -> int:
         print(f"server_binary: {result.runtime.backend_installation.server_binary}")
     print(f"backend_pid: {running_process.record.pid}")
     print(f"backend_log_path: {running_process.record.log_path}")
+    if running_process.record.context_size is not None:
+        print(f"backend_context_size: {running_process.record.context_size}")
+    if running_process.record.predict_limit is not None:
+        print(f"backend_predict_limit: {running_process.record.predict_limit}")
     print(f"control_plane_pid: {control_plane_record.pid}")
     print(f"control_plane_log_path: {control_plane_record.log_path}")
     print(f"active_model: {result.runtime.active_model}")
@@ -690,6 +698,10 @@ def handle_restart(args: argparse.Namespace) -> int:
     print(f"backend_pid: {running_process.record.pid}")
     print(f"backend_base_url: {running_process.record.base_url}")
     print(f"backend_log_path: {running_process.record.log_path}")
+    if running_process.record.context_size is not None:
+        print(f"backend_context_size: {running_process.record.context_size}")
+    if running_process.record.predict_limit is not None:
+        print(f"backend_predict_limit: {running_process.record.predict_limit}")
     print(f"active_model: {running_process.record.model}")
     return 0
 

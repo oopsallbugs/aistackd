@@ -664,6 +664,8 @@ class CLITests(unittest.TestCase):
             self.assertIn("server_binary:", stdout)
             self.assertIn("backend_base_url: http://127.0.0.1:8011", stdout)
             self.assertIn("backend_pid: 4242", stdout)
+            self.assertIn("backend_context_size: 24576", stdout)
+            self.assertIn("backend_predict_limit: 4096", stdout)
             self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
             launch_mock.assert_called_once()
             stop_mock.assert_called_once()
@@ -806,10 +808,14 @@ class CLITests(unittest.TestCase):
                     pid=5151,
                     base_url="http://127.0.0.1:8011",
                     log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "llama-cpp.log"),
+                    context_size=24576,
+                    predict_limit=4096,
                     model="qwen2.5-coder-7b-instruct-q4-k-m",
                     as_dict=lambda: {
                         "status": "running",
                         "pid": 5151,
+                        "context_size": 24576,
+                        "predict_limit": 4096,
                     },
                 )
             )
@@ -827,6 +833,8 @@ class CLITests(unittest.TestCase):
             self.assertIn("before_status: running", stdout)
             self.assertIn("after_status: running", stdout)
             self.assertIn("backend_pid: 5151", stdout)
+            self.assertIn("backend_context_size: 24576", stdout)
+            self.assertIn("backend_predict_limit: 4096", stdout)
 
     def test_host_start_reports_started_control_plane(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1839,6 +1847,8 @@ def _fake_running_backend_process(project_root: Path) -> SimpleNamespace:
         record=SimpleNamespace(
             pid=4242,
             log_path=str(log_path),
+            context_size=24576,
+            predict_limit=4096,
         )
     )
 

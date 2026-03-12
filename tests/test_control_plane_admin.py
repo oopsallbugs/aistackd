@@ -18,7 +18,7 @@ from aistackd.control_plane.admin import (
     recommend_models_admin,
     search_models_admin,
 )
-from aistackd.state.host import HostStateStore
+from aistackd.state.host import HostBackendProcess, HostStateStore
 
 
 class ControlPlaneAdminTests(unittest.TestCase):
@@ -28,12 +28,39 @@ class ControlPlaneAdminTests(unittest.TestCase):
     def test_build_runtime_admin_payload_reports_service_and_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = HostStateStore(Path(tmpdir))
+            store.save_backend_process(
+                HostBackendProcess(
+                    backend="llama.cpp",
+                    status="running",
+                    pid=4242,
+                    command=(
+                        "/tmp/llama-server",
+                        "--model",
+                        "/tmp/model.gguf",
+                        "--ctx-size",
+                        "24576",
+                        "--predict",
+                        "4096",
+                    ),
+                    bind_host="127.0.0.1",
+                    port=8011,
+                    model="local-model",
+                    artifact_path="/tmp/model.gguf",
+                    server_binary="/tmp/llama-server",
+                    log_path="/tmp/llama-cpp.log",
+                    started_at="2026-03-12T00:00:00+00:00",
+                    context_size=24576,
+                    predict_limit=4096,
+                )
+            )
             payload = build_runtime_admin_payload(store, _service_config())
 
         self.assertEqual(payload["service"]["responses_base_url"], "http://127.0.0.1:8000/v1")
         self.assertEqual(payload["runtime"]["backend"], "llama.cpp")
         self.assertEqual(payload["runtime"]["backend_status"], "missing")
         self.assertEqual(payload["runtime"]["installed_models"], [])
+        self.assertEqual(payload["runtime"]["backend_process"]["context_size"], 24576)
+        self.assertEqual(payload["runtime"]["backend_process"]["predict_limit"], 4096)
         self.assertEqual(payload["responses_state"]["count"], 0)
 
     def test_search_and_recommend_models_admin_use_llmfit(self) -> None:

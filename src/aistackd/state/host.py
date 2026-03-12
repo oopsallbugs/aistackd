@@ -213,6 +213,8 @@ class HostBackendProcess:
     server_binary: str
     log_path: str
     started_at: str
+    context_size: int | None = None
+    predict_limit: int | None = None
     stopped_at: str | None = None
     exit_code: int | None = None
 
@@ -224,11 +226,12 @@ class HostBackendProcess:
     @classmethod
     def from_dict(cls, payload: dict[str, object]) -> "HostBackendProcess":
         """Decode one backend-process record from JSON."""
+        command = _require_string_tuple(payload, "command")
         return cls(
             backend=_require_string(payload, "backend"),
             status=_require_string(payload, "status"),
             pid=_require_int(payload, "pid"),
-            command=_require_string_tuple(payload, "command"),
+            command=command,
             bind_host=_require_string(payload, "bind_host"),
             port=_require_int(payload, "port"),
             model=_require_string(payload, "model"),
@@ -236,6 +239,8 @@ class HostBackendProcess:
             server_binary=_require_string(payload, "server_binary"),
             log_path=_require_string(payload, "log_path"),
             started_at=_require_string(payload, "started_at"),
+            context_size=_optional_int(payload, "context_size") or _command_flag_int(command, "--ctx-size"),
+            predict_limit=_optional_int(payload, "predict_limit") or _command_flag_int(command, "--predict"),
             stopped_at=_optional_string(payload, "stopped_at"),
             exit_code=_optional_int(payload, "exit_code"),
         )
@@ -256,6 +261,10 @@ class HostBackendProcess:
             "log_path": self.log_path,
             "started_at": self.started_at,
         }
+        if self.context_size is not None:
+            payload["context_size"] = self.context_size
+        if self.predict_limit is not None:
+            payload["predict_limit"] = self.predict_limit
         if self.stopped_at is not None:
             payload["stopped_at"] = self.stopped_at
         if self.exit_code is not None:
@@ -870,6 +879,19 @@ def _optional_int(payload: dict[str, object], field_name: str) -> int | None:
     if not isinstance(value, int):
         raise HostStateError(f"expected integer for field '{field_name}'")
     return value
+
+
+def _command_flag_int(command: tuple[str, ...], flag: str) -> int | None:
+    try:
+        index = command.index(flag)
+    except ValueError:
+        return None
+    if index + 1 >= len(command):
+        return None
+    try:
+        return int(command[index + 1])
+    except ValueError:
+        return None
 
 
 def _require_string_tuple(payload: dict[str, object], field_name: str) -> tuple[str, ...]:

@@ -163,6 +163,8 @@ def launch_managed_backend_process(
         server_binary=plan.server_binary,
         log_path=plan.log_path,
         started_at=started_at,
+        context_size=plan.context_size,
+        predict_limit=plan.predict_limit,
     )
     _save_backend_process_if_current(store, starting_record, expected_pid=process.pid)
 
@@ -181,6 +183,8 @@ def launch_managed_backend_process(
             server_binary=plan.server_binary,
             log_path=plan.log_path,
             started_at=started_at,
+            context_size=plan.context_size,
+            predict_limit=plan.predict_limit,
             stopped_at=_timestamp_now(),
             exit_code=exit_code,
         )
@@ -201,6 +205,8 @@ def launch_managed_backend_process(
         server_binary=plan.server_binary,
         log_path=plan.log_path,
         started_at=started_at,
+        context_size=plan.context_size,
+        predict_limit=plan.predict_limit,
     )
     _save_backend_process_if_current(store, running_record, expected_pid=process.pid)
     return RunningBackendProcess(plan=plan, record=running_record, process=process)
@@ -243,6 +249,8 @@ def stop_managed_backend_process(
         server_binary=running_process.record.server_binary,
         log_path=running_process.record.log_path,
         started_at=running_process.record.started_at,
+        context_size=running_process.record.context_size,
+        predict_limit=running_process.record.predict_limit,
         stopped_at=_timestamp_now(),
         exit_code=exit_code,
     )
@@ -292,6 +300,8 @@ def stop_current_managed_backend_process(
         server_binary=current.server_binary,
         log_path=current.log_path,
         started_at=current.started_at,
+        context_size=current.context_size,
+        predict_limit=current.predict_limit,
         stopped_at=_timestamp_now(),
         exit_code=exit_code,
     )
