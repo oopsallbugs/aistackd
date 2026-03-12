@@ -113,3 +113,11 @@ The repo is still intentionally thin overall. Function-tool transport is impleme
 4. broader frontend polish after that
 
 The Linux reference-host path is the currently validated path. Broader platform claims should remain conservative until the acceptance matrix expands.
+
+## Project-Local Skills
+
+Baseline skills shipped by `aistackd sync` remain repo-managed and intentionally small. Project-specific additions are local-first and external/manual in v1.
+
+- For Codex and OpenCode, prefer project-local external installs under `./.agents/skills/` so they stay separate from the managed baseline written into `.codex/skills/` and `.opencode/skills/`.
+- Repeated `aistackd sync --write` runs preserve unmanaged project-local skills.
+- If you adopt an external skill into the project workflow long-term, you may record provenance beside `SKILL.md` in `aistackd-skill-provenance.json`.

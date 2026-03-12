@@ -91,6 +91,13 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["active_profile"], "remote")
             self.assertTrue(payload["remote_validation"]["ok"])
             self.assertTrue(payload["smoke"]["ok"])
+            sync_labels = {entry["label"]: entry["detail"] for entry in payload["sync_checks"]}
+            self.assertIn("project_local_skill_roots", sync_labels)
+            self.assertIn(".agents/skills", sync_labels["project_local_skill_roots"])
+            self.assertEqual(
+                sync_labels["project_local_skill_provenance_file"],
+                "aistackd-skill-provenance.json",
+            )
 
     def test_doctor_ready_reports_missing_frontend_sync(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1474,6 +1481,8 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             self.assertIn("sync write", stdout)
             self.assertIn("ownership_manifest:", stdout)
+            self.assertIn(".agents/skills", stdout)
+            self.assertIn("aistackd-skill-provenance.json", stdout)
 
             opencode_payload = json.loads(opencode_path.read_text(encoding="utf-8"))
             self.assertEqual(opencode_payload["custom"], {"keep": True})

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from aistackd.frontends.adapters.base import FrontendAdapterPlan, ManagedPath
 from aistackd.runtime.config import RuntimeConfig
+from aistackd.skills.project_local import project_local_skill_note
 from aistackd.state.files import (
     delete_file_if_exists,
     load_toml_object,
@@ -77,6 +78,7 @@ class CodexAdapter:
                 "provider settings are merged into project-local .codex/config.toml while preserving unrelated keys",
                 f"synced operator tools default to profile '{runtime_config.active_profile}' at {runtime_config.base_url}",
                 "recommended first-run check: aistackd doctor ready --frontend codex",
+                project_local_skill_note(self.name),
                 "tool-calling examples stay client-managed; the host transports function calls but does not execute repo tools",
             ),
         )

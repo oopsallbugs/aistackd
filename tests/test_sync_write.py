@@ -11,6 +11,7 @@ from pathlib import Path
 
 from aistackd.frontends.sync import SyncManifest, SyncOwnershipManifest, SyncRequest, apply_sync_manifest
 from aistackd.runtime.config import RuntimeConfig
+from aistackd.skills.project_local import PROJECT_LOCAL_SKILL_PROVENANCE_FILE_NAME
 from aistackd.state.profiles import Profile
 
 
@@ -121,6 +122,13 @@ class SyncWriteTests(unittest.TestCase):
             )
             apply_sync_manifest(project_root, full_manifest)
 
+            unmanaged_opencode_skill_dir = project_root / ".opencode" / "skills" / "custom-local"
+            unmanaged_opencode_skill_dir.mkdir(parents=True, exist_ok=True)
+            (unmanaged_opencode_skill_dir / "SKILL.md").write_text(
+                "name: custom-local\n",
+                encoding="utf-8",
+            )
+
             codex_only_manifest = SyncManifest.create(
                 codex_only_runtime_config,
                 SyncRequest.create(codex_only_runtime_config.frontend_targets, dry_run=False),
@@ -137,6 +145,7 @@ class SyncWriteTests(unittest.TestCase):
             self.assertFalse((project_root / ".opencode" / "tools" / "runtime-wait.py").exists())
             self.assertFalse((project_root / ".opencode" / "tools" / "frontend-smoke.py").exists())
             self.assertFalse((project_root / ".opencode" / "tools" / "tool-call-demo.py").exists())
+            self.assertTrue((project_root / ".opencode" / "skills" / "custom-local" / "SKILL.md").exists())
             self.assertTrue((project_root / ".codex" / "skills" / "find-skills" / "SKILL.md").exists())
             self.assertTrue((project_root / ".codex" / "tools" / "runtime-status.py").exists())
             self.assertTrue((project_root / ".codex" / "tools" / "responses-smoke.py").exists())
@@ -189,6 +198,13 @@ class SyncWriteTests(unittest.TestCase):
             )
             apply_sync_manifest(project_root, full_manifest)
 
+            unmanaged_codex_skill_dir = project_root / ".codex" / "skills" / "custom-local"
+            unmanaged_codex_skill_dir.mkdir(parents=True, exist_ok=True)
+            (unmanaged_codex_skill_dir / "SKILL.md").write_text(
+                "name: custom-local\n",
+                encoding="utf-8",
+            )
+
             opencode_only_manifest = SyncManifest.create(
                 opencode_only_runtime_config,
                 SyncRequest.create(opencode_only_runtime_config.frontend_targets, dry_run=False),
@@ -210,12 +226,54 @@ class SyncWriteTests(unittest.TestCase):
             self.assertFalse((project_root / ".codex" / "tools" / "runtime-wait.py").exists())
             self.assertFalse((project_root / ".codex" / "tools" / "frontend-smoke.py").exists())
             self.assertFalse((project_root / ".codex" / "tools" / "tool-call-demo.py").exists())
+            self.assertTrue((project_root / ".codex" / "skills" / "custom-local" / "SKILL.md").exists())
             self.assertIn(str(codex_path), result.removed_paths)
 
             ownership_manifest = SyncOwnershipManifest.load(project_root)
             self.assertIsNotNone(ownership_manifest)
             assert ownership_manifest is not None
             self.assertEqual(tuple(target.frontend for target in ownership_manifest.targets), ("opencode",))
+
+    def test_sync_write_preserves_unmanaged_project_local_skills_and_provenance(self) -> None:
+        profile = Profile(
+            name="local",
+            base_url="http://127.0.0.1:8000",
+            api_key_env="AISTACKD_API_KEY",
+            model="local-model",
+        )
+        runtime_config = RuntimeConfig.for_client(profile, ("codex", "opencode"))
+        manifest = SyncManifest.create(
+            runtime_config,
+            SyncRequest.create(runtime_config.frontend_targets, dry_run=False),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            unmanaged_skill_dir = project_root / ".agents" / "skills" / "project-custom"
+            unmanaged_skill_dir.mkdir(parents=True, exist_ok=True)
+            (unmanaged_skill_dir / "SKILL.md").write_text("name: project-custom\n", encoding="utf-8")
+            (unmanaged_skill_dir / PROJECT_LOCAL_SKILL_PROVENANCE_FILE_NAME).write_text(
+                json.dumps(
+                    {
+                        "schema_version": "v1alpha1",
+                        "source_type": "skills.sh",
+                        "source": "example/project-custom",
+                        "installed_via": "manual",
+                        "snapshot_date": "2026-03-12",
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            first_result = apply_sync_manifest(project_root, manifest)
+            second_result = apply_sync_manifest(project_root, manifest)
+
+            self.assertTrue((unmanaged_skill_dir / "SKILL.md").exists())
+            self.assertTrue((unmanaged_skill_dir / PROJECT_LOCAL_SKILL_PROVENANCE_FILE_NAME).exists())
+            self.assertNotIn(str(unmanaged_skill_dir / "SKILL.md"), first_result.written_paths)
+            self.assertNotIn(str(unmanaged_skill_dir / "SKILL.md"), second_result.written_paths)
 
     def test_sync_write_renders_executable_tools_with_runtime_defaults(self) -> None:
         profile = Profile(

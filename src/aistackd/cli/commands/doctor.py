@@ -11,6 +11,10 @@ from aistackd.frontends.catalog import SUPPORTED_FRONTENDS
 from aistackd.frontends.sync import SyncOwnershipManifest
 from aistackd.runtime.config import RuntimeConfig
 from aistackd.runtime.remote import RemoteClientError, run_remote_smoke, validate_remote_runtime
+from aistackd.skills.project_local import (
+    PROJECT_LOCAL_SKILL_PROVENANCE_FILE_NAME,
+    project_local_skill_roots,
+)
 from aistackd.state.layout import ProjectLayout
 from aistackd.state.profiles import ProfileStore, ProfileStoreError
 
@@ -187,6 +191,23 @@ def _build_frontend_readiness_report(
                         "label": "managed_frontend_paths",
                         "ok": not missing_paths,
                         "detail": f"missing={len(missing_paths)}",
+                    }
+                )
+                sync_checks.append(
+                    {
+                        "label": "project_local_skill_roots",
+                        "ok": True,
+                        "detail": ", ".join(
+                            str((root / skill_root).resolve())
+                            for skill_root in project_local_skill_roots(frontend)
+                        ),
+                    }
+                )
+                sync_checks.append(
+                    {
+                        "label": "project_local_skill_provenance_file",
+                        "ok": True,
+                        "detail": PROJECT_LOCAL_SKILL_PROVENANCE_FILE_NAME,
                     }
                 )
                 if missing_paths:

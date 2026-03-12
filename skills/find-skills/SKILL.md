@@ -30,6 +30,8 @@ Use this skill to discover project-relevant skills on `skills.sh` and avoid bloa
      - `npx skills add <owner/repo@skill> --agent codex -g`
 - Do not recommend `-g` as the default path.
 - Warning: omitting `--agent` can install to many agents/frontends unintentionally.
+- For Codex and OpenCode in this repo, prefer project-local installs under `./.agents/skills/` so they stay clearly separate from the baseline content managed by `aistackd sync`.
+- If you adopt an external skill into project-local workflow long-term, you may record provenance in `aistackd-skill-provenance.json` beside the installed `SKILL.md`.
 
 ## Workflow
 1. Inspect the published skill page:
@@ -43,11 +45,13 @@ Use this skill to discover project-relevant skills on `skills.sh` and avoid bloa
 5. Verify multi-frontend project-local paths as needed:
    - `ls ./.agents/skills/find-skills`
    - `ls ./.openhands/skills/find-skills`
-6. Optional global install (only when explicitly requested):
+6. Optional: record provenance for an adopted external skill beside the installed `SKILL.md`:
+   - create `aistackd-skill-provenance.json` with upstream source and snapshot date
+7. Optional global install (only when explicitly requested):
    - `npx skills add vercel-labs/skills/find-skills --agent codex -g`
-7. Verify global installation only for `-g` installs:
+8. Verify global installation only for `-g` installs:
    - `ls ~/.codex/skills/find-skills`
-8. Use the installed skill to discover and shortlist project-relevant skills.
+9. Use the installed skill to discover and shortlist project-relevant skills.
 
 ## Failure Triage
 - `npx: command not found`:

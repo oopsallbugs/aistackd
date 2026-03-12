@@ -161,6 +161,8 @@ Project-local install policy:
 3. provenance captured for external content
 4. global install of non-baseline content remains opt-in
 5. in v1 this remains an external/manual workflow, not a native `aistackd` install command
+6. for Codex and OpenCode, prefer `./.agents/skills/` for project-local additions so they stay distinct from the repo-managed baseline written by sync
+7. adopted external skills may record provenance beside `SKILL.md` in `aistackd-skill-provenance.json`
 
 The goal is:
 
