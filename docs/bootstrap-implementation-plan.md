@@ -118,6 +118,7 @@ Host-side prerequisite installation is out of scope by design. The repo will val
 3. synced `tools/` scripts are operator utilities, not model-executed server tools
 4. the near-term roadmap is:
    - broader frontend polish after the OpenHands adapter
+5. frontend readiness output should surface the synced config path, launch command, and API-key hint for each supported frontend
 
 ### Backend Acquisition
 

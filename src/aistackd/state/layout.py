@@ -13,7 +13,7 @@ from aistackd.state.host import HostStatePaths
 from aistackd.state.profiles import ProfileStatePaths
 from aistackd.state.sync import SyncStatePaths
 
-COMMAND_GROUPS = ("host", "client", "profiles", "models", "sync", "doctor")
+COMMAND_GROUPS = ("host", "client", "profiles", "models", "sync", "frontend", "doctor")
 
 
 @dataclass(frozen=True)

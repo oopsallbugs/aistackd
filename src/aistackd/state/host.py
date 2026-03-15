@@ -429,6 +429,8 @@ class HostRuntimeState:
     backend_process_status: str = "not_started"
     control_plane_process: HostControlPlaneProcess | None = None
     control_plane_process_status: str = "not_started"
+    configured_backend_context_size: int | None = None
+    configured_backend_predict_limit: int | None = None
     supported_sources: tuple[str, ...] = SUPPORTED_MODEL_SOURCES
 
     def to_dict(self) -> dict[str, object]:
@@ -453,6 +455,10 @@ class HostRuntimeState:
             payload["backend_process"] = self.backend_process.as_dict()
         if self.control_plane_process is not None:
             payload["control_plane_process"] = self.control_plane_process.as_dict()
+        if self.configured_backend_context_size is not None:
+            payload["configured_backend_context_size"] = self.configured_backend_context_size
+        if self.configured_backend_predict_limit is not None:
+            payload["configured_backend_predict_limit"] = self.configured_backend_predict_limit
         return payload
 
 
@@ -595,6 +601,35 @@ class HostStateStore:
         write_json_atomic(self.paths.backend_installation_path, payload)
         return created
 
+    def load_persisted_backend_tuning(self) -> tuple[int | None, int | None]:
+        """Return persisted backend tuning overrides from runtime state."""
+        payload = self._load_runtime_payload()
+        return (
+            _optional_int(payload, "backend_context_size"),
+            _optional_int(payload, "backend_predict_limit"),
+        )
+
+    def save_persisted_backend_tuning(
+        self,
+        *,
+        context_size: int,
+        predict_limit: int,
+    ) -> tuple[int, int]:
+        """Persist backend tuning overrides in the runtime state."""
+        self.ensure_storage()
+        payload = self._load_runtime_payload()
+        payload["backend_context_size"] = context_size
+        payload["backend_predict_limit"] = predict_limit
+        self._write_runtime_payload(payload)
+        return context_size, predict_limit
+
+    def reset_persisted_backend_tuning(self) -> None:
+        """Clear persisted backend tuning overrides from the runtime state."""
+        payload = self._load_runtime_payload()
+        payload.pop("backend_context_size", None)
+        payload.pop("backend_predict_limit", None)
+        self._write_runtime_payload(payload)
+
     def load_backend_process(self) -> HostBackendProcess | None:
         """Load the persisted backend-process record if present."""
         payload = load_json_object(self.paths.backend_process_path)
@@ -636,17 +671,17 @@ class HostStateStore:
             raise InstalledModelNotFoundError(f"model '{model_name}' is not installed") from exc
 
         self.ensure_storage()
-        write_json_atomic(
-            self.paths.runtime_state_path,
+        payload = self._load_runtime_payload()
+        payload.update(
             {
-                "schema_version": CURRENT_HOST_STATE_SCHEMA_VERSION,
-                "backend": PRIMARY_BACKEND,
-                "backend_policy": BACKEND_ACQUISITION_POLICY,
-                "model_source_policy": MODEL_SOURCE_POLICY,
+                "backend": _optional_string(payload, "backend") or PRIMARY_BACKEND,
+                "backend_policy": _optional_string(payload, "backend_policy") or BACKEND_ACQUISITION_POLICY,
+                "model_source_policy": _optional_string(payload, "model_source_policy") or MODEL_SOURCE_POLICY,
                 "active_model": active_record.model,
                 "active_source": active_record.source,
-            },
+            }
         )
+        self._write_runtime_payload(payload)
         return self.load_runtime_state()
 
     def load_runtime_state(self) -> HostRuntimeState:
@@ -664,6 +699,8 @@ class HostStateStore:
         runtime_payload = load_json_object(self.paths.runtime_state_path)
         active_model = _optional_string(runtime_payload, "active_model")
         active_source = _optional_string(runtime_payload, "active_source")
+        configured_backend_context_size = _optional_int(runtime_payload, "backend_context_size")
+        configured_backend_predict_limit = _optional_int(runtime_payload, "backend_predict_limit")
         active_record = next((record for record in installed_models if record.model == active_model), None)
 
         if active_model is None:
@@ -696,7 +733,18 @@ class HostStateStore:
             control_plane_process_status=(
                 control_plane_process.status if control_plane_process is not None else "not_started"
             ),
+            configured_backend_context_size=configured_backend_context_size,
+            configured_backend_predict_limit=configured_backend_predict_limit,
         )
+
+    def _load_runtime_payload(self) -> dict[str, object]:
+        payload = load_json_object(self.paths.runtime_state_path)
+        return payload if payload else {}
+
+    def _write_runtime_payload(self, payload: dict[str, object]) -> None:
+        normalized = dict(payload)
+        normalized["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
+        write_json_atomic(self.paths.runtime_state_path, normalized)
 
     def save_response_state(
         self,

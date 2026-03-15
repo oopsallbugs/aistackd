@@ -7,6 +7,7 @@ import json
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 from aistackd.control_plane import ControlPlaneError, serve_control_plane
@@ -64,6 +65,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _add_format_argument(status_parser)
     status_parser.set_defaults(handler=handle_status)
 
+    ps_parser = command_parsers.add_parser("ps", help="alias for 'host status'")
+    _add_shared_arguments(ps_parser)
+    _add_format_argument(ps_parser)
+    ps_parser.set_defaults(handler=handle_status)
+
     inspect_parser = command_parsers.add_parser(
         "inspect",
         help="inspect prerequisites, llmfit hardware detection, and backend discovery",
@@ -118,6 +124,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _add_format_argument(start_parser)
     start_parser.set_defaults(handler=handle_start)
 
+    up_parser = command_parsers.add_parser("up", help="alias for 'host start'")
+    _add_shared_arguments(up_parser)
+    _add_service_arguments(up_parser)
+    _add_format_argument(up_parser)
+    up_parser.set_defaults(handler=handle_start)
+
     stop_parser = command_parsers.add_parser("stop", help="stop the managed backend process if it is running")
     _add_shared_arguments(stop_parser)
     _add_format_argument(stop_parser)
@@ -132,6 +144,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="stop both the managed control-plane service and any persisted backend process",
     )
     stop_parser.set_defaults(handler=handle_stop)
+
+    down_parser = command_parsers.add_parser("down", help="alias for 'host stop --all'")
+    _add_shared_arguments(down_parser)
+    _add_format_argument(down_parser)
+    down_parser.set_defaults(handler=handle_down, service=False, all=True)
 
     restart_parser = command_parsers.add_parser("restart", help="restart the managed backend process")
     _add_shared_arguments(restart_parser)
@@ -148,6 +165,43 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _add_shared_arguments(serve_parser)
     _add_service_arguments(serve_parser)
     serve_parser.set_defaults(handler=handle_serve)
+
+    logs_parser = command_parsers.add_parser("logs", help="show persisted backend or control-plane logs")
+    _add_shared_arguments(logs_parser)
+    logs_parser.add_argument("target", choices=("backend", "control-plane"), help="log target to print")
+    logs_parser.add_argument(
+        "--follow",
+        action="store_true",
+        help="follow the log output until interrupted",
+    )
+    logs_parser.add_argument(
+        "--lines",
+        type=int,
+        default=40,
+        help="number of lines to print before following (default: 40)",
+    )
+    logs_parser.set_defaults(handler=handle_logs)
+
+    tune_parser = command_parsers.add_parser("tune", help="persist backend tuning defaults for host lifecycle commands")
+    _add_shared_arguments(tune_parser)
+    _add_format_argument(tune_parser)
+    tune_commands = tune_parser.add_subparsers(dest="host_tune_command", metavar="host_tune_command")
+
+    tune_show_parser = tune_commands.add_parser("show", help="show persisted backend tuning defaults")
+    _add_shared_arguments(tune_show_parser)
+    _add_format_argument(tune_show_parser)
+    tune_show_parser.set_defaults(handler=handle_tune_show)
+
+    tune_set_parser = tune_commands.add_parser("set", help="persist backend tuning defaults")
+    _add_shared_arguments(tune_set_parser)
+    _add_tuning_arguments(tune_set_parser)
+    _add_format_argument(tune_set_parser)
+    tune_set_parser.set_defaults(handler=handle_tune_set)
+
+    tune_reset_parser = tune_commands.add_parser("reset", help="clear persisted backend tuning defaults")
+    _add_shared_arguments(tune_reset_parser)
+    _add_format_argument(tune_reset_parser)
+    tune_reset_parser.set_defaults(handler=handle_tune_reset)
 
 
 def handle_status(args: argparse.Namespace) -> int:
@@ -186,6 +240,10 @@ def handle_status(args: argparse.Namespace) -> int:
         print(f"control_plane_pid: {runtime_state.control_plane_process.pid}")
         print(f"control_plane_base_url: {runtime_state.control_plane_process.base_url}")
         print(f"control_plane_log_path: {runtime_state.control_plane_process.log_path}")
+    if runtime_state.configured_backend_context_size is not None:
+        print(f"configured_backend_context_size: {runtime_state.configured_backend_context_size}")
+    if runtime_state.configured_backend_predict_limit is not None:
+        print(f"configured_backend_predict_limit: {runtime_state.configured_backend_predict_limit}")
     print(f"active_model: {runtime_state.active_model or 'none'}")
     print(f"active_source: {runtime_state.active_source or 'none'}")
     print(f"activation_state: {runtime_state.activation_state}")
@@ -381,7 +439,8 @@ def handle_acquire_backend(args: argparse.Namespace) -> int:
 def handle_validate(args: argparse.Namespace) -> int:
     """Validate whether the host runtime is ready to serve locally."""
     try:
-        result = validate_host_runtime(HostStateStore(args.project_root), _service_config_from_args(args))
+        store = HostStateStore(args.project_root)
+        result = validate_host_runtime(store, _service_config_from_args(args, store))
     except HostStateError as exc:
         return _exit_with_error(str(exc))
 
@@ -493,8 +552,8 @@ def handle_bootstrap(args: argparse.Namespace) -> int:
 def handle_serve(args: argparse.Namespace) -> int:
     """Run the local authenticated control-plane service."""
     try:
-        service = _service_config_from_args(args)
         store = HostStateStore(args.project_root)
+        service = _service_config_from_args(args, store)
         result = validate_host_runtime(store, service)
     except HostStateError as exc:
         return _exit_with_error(str(exc))
@@ -566,8 +625,8 @@ def handle_serve(args: argparse.Namespace) -> int:
 def handle_start(args: argparse.Namespace) -> int:
     """Start the managed control-plane service in the background."""
     try:
-        service = _service_config_from_args(args)
         store = HostStateStore(args.project_root)
+        service = _service_config_from_args(args, store)
         result = validate_host_runtime(store, service)
     except HostStateError as exc:
         return _exit_with_error(str(exc))
@@ -658,6 +717,13 @@ def handle_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_down(args: argparse.Namespace) -> int:
+    """Stop both the managed control-plane and backend processes."""
+    args.service = False
+    args.all = True
+    return handle_stop(args)
+
+
 def handle_restart(args: argparse.Namespace) -> int:
     """Restart the managed backend process."""
     if args.service:
@@ -665,7 +731,7 @@ def handle_restart(args: argparse.Namespace) -> int:
 
     try:
         store = HostStateStore(args.project_root)
-        service = _service_config_from_args(args)
+        service = _service_config_from_args(args, store)
         result = validate_backend_runtime(store, service)
     except HostStateError as exc:
         return _exit_with_error(str(exc))
@@ -706,10 +772,134 @@ def handle_restart(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_logs(args: argparse.Namespace) -> int:
+    """Print persisted host logs."""
+    if args.lines < 1:
+        return _exit_with_error("--lines must be at least 1")
+
+    store = HostStateStore(args.project_root)
+    if args.target == "backend":
+        log_path = store.paths.backend_log_path()
+    else:
+        log_path = store.paths.control_plane_log_path()
+
+    if not log_path.exists():
+        return _exit_with_error(f"{args.target} log does not exist: {log_path}")
+
+    try:
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return _exit_with_error(str(exc))
+
+    for line in lines[-args.lines :]:
+        print(line)
+
+    if not args.follow:
+        return 0
+
+    try:
+        with log_path.open("r", encoding="utf-8") as handle:
+            handle.seek(0, os.SEEK_END)
+            while True:
+                line = handle.readline()
+                if line:
+                    print(line, end="")
+                    continue
+                time.sleep(0.25)
+    except KeyboardInterrupt:
+        return 0
+    except OSError as exc:
+        return _exit_with_error(str(exc))
+
+
+def handle_tune_show(args: argparse.Namespace) -> int:
+    """Show the persisted backend tuning defaults."""
+    store = HostStateStore(args.project_root)
+    context_size, predict_limit = store.load_persisted_backend_tuning()
+    source = "persisted" if context_size is not None and predict_limit is not None else "default"
+    resolved_context_size = context_size or DEFAULT_BACKEND_CONTEXT_SIZE
+    resolved_predict_limit = predict_limit or DEFAULT_BACKEND_PREDICT_LIMIT
+    payload = {
+        "backend_context_size": resolved_context_size,
+        "backend_predict_limit": resolved_predict_limit,
+        "source": source,
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("host tuning")
+    print(f"backend_context_size: {resolved_context_size}")
+    print(f"backend_predict_limit: {resolved_predict_limit}")
+    print(f"source: {source}")
+    return 0
+
+
+def handle_tune_set(args: argparse.Namespace) -> int:
+    """Persist backend tuning defaults."""
+    if args.backend_context_size is None and args.backend_predict_limit is None:
+        return _exit_with_error("specify at least one tuning flag to persist")
+
+    store = HostStateStore(args.project_root)
+    current_context_size, current_predict_limit = store.load_persisted_backend_tuning()
+    resolved_context_size = (
+        args.backend_context_size
+        if args.backend_context_size is not None
+        else current_context_size or DEFAULT_BACKEND_CONTEXT_SIZE
+    )
+    resolved_predict_limit = (
+        args.backend_predict_limit
+        if args.backend_predict_limit is not None
+        else current_predict_limit or DEFAULT_BACKEND_PREDICT_LIMIT
+    )
+    if resolved_context_size < 1:
+        return _exit_with_error("backend_context_size must be a positive integer")
+    if resolved_predict_limit < 1:
+        return _exit_with_error("backend_predict_limit must be a positive integer")
+    context_size, predict_limit = store.save_persisted_backend_tuning(
+        context_size=resolved_context_size,
+        predict_limit=resolved_predict_limit,
+    )
+    payload = {
+        "action": "updated",
+        "backend_context_size": context_size,
+        "backend_predict_limit": predict_limit,
+        "source": "persisted",
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("updated host tuning")
+    print(f"backend_context_size: {context_size}")
+    print(f"backend_predict_limit: {predict_limit}")
+    return 0
+
+
+def handle_tune_reset(args: argparse.Namespace) -> int:
+    """Reset persisted backend tuning defaults to the documented runtime defaults."""
+    store = HostStateStore(args.project_root)
+    store.reset_persisted_backend_tuning()
+    payload = {
+        "action": "reset",
+        "backend_context_size": DEFAULT_BACKEND_CONTEXT_SIZE,
+        "backend_predict_limit": DEFAULT_BACKEND_PREDICT_LIMIT,
+        "source": "default",
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("reset host tuning")
+    print(f"backend_context_size: {DEFAULT_BACKEND_CONTEXT_SIZE}")
+    print(f"backend_predict_limit: {DEFAULT_BACKEND_PREDICT_LIMIT}")
+    return 0
+
+
 def _handle_restart_service(args: argparse.Namespace) -> int:
     try:
         store = HostStateStore(args.project_root)
-        service = _service_config_from_args(args)
+        service = _service_config_from_args(args, store)
         result = validate_host_runtime(store, service)
     except HostStateError as exc:
         return _exit_with_error(str(exc))
@@ -813,6 +1003,27 @@ def _add_user_bin_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--backend-context-size",
+        type=int,
+        default=None,
+        help=(
+            "context size for the managed llama.cpp process "
+            f"(default: saved value or {DEFAULT_BACKEND_CONTEXT_SIZE})"
+        ),
+    )
+    parser.add_argument(
+        "--backend-predict-limit",
+        type=int,
+        default=None,
+        help=(
+            "token prediction limit for the managed llama.cpp process "
+            f"(default: saved value or {DEFAULT_BACKEND_PREDICT_LIMIT})"
+        ),
+    )
+
+
 def _add_service_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--bind-host",
@@ -844,14 +1055,20 @@ def _add_service_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend-context-size",
         type=int,
-        default=DEFAULT_BACKEND_CONTEXT_SIZE,
-        help=f"context size for the managed llama.cpp process (default: {DEFAULT_BACKEND_CONTEXT_SIZE})",
+        default=None,
+        help=(
+            "context size for the managed llama.cpp process "
+            f"(default: saved value or {DEFAULT_BACKEND_CONTEXT_SIZE})"
+        ),
     )
     parser.add_argument(
         "--backend-predict-limit",
         type=int,
-        default=DEFAULT_BACKEND_PREDICT_LIMIT,
-        help=f"token prediction limit for the managed llama.cpp process (default: {DEFAULT_BACKEND_PREDICT_LIMIT})",
+        default=None,
+        help=(
+            "token prediction limit for the managed llama.cpp process "
+            f"(default: saved value or {DEFAULT_BACKEND_PREDICT_LIMIT})"
+        ),
     )
 
 
@@ -864,15 +1081,30 @@ def _add_format_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _service_config_from_args(args: argparse.Namespace) -> HostServiceConfig:
+def _service_config_from_args(
+    args: argparse.Namespace,
+    store: HostStateStore | None = None,
+) -> HostServiceConfig:
+    persisted_context_size: int | None = None
+    persisted_predict_limit: int | None = None
+    if store is not None and hasattr(store, "load_persisted_backend_tuning"):
+        persisted_context_size, persisted_predict_limit = store.load_persisted_backend_tuning()
     return HostServiceConfig(
         bind_host=args.bind_host,
         port=args.port,
         api_key_env=args.api_key_env,
         backend_bind_host=args.backend_bind_host,
         backend_port=args.backend_port,
-        backend_context_size=args.backend_context_size,
-        backend_predict_limit=args.backend_predict_limit,
+        backend_context_size=(
+            args.backend_context_size
+            if args.backend_context_size is not None
+            else persisted_context_size or DEFAULT_BACKEND_CONTEXT_SIZE
+        ),
+        backend_predict_limit=(
+            args.backend_predict_limit
+            if args.backend_predict_limit is not None
+            else persisted_predict_limit or DEFAULT_BACKEND_PREDICT_LIMIT
+        ),
     ).normalized()
 
 

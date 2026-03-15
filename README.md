@@ -17,6 +17,7 @@ Run the scaffold doctor command:
 ```bash
 PYTHONPATH=src python -m aistackd doctor
 PYTHONPATH=src AISTACKD_REMOTE_API_KEY=test-key python -m aistackd doctor ready --frontend opencode
+PYTHONPATH=src AISTACKD_REMOTE_API_KEY=test-key python -m aistackd doctor ready --frontend openhands
 ```
 
 Run the test suite:
@@ -133,6 +134,8 @@ PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host restart --servi
 ```
 
 `aistackd host`, `/health`, and `/admin/runtime` now surface the active backend limits so tuning is visible instead of hidden in the raw backend command.
+
+`aistackd doctor ready --frontend ...` now also surfaces the synced frontend config path, the recommended launch command, and the API-key export hint for Codex, OpenCode, and OpenHands.
 
 ## Project-Local Skills
 

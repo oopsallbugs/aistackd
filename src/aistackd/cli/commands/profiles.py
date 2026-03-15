@@ -53,6 +53,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     activate_parser.add_argument("name", help="profile name to activate")
     activate_parser.set_defaults(handler=handle_activate)
 
+    use_parser = command_parsers.add_parser("use", help="alias for 'profiles activate'")
+    _add_common_arguments(use_parser)
+    use_parser.add_argument("name", help="profile name to activate")
+    use_parser.set_defaults(handler=handle_activate)
+
     validate_parser = command_parsers.add_parser("validate", help="validate one or more profiles")
     _add_common_arguments(validate_parser)
     validate_parser.add_argument("name", nargs="?", help="profile name to validate")

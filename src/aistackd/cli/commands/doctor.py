@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from aistackd.frontends.catalog import SUPPORTED_FRONTENDS
+from aistackd.frontends.guidance import build_frontend_guidance
 from aistackd.frontends.sync import SyncOwnershipManifest
 from aistackd.runtime.config import RuntimeConfig
 from aistackd.runtime.remote import RemoteClientError, run_remote_smoke, validate_remote_runtime
@@ -134,6 +135,7 @@ def _build_frontend_readiness_report(
 
     active_profile_name: str | None = None
     runtime_config: RuntimeConfig | None = None
+    frontend_guidance_payload: dict[str, str] | None = None
 
     try:
         profile = ProfileStore(root).get_active_profile()
@@ -146,6 +148,12 @@ def _build_frontend_readiness_report(
     else:
         runtime_config = RuntimeConfig.for_client(profile, (frontend,))
         active_profile_name = runtime_config.active_profile
+        guidance = build_frontend_guidance(frontend, runtime_config.api_key_env)
+        frontend_guidance_payload = {
+            "config_path": guidance.config_path,
+            "launch_command": guidance.launch_command,
+            "api_key_hint": guidance.api_key_hint,
+        }
         api_key_present = bool(os.getenv(runtime_config.api_key_env, "").strip())
         local_checks.extend(
             (
@@ -195,6 +203,13 @@ def _build_frontend_readiness_report(
                 )
                 sync_checks.append(
                     {
+                        "label": "provider_config_path",
+                        "ok": True,
+                        "detail": guidance.config_path,
+                    }
+                )
+                sync_checks.append(
+                    {
                         "label": "project_local_skill_roots",
                         "ok": True,
                         "detail": ", ".join(
@@ -239,6 +254,7 @@ def _build_frontend_readiness_report(
         "active_profile": active_profile_name,
         "ok": ok,
         "project_root": str(root),
+        "frontend_guidance": frontend_guidance_payload,
         "local_checks": local_checks,
         "sync_checks": sync_checks,
         "remote_validation": remote_validation_payload,
@@ -259,10 +275,13 @@ def _next_steps(
     if runtime_config is None:
         steps.append("create and activate a profile with 'aistackd profiles add ... --activate'")
         return steps
+    guidance = build_frontend_guidance(frontend, runtime_config.api_key_env)
     if not os.getenv(runtime_config.api_key_env, "").strip():
         steps.append(f"export {runtime_config.api_key_env}=<your-api-key>")
     if sync_errors:
         steps.append(f"run 'aistackd sync --target {frontend} --write'")
+    if not sync_errors:
+        steps.append(f"launch {frontend} with '{guidance.launch_command}'")
     if errors and not sync_errors:
         steps.append("ensure the host is started and reachable, then rerun 'aistackd client validate'")
     if not skip_smoke:
@@ -275,6 +294,11 @@ def _print_frontend_readiness_report(report: dict[str, object]) -> None:
     print(f"frontend: {report.get('frontend')}")
     print(f"active_profile: {report.get('active_profile') or 'none'}")
     print(f"status: {'ok' if report.get('ok') else 'invalid'}")
+    frontend_guidance = report.get("frontend_guidance")
+    if isinstance(frontend_guidance, dict):
+        print(f"launch_command: {frontend_guidance.get('launch_command')}")
+        print(f"provider_config_path: {frontend_guidance.get('config_path')}")
+        print(f"api_key_hint: {frontend_guidance.get('api_key_hint')}")
     local_checks = report.get("local_checks")
     if isinstance(local_checks, list):
         for entry in local_checks:

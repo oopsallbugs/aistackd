@@ -124,6 +124,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     activate_parser.add_argument("model", help="installed model identifier to activate")
     activate_parser.set_defaults(handler=handle_activate)
 
+    use_parser = command_parsers.add_parser("use", help="alias for 'models activate'")
+    _add_common_arguments(use_parser)
+    use_parser.add_argument("model", help="installed model identifier to activate")
+    use_parser.set_defaults(handler=handle_activate)
+
 
 def handle_list(args: argparse.Namespace) -> int:
     """List target models for all configured profiles."""

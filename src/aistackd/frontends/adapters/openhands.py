@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from aistackd.frontends.adapters.base import FrontendAdapterPlan, ManagedPath
+from aistackd.frontends.guidance import build_frontend_guidance
 from aistackd.runtime.config import RuntimeConfig
 from aistackd.skills.project_local import project_local_skill_note
 from aistackd.state.files import (
@@ -30,6 +31,7 @@ class OpenHandsAdapter:
         baseline_skills: Sequence[str],
         baseline_tools: Sequence[str],
     ) -> FrontendAdapterPlan:
+        guidance = build_frontend_guidance(self.name, runtime_config.api_key_env)
         skill_paths = tuple(
             ManagedPath("skill", str(OPENHANDS_MICROAGENTS_ROOT / f"{skill_name}.md"))
             for skill_name in baseline_skills
@@ -57,8 +59,9 @@ class OpenHandsAdapter:
             baseline_tools=(),
             activation_mode="project_local",
             notes=(
-                "project-local .openhands/config.toml is written for OpenHands CLI/headless/dev mode; launch with 'openhands --config-file .openhands/config.toml'",
-                f"export LLM_API_KEY from {runtime_config.api_key_env} before launching OpenHands, or mirror the same values in the OpenHands settings UI",
+                "project-local .openhands/config.toml is written for OpenHands CLI/headless/dev mode",
+                f"launch command: {guidance.launch_command}",
+                guidance.api_key_hint,
                 "baseline microagents are written into .openhands/microagents",
                 "recommended first-run check: aistackd doctor ready --frontend openhands",
                 project_local_skill_note(self.name),

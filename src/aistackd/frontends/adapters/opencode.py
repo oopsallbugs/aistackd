@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from aistackd.frontends.adapters.base import FrontendAdapterPlan, ManagedPath
+from aistackd.frontends.guidance import build_frontend_guidance
 from aistackd.runtime.config import RuntimeConfig
 from aistackd.skills.project_local import project_local_skill_note
 from aistackd.state.files import (
@@ -36,6 +37,7 @@ class OpenCodeAdapter:
         baseline_skills: Sequence[str],
         baseline_tools: Sequence[str],
     ) -> FrontendAdapterPlan:
+        guidance = build_frontend_guidance(self.name, runtime_config.api_key_env)
         skill_paths = tuple(
             ManagedPath("skill", str(OPENCODE_SKILLS_ROOT / skill_name / "SKILL.md"))
             for skill_name in baseline_skills
@@ -85,6 +87,8 @@ class OpenCodeAdapter:
                 "provider settings are merged into project-local opencode.json while preserving unrelated keys",
                 f"synced operator tools default to profile '{runtime_config.active_profile}' at {runtime_config.base_url}",
                 "recommended first-run check: aistackd doctor ready --frontend opencode",
+                f"launch command: {guidance.launch_command}",
+                guidance.api_key_hint,
                 project_local_skill_note(self.name),
                 "tool-calling examples stay client-managed; the host transports function calls but does not execute repo tools",
             ),

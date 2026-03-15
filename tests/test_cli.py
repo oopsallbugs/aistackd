@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -17,6 +18,7 @@ from unittest.mock import patch
 
 from aistackd.cli.main import build_parser, main
 from aistackd.models.llmfit import LlmfitCommandError
+from aistackd.models.sources import local_source_model
 from aistackd.runtime.host import HostServiceConfig
 from aistackd.runtime.hardware import CURRENT_HARDWARE_PROFILE_SCHEMA_VERSION, HardwareProfile, LlmfitDetectionResult
 from aistackd.state.layout import COMMAND_GROUPS
@@ -37,6 +39,324 @@ class CLITests(unittest.TestCase):
         help_text = build_parser().format_help()
         for command_name in COMMAND_GROUPS:
             self.assertIn(command_name, help_text)
+
+    def test_host_tune_show_reports_defaults_as_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exit_code, stdout, stderr = invoke(["host", "tune", "show", "--project-root", tmpdir, "--format", "json"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["backend_context_size"], 24576)
+            self.assertEqual(payload["backend_predict_limit"], 4096)
+            self.assertEqual(payload["source"], "default")
+
+    def test_host_tune_set_and_reset_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exit_code, stdout, stderr = invoke(
+                [
+                    "host",
+                    "tune",
+                    "set",
+                    "--project-root",
+                    tmpdir,
+                    "--backend-context-size",
+                    "16384",
+                    "--backend-predict-limit",
+                    "2048",
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["backend_context_size"], 16384)
+            self.assertEqual(payload["backend_predict_limit"], 2048)
+            self.assertEqual(payload["source"], "persisted")
+
+            exit_code, stdout, stderr = invoke(["host", "tune", "show", "--project-root", tmpdir, "--format", "json"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["backend_context_size"], 16384)
+            self.assertEqual(payload["backend_predict_limit"], 2048)
+
+            exit_code, stdout, stderr = invoke(["host", "tune", "reset", "--project-root", tmpdir, "--format", "json"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["backend_context_size"], 24576)
+            self.assertEqual(payload["backend_predict_limit"], 4096)
+            self.assertEqual(payload["source"], "default")
+
+    def test_host_start_uses_persisted_tuning_when_flags_are_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(context_size=16384, predict_limit=2048)
+            captured: dict[str, HostServiceConfig] = {}
+            running_process = SimpleNamespace(
+                record=SimpleNamespace(
+                    pid=6161,
+                    log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "control-plane.log"),
+                    as_dict=lambda: {"status": "starting", "pid": 6161},
+                )
+            )
+
+            def fake_validate(store: object, service: HostServiceConfig) -> object:
+                captured["service"] = service
+                return SimpleNamespace(
+                    ok=True,
+                    errors=(),
+                    runtime=SimpleNamespace(control_plane_process_status="not_started"),
+                    service=service,
+                )
+
+            with (
+                patch("aistackd.cli.commands.host.validate_host_runtime", side_effect=fake_validate),
+                patch("aistackd.cli.commands.host.launch_control_plane_process", return_value=running_process),
+            ):
+                exit_code, stdout, stderr = invoke(["host", "start", "--project-root", tmpdir, "--format", "json"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertEqual(captured["service"].backend_context_size, 16384)
+            self.assertEqual(captured["service"].backend_predict_limit, 2048)
+
+    def test_host_start_flags_override_persisted_tuning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(context_size=16384, predict_limit=2048)
+            captured: dict[str, HostServiceConfig] = {}
+            running_process = SimpleNamespace(
+                record=SimpleNamespace(
+                    pid=6161,
+                    log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "control-plane.log"),
+                    as_dict=lambda: {"status": "starting", "pid": 6161},
+                )
+            )
+
+            def fake_validate(store: object, service: HostServiceConfig) -> object:
+                captured["service"] = service
+                return SimpleNamespace(
+                    ok=True,
+                    errors=(),
+                    runtime=SimpleNamespace(control_plane_process_status="not_started"),
+                    service=service,
+                )
+
+            with (
+                patch("aistackd.cli.commands.host.validate_host_runtime", side_effect=fake_validate),
+                patch("aistackd.cli.commands.host.launch_control_plane_process", return_value=running_process),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "host",
+                        "start",
+                        "--project-root",
+                        tmpdir,
+                        "--backend-context-size",
+                        "24576",
+                        "--backend-predict-limit",
+                        "4096",
+                        "--format",
+                        "json",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertEqual(captured["service"].backend_context_size, 24576)
+            self.assertEqual(captured["service"].backend_predict_limit, 4096)
+
+    def test_host_logs_backend_prints_requested_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+            store.ensure_storage()
+            store.paths.backend_log_path().write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+            exit_code, stdout, stderr = invoke(["host", "logs", "backend", "--project-root", tmpdir, "--lines", "2"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertEqual(stdout.splitlines(), ["two", "three"])
+
+    def test_host_aliases_up_down_and_ps_match_primary_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_store = SimpleNamespace(
+                load_runtime_state=unittest.mock.Mock(
+                    side_effect=[
+                        SimpleNamespace(
+                            backend_process_status="running",
+                            control_plane_process_status="running",
+                            control_plane_process=SimpleNamespace(pid=3131),
+                        ),
+                        SimpleNamespace(
+                            backend_process_status="stopped",
+                            control_plane_process_status="stopped",
+                            control_plane_process=SimpleNamespace(pid=3131),
+                        ),
+                    ]
+                )
+            )
+            control_plane_record = SimpleNamespace(
+                pid=3131,
+                log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "control-plane.log"),
+                as_dict=lambda: {"status": "stopped", "pid": 3131},
+            )
+            backend_record = SimpleNamespace(
+                pid=4242,
+                log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "llama-cpp.log"),
+                as_dict=lambda: {"status": "stopped", "pid": 4242},
+            )
+            validation_result = SimpleNamespace(
+                ok=True,
+                errors=(),
+                runtime=SimpleNamespace(control_plane_process_status="not_started"),
+                service=HostServiceConfig(),
+            )
+            running_process = SimpleNamespace(
+                record=SimpleNamespace(
+                    pid=6161,
+                    log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "control-plane.log"),
+                    as_dict=lambda: {"status": "starting", "pid": 6161},
+                )
+            )
+
+            with (
+                patch("aistackd.cli.commands.host.validate_host_runtime", return_value=validation_result),
+                patch("aistackd.cli.commands.host.launch_control_plane_process", return_value=running_process),
+            ):
+                exit_code, stdout, stderr = invoke(["host", "up", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("managed control-plane started", stdout)
+
+            with (
+                patch("aistackd.cli.commands.host.HostStateStore", return_value=fake_store),
+                patch("aistackd.cli.commands.host.stop_current_control_plane_process", return_value=control_plane_record),
+                patch("aistackd.cli.commands.host.stop_current_managed_backend_process", return_value=backend_record),
+            ):
+                exit_code, stdout, stderr = invoke(["host", "down", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("managed control-plane and backend stopped", stdout)
+
+            exit_code, stdout, stderr = invoke(["host", "ps", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("host runtime state", stdout)
+
+    def test_frontend_sync_alias_matches_sync_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--activate",
+                ]
+            )
+
+            exit_code, stdout, stderr = invoke(
+                ["frontend", "sync", "--project-root", tmpdir, "--target", "opencode", "--format", "json"]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["active_profile"], "remote")
+            self.assertEqual(payload["targets"][0]["frontend"], "opencode")
+
+    def test_frontend_ready_alias_matches_doctor_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--activate",
+                ]
+            )
+            invoke(["sync", "--project-root", tmpdir, "--target", "opencode", "--write"])
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+                patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_remote_client_urlopen),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    ["frontend", "ready", "--project-root", tmpdir, "--frontend", "opencode", "--format", "json"]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["frontend"], "opencode")
+
+    def test_profiles_use_alias_matches_activate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "local",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_API_KEY",
+                    "--model",
+                    "local-model",
+                ]
+            )
+
+            exit_code, stdout, stderr = invoke(["profiles", "use", "local", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("active_profile: local", stdout)
+
+    def test_models_use_alias_matches_activate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+            artifact_path = _create_fake_gguf(Path(tmpdir), "Alias-Model.Q4_K_M.gguf")
+            source_model = local_source_model("alias-model", source="llmfit")
+            store.install_model(
+                source_model,
+                acquisition_source="local",
+                acquisition_method="explicit_local_gguf",
+                artifact_path=artifact_path,
+                size_bytes=artifact_path.stat().st_size,
+                sha256=_sha256(artifact_path),
+            )
+
+            exit_code, stdout, stderr = invoke(["models", "use", "alias-model", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("activated model 'alias-model'", stdout)
 
     def test_doctor_reports_scaffold_as_json(self) -> None:
         exit_code, stdout, stderr = invoke(["doctor", "--format", "json"])
@@ -91,7 +411,10 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["active_profile"], "remote")
             self.assertTrue(payload["remote_validation"]["ok"])
             self.assertTrue(payload["smoke"]["ok"])
+            self.assertEqual(payload["frontend_guidance"]["launch_command"], "opencode")
+            self.assertEqual(payload["frontend_guidance"]["config_path"], "opencode.json")
             sync_labels = {entry["label"]: entry["detail"] for entry in payload["sync_checks"]}
+            self.assertEqual(sync_labels["provider_config_path"], "opencode.json")
             self.assertIn("project_local_skill_roots", sync_labels)
             self.assertIn(".agents/skills", sync_labels["project_local_skill_roots"])
             self.assertEqual(
@@ -135,7 +458,13 @@ class CLITests(unittest.TestCase):
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["frontend"], "openhands")
             self.assertEqual(payload["active_profile"], "remote")
+            self.assertEqual(
+                payload["frontend_guidance"]["launch_command"],
+                "openhands --config-file .openhands/config.toml",
+            )
+            self.assertEqual(payload["frontend_guidance"]["config_path"], ".openhands/config.toml")
             sync_labels = {entry["label"]: entry["detail"] for entry in payload["sync_checks"]}
+            self.assertEqual(sync_labels["provider_config_path"], ".openhands/config.toml")
             self.assertIn(".openhands/microagents", sync_labels["project_local_skill_roots"])
 
     def test_doctor_ready_reports_missing_frontend_sync(self) -> None:
@@ -1581,6 +1910,9 @@ class CLITests(unittest.TestCase):
             self.assertIn(".agents/skills", stdout)
             self.assertIn(".openhands/microagents", stdout)
             self.assertIn("aistackd-skill-provenance.json", stdout)
+            self.assertIn("launch command: opencode", stdout)
+            self.assertIn("launch command: codex", stdout)
+            self.assertIn("launch command: openhands --config-file .openhands/config.toml", stdout)
 
             opencode_payload = json.loads(opencode_path.read_text(encoding="utf-8"))
             self.assertEqual(opencode_payload["custom"], {"keep": True})
@@ -1679,6 +2011,12 @@ def _create_fake_gguf(root: Path, filename: str, *, payload: bytes = b"GGUF\x00t
     artifact_path = root / filename
     artifact_path.write_bytes(payload)
     return artifact_path
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    digest.update(path.read_bytes())
+    return digest.hexdigest()
 
 
 def _fake_llmfit_recommend_subprocess_run(
