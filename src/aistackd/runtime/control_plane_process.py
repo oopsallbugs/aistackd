@@ -169,7 +169,7 @@ def mark_current_control_plane_process_stopped(
 
 
 def build_control_plane_command(project_root: Path, service: HostServiceConfig) -> list[str]:
-    return [
+    command = [
         sys.executable,
         "-m",
         "aistackd",
@@ -194,6 +194,25 @@ def build_control_plane_command(project_root: Path, service: HostServiceConfig) 
         "--backend-parallel",
         str(service.backend_parallel),
     ]
+    if service.backend_batch_size is not None:
+        command.extend(("--backend-batch-size", str(service.backend_batch_size)))
+    if service.backend_ubatch_size is not None:
+        command.extend(("--backend-ubatch-size", str(service.backend_ubatch_size)))
+    if service.backend_gpu_layers is not None:
+        command.extend(("--backend-gpu-layers", str(service.backend_gpu_layers)))
+    if service.backend_fit_target is not None:
+        command.extend(("--backend-fit-target", str(service.backend_fit_target)))
+    if service.backend_no_kv_offload is True:
+        command.append("--backend-no-kv-offload")
+    elif service.backend_no_kv_offload is False:
+        command.append("--backend-kv-offload")
+    if service.backend_no_op_offload is True:
+        command.append("--backend-no-op-offload")
+    elif service.backend_no_op_offload is False:
+        command.append("--backend-op-offload")
+    if service.backend_cache_ram is not None:
+        command.extend(("--backend-cache-ram", str(service.backend_cache_ram)))
+    return command
 
 
 def _terminate_pid(pid: int) -> int | None:

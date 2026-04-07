@@ -17,6 +17,13 @@ DEFAULT_BACKEND_PORT = 8011
 DEFAULT_BACKEND_CONTEXT_SIZE = 24576
 DEFAULT_BACKEND_PREDICT_LIMIT = 4096
 DEFAULT_BACKEND_PARALLEL = 1
+DEFAULT_BACKEND_BATCH_SIZE: int | None = None
+DEFAULT_BACKEND_UBATCH_SIZE: int | None = None
+DEFAULT_BACKEND_GPU_LAYERS: int | None = None
+DEFAULT_BACKEND_FIT_TARGET: int | None = None
+DEFAULT_BACKEND_NO_KV_OFFLOAD: bool | None = None
+DEFAULT_BACKEND_NO_OP_OFFLOAD: bool | None = None
+DEFAULT_BACKEND_CACHE_RAM: int | None = None
 
 _ENVIRONMENT_VARIABLE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _BIND_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
@@ -34,6 +41,13 @@ class HostServiceConfig:
     backend_context_size: int = DEFAULT_BACKEND_CONTEXT_SIZE
     backend_predict_limit: int = DEFAULT_BACKEND_PREDICT_LIMIT
     backend_parallel: int = DEFAULT_BACKEND_PARALLEL
+    backend_batch_size: int | None = DEFAULT_BACKEND_BATCH_SIZE
+    backend_ubatch_size: int | None = DEFAULT_BACKEND_UBATCH_SIZE
+    backend_gpu_layers: int | None = DEFAULT_BACKEND_GPU_LAYERS
+    backend_fit_target: int | None = DEFAULT_BACKEND_FIT_TARGET
+    backend_no_kv_offload: bool | None = DEFAULT_BACKEND_NO_KV_OFFLOAD
+    backend_no_op_offload: bool | None = DEFAULT_BACKEND_NO_OP_OFFLOAD
+    backend_cache_ram: int | None = DEFAULT_BACKEND_CACHE_RAM
 
     def normalized(self) -> "HostServiceConfig":
         """Return a copy with whitespace normalized."""
@@ -46,6 +60,13 @@ class HostServiceConfig:
             backend_context_size=self.backend_context_size,
             backend_predict_limit=self.backend_predict_limit,
             backend_parallel=self.backend_parallel,
+            backend_batch_size=self.backend_batch_size,
+            backend_ubatch_size=self.backend_ubatch_size,
+            backend_gpu_layers=self.backend_gpu_layers,
+            backend_fit_target=self.backend_fit_target,
+            backend_no_kv_offload=self.backend_no_kv_offload,
+            backend_no_op_offload=self.backend_no_op_offload,
+            backend_cache_ram=self.backend_cache_ram,
         )
 
     @property
@@ -67,7 +88,7 @@ class HostServiceConfig:
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation."""
-        return {
+        payload: dict[str, object] = {
             "bind_host": self.bind_host,
             "port": self.port,
             "api_key_env": self.api_key_env,
@@ -80,6 +101,21 @@ class HostServiceConfig:
             "responses_base_url": self.responses_base_url,
             "backend_base_url": self.backend_base_url,
         }
+        if self.backend_batch_size is not None:
+            payload["backend_batch_size"] = self.backend_batch_size
+        if self.backend_ubatch_size is not None:
+            payload["backend_ubatch_size"] = self.backend_ubatch_size
+        if self.backend_gpu_layers is not None:
+            payload["backend_gpu_layers"] = self.backend_gpu_layers
+        if self.backend_fit_target is not None:
+            payload["backend_fit_target"] = self.backend_fit_target
+        if self.backend_no_kv_offload is not None:
+            payload["backend_no_kv_offload"] = self.backend_no_kv_offload
+        if self.backend_no_op_offload is not None:
+            payload["backend_no_op_offload"] = self.backend_no_op_offload
+        if self.backend_cache_ram is not None:
+            payload["backend_cache_ram"] = self.backend_cache_ram
+        return payload
 
 
 @dataclass(frozen=True)
@@ -131,6 +167,56 @@ def validate_host_runtime(
         errors.append("backend_predict_limit must be a positive integer")
     if not isinstance(normalized_service.backend_parallel, int) or normalized_service.backend_parallel < 1:
         errors.append("backend_parallel must be a positive integer")
+    if (
+        normalized_service.backend_batch_size is not None
+        and (
+            not isinstance(normalized_service.backend_batch_size, int)
+            or normalized_service.backend_batch_size < 1
+        )
+    ):
+        errors.append("backend_batch_size must be a positive integer")
+    if (
+        normalized_service.backend_ubatch_size is not None
+        and (
+            not isinstance(normalized_service.backend_ubatch_size, int)
+            or normalized_service.backend_ubatch_size < 1
+        )
+    ):
+        errors.append("backend_ubatch_size must be a positive integer")
+    if (
+        normalized_service.backend_gpu_layers is not None
+        and (
+            not isinstance(normalized_service.backend_gpu_layers, int)
+            or normalized_service.backend_gpu_layers < -1
+        )
+    ):
+        errors.append("backend_gpu_layers must be an integer greater than or equal to -1")
+    if (
+        normalized_service.backend_fit_target is not None
+        and (
+            not isinstance(normalized_service.backend_fit_target, int)
+            or normalized_service.backend_fit_target < 0
+        )
+    ):
+        errors.append("backend_fit_target must be a non-negative integer")
+    if (
+        normalized_service.backend_no_kv_offload is not None
+        and not isinstance(normalized_service.backend_no_kv_offload, bool)
+    ):
+        errors.append("backend_no_kv_offload must be a boolean")
+    if (
+        normalized_service.backend_no_op_offload is not None
+        and not isinstance(normalized_service.backend_no_op_offload, bool)
+    ):
+        errors.append("backend_no_op_offload must be a boolean")
+    if (
+        normalized_service.backend_cache_ram is not None
+        and (
+            not isinstance(normalized_service.backend_cache_ram, int)
+            or normalized_service.backend_cache_ram < -1
+        )
+    ):
+        errors.append("backend_cache_ram must be an integer greater than or equal to -1")
 
     if (
         normalized_service.bind_host == normalized_service.backend_bind_host
@@ -186,6 +272,56 @@ def validate_backend_runtime(
         errors.append("backend_predict_limit must be a positive integer")
     if not isinstance(normalized_service.backend_parallel, int) or normalized_service.backend_parallel < 1:
         errors.append("backend_parallel must be a positive integer")
+    if (
+        normalized_service.backend_batch_size is not None
+        and (
+            not isinstance(normalized_service.backend_batch_size, int)
+            or normalized_service.backend_batch_size < 1
+        )
+    ):
+        errors.append("backend_batch_size must be a positive integer")
+    if (
+        normalized_service.backend_ubatch_size is not None
+        and (
+            not isinstance(normalized_service.backend_ubatch_size, int)
+            or normalized_service.backend_ubatch_size < 1
+        )
+    ):
+        errors.append("backend_ubatch_size must be a positive integer")
+    if (
+        normalized_service.backend_gpu_layers is not None
+        and (
+            not isinstance(normalized_service.backend_gpu_layers, int)
+            or normalized_service.backend_gpu_layers < -1
+        )
+    ):
+        errors.append("backend_gpu_layers must be an integer greater than or equal to -1")
+    if (
+        normalized_service.backend_fit_target is not None
+        and (
+            not isinstance(normalized_service.backend_fit_target, int)
+            or normalized_service.backend_fit_target < 0
+        )
+    ):
+        errors.append("backend_fit_target must be a non-negative integer")
+    if (
+        normalized_service.backend_no_kv_offload is not None
+        and not isinstance(normalized_service.backend_no_kv_offload, bool)
+    ):
+        errors.append("backend_no_kv_offload must be a boolean")
+    if (
+        normalized_service.backend_no_op_offload is not None
+        and not isinstance(normalized_service.backend_no_op_offload, bool)
+    ):
+        errors.append("backend_no_op_offload must be a boolean")
+    if (
+        normalized_service.backend_cache_ram is not None
+        and (
+            not isinstance(normalized_service.backend_cache_ram, int)
+            or normalized_service.backend_cache_ram < -1
+        )
+    ):
+        errors.append("backend_cache_ram must be an integer greater than or equal to -1")
 
     if (
         normalized_service.bind_host == normalized_service.backend_bind_host

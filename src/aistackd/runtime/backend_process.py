@@ -34,6 +34,13 @@ class BackendLaunchPlan:
     context_size: int
     predict_limit: int
     parallel: int
+    batch_size: int | None = None
+    ubatch_size: int | None = None
+    gpu_layers: int | None = None
+    fit_target: int | None = None
+    no_kv_offload: bool | None = None
+    no_op_offload: bool | None = None
+    cache_ram: int | None = None
 
     @property
     def base_url(self) -> str:
@@ -42,7 +49,7 @@ class BackendLaunchPlan:
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation."""
-        return {
+        payload: dict[str, object] = {
             "backend": self.backend,
             "command": list(self.command),
             "bind_host": self.bind_host,
@@ -56,6 +63,21 @@ class BackendLaunchPlan:
             "predict_limit": self.predict_limit,
             "parallel": self.parallel,
         }
+        if self.batch_size is not None:
+            payload["batch_size"] = self.batch_size
+        if self.ubatch_size is not None:
+            payload["ubatch_size"] = self.ubatch_size
+        if self.gpu_layers is not None:
+            payload["gpu_layers"] = self.gpu_layers
+        if self.fit_target is not None:
+            payload["fit_target"] = self.fit_target
+        if self.no_kv_offload is not None:
+            payload["no_kv_offload"] = self.no_kv_offload
+        if self.no_op_offload is not None:
+            payload["no_op_offload"] = self.no_op_offload
+        if self.cache_ram is not None:
+            payload["cache_ram"] = self.cache_ram
+        return payload
 
 
 @dataclass
@@ -91,7 +113,7 @@ def build_backend_launch_plan(store: HostStateStore, service: HostServiceConfig)
 
     normalized_service = service.normalized()
     log_path = store.paths.backend_log_path(runtime.backend)
-    command = (
+    command_parts = [
         runtime.backend_installation.server_binary,
         "--model",
         active_record.artifact_path,
@@ -105,7 +127,22 @@ def build_backend_launch_plan(store: HostStateStore, service: HostServiceConfig)
         str(normalized_service.backend_predict_limit),
         "--parallel",
         str(normalized_service.backend_parallel),
-    )
+    ]
+    if normalized_service.backend_batch_size is not None:
+        command_parts.extend(("--batch-size", str(normalized_service.backend_batch_size)))
+    if normalized_service.backend_ubatch_size is not None:
+        command_parts.extend(("--ubatch-size", str(normalized_service.backend_ubatch_size)))
+    if normalized_service.backend_gpu_layers is not None:
+        command_parts.extend(("--gpu-layers", str(normalized_service.backend_gpu_layers)))
+    if normalized_service.backend_fit_target is not None:
+        command_parts.extend(("--fit-target", str(normalized_service.backend_fit_target)))
+    if normalized_service.backend_no_kv_offload:
+        command_parts.append("--no-kv-offload")
+    if normalized_service.backend_no_op_offload:
+        command_parts.append("--no-op-offload")
+    if normalized_service.backend_cache_ram is not None:
+        command_parts.extend(("--cache-ram", str(normalized_service.backend_cache_ram)))
+    command = tuple(command_parts)
     return BackendLaunchPlan(
         backend=runtime.backend,
         command=command,
@@ -118,6 +155,13 @@ def build_backend_launch_plan(store: HostStateStore, service: HostServiceConfig)
         context_size=normalized_service.backend_context_size,
         predict_limit=normalized_service.backend_predict_limit,
         parallel=normalized_service.backend_parallel,
+        batch_size=normalized_service.backend_batch_size,
+        ubatch_size=normalized_service.backend_ubatch_size,
+        gpu_layers=normalized_service.backend_gpu_layers,
+        fit_target=normalized_service.backend_fit_target,
+        no_kv_offload=normalized_service.backend_no_kv_offload,
+        no_op_offload=normalized_service.backend_no_op_offload,
+        cache_ram=normalized_service.backend_cache_ram,
     )
 
 
@@ -171,6 +215,13 @@ def launch_managed_backend_process(
         context_size=plan.context_size,
         predict_limit=plan.predict_limit,
         parallel=plan.parallel,
+        batch_size=plan.batch_size,
+        ubatch_size=plan.ubatch_size,
+        gpu_layers=plan.gpu_layers,
+        fit_target=plan.fit_target,
+        no_kv_offload=plan.no_kv_offload,
+        no_op_offload=plan.no_op_offload,
+        cache_ram=plan.cache_ram,
     )
     _save_backend_process_if_current(store, starting_record, expected_pid=process.pid)
 
@@ -192,6 +243,13 @@ def launch_managed_backend_process(
             context_size=plan.context_size,
             predict_limit=plan.predict_limit,
             parallel=plan.parallel,
+            batch_size=plan.batch_size,
+            ubatch_size=plan.ubatch_size,
+            gpu_layers=plan.gpu_layers,
+            fit_target=plan.fit_target,
+            no_kv_offload=plan.no_kv_offload,
+            no_op_offload=plan.no_op_offload,
+            cache_ram=plan.cache_ram,
             stopped_at=_timestamp_now(),
             exit_code=exit_code,
         )
@@ -215,6 +273,13 @@ def launch_managed_backend_process(
         context_size=plan.context_size,
         predict_limit=plan.predict_limit,
         parallel=plan.parallel,
+        batch_size=plan.batch_size,
+        ubatch_size=plan.ubatch_size,
+        gpu_layers=plan.gpu_layers,
+        fit_target=plan.fit_target,
+        no_kv_offload=plan.no_kv_offload,
+        no_op_offload=plan.no_op_offload,
+        cache_ram=plan.cache_ram,
     )
     _save_backend_process_if_current(store, running_record, expected_pid=process.pid)
     return RunningBackendProcess(plan=plan, record=running_record, process=process)
@@ -260,6 +325,13 @@ def stop_managed_backend_process(
         context_size=running_process.record.context_size,
         predict_limit=running_process.record.predict_limit,
         parallel=running_process.record.parallel,
+        batch_size=running_process.record.batch_size,
+        ubatch_size=running_process.record.ubatch_size,
+        gpu_layers=running_process.record.gpu_layers,
+        fit_target=running_process.record.fit_target,
+        no_kv_offload=running_process.record.no_kv_offload,
+        no_op_offload=running_process.record.no_op_offload,
+        cache_ram=running_process.record.cache_ram,
         stopped_at=_timestamp_now(),
         exit_code=exit_code,
     )
@@ -312,6 +384,13 @@ def stop_current_managed_backend_process(
         context_size=current.context_size,
         predict_limit=current.predict_limit,
         parallel=current.parallel,
+        batch_size=current.batch_size,
+        ubatch_size=current.ubatch_size,
+        gpu_layers=current.gpu_layers,
+        fit_target=current.fit_target,
+        no_kv_offload=current.no_kv_offload,
+        no_op_offload=current.no_op_offload,
+        cache_ram=current.cache_ram,
         stopped_at=_timestamp_now(),
         exit_code=exit_code,
     )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import signal
 import sys
 import time
@@ -36,11 +37,18 @@ from aistackd.runtime.control_plane_process import (
 )
 from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.runtime.host import (
+    DEFAULT_BACKEND_BATCH_SIZE,
     DEFAULT_BACKEND_BIND,
+    DEFAULT_BACKEND_CACHE_RAM,
     DEFAULT_BACKEND_CONTEXT_SIZE,
+    DEFAULT_BACKEND_FIT_TARGET,
+    DEFAULT_BACKEND_GPU_LAYERS,
+    DEFAULT_BACKEND_NO_KV_OFFLOAD,
+    DEFAULT_BACKEND_NO_OP_OFFLOAD,
     DEFAULT_BACKEND_PARALLEL,
     DEFAULT_BACKEND_PREDICT_LIMIT,
     DEFAULT_BACKEND_PORT,
+    DEFAULT_BACKEND_UBATCH_SIZE,
     DEFAULT_HOST_API_KEY_ENV,
     DEFAULT_HOST_BIND,
     DEFAULT_HOST_PORT,
@@ -239,6 +247,20 @@ def handle_status(args: argparse.Namespace) -> int:
             print(f"backend_predict_limit: {runtime_state.backend_process.predict_limit}")
         if runtime_state.backend_process.parallel is not None:
             print(f"backend_parallel: {runtime_state.backend_process.parallel}")
+        if runtime_state.backend_process.batch_size is not None:
+            print(f"backend_batch_size: {runtime_state.backend_process.batch_size}")
+        if runtime_state.backend_process.ubatch_size is not None:
+            print(f"backend_ubatch_size: {runtime_state.backend_process.ubatch_size}")
+        if runtime_state.backend_process.gpu_layers is not None:
+            print(f"backend_gpu_layers: {runtime_state.backend_process.gpu_layers}")
+        if runtime_state.backend_process.fit_target is not None:
+            print(f"backend_fit_target: {runtime_state.backend_process.fit_target}")
+        if runtime_state.backend_process.no_kv_offload is not None:
+            print(f"backend_no_kv_offload: {runtime_state.backend_process.no_kv_offload}")
+        if runtime_state.backend_process.no_op_offload is not None:
+            print(f"backend_no_op_offload: {runtime_state.backend_process.no_op_offload}")
+        if runtime_state.backend_process.cache_ram is not None:
+            print(f"backend_cache_ram: {runtime_state.backend_process.cache_ram}")
     if runtime_state.control_plane_process is not None:
         print(f"control_plane_pid: {runtime_state.control_plane_process.pid}")
         print(f"control_plane_base_url: {runtime_state.control_plane_process.base_url}")
@@ -249,6 +271,20 @@ def handle_status(args: argparse.Namespace) -> int:
         print(f"configured_backend_predict_limit: {runtime_state.configured_backend_predict_limit}")
     if runtime_state.configured_backend_parallel is not None:
         print(f"configured_backend_parallel: {runtime_state.configured_backend_parallel}")
+    if runtime_state.configured_backend_batch_size is not None:
+        print(f"configured_backend_batch_size: {runtime_state.configured_backend_batch_size}")
+    if runtime_state.configured_backend_ubatch_size is not None:
+        print(f"configured_backend_ubatch_size: {runtime_state.configured_backend_ubatch_size}")
+    if runtime_state.configured_backend_gpu_layers is not None:
+        print(f"configured_backend_gpu_layers: {runtime_state.configured_backend_gpu_layers}")
+    if runtime_state.configured_backend_fit_target is not None:
+        print(f"configured_backend_fit_target: {runtime_state.configured_backend_fit_target}")
+    if runtime_state.configured_backend_no_kv_offload is not None:
+        print(f"configured_backend_no_kv_offload: {runtime_state.configured_backend_no_kv_offload}")
+    if runtime_state.configured_backend_no_op_offload is not None:
+        print(f"configured_backend_no_op_offload: {runtime_state.configured_backend_no_op_offload}")
+    if runtime_state.configured_backend_cache_ram is not None:
+        print(f"configured_backend_cache_ram: {runtime_state.configured_backend_cache_ram}")
     print(f"active_model: {runtime_state.active_model or 'none'}")
     print(f"active_source: {runtime_state.active_source or 'none'}")
     print(f"activation_state: {runtime_state.activation_state}")
@@ -602,6 +638,7 @@ def handle_serve(args: argparse.Namespace) -> int:
     if result.runtime.backend_installation is not None:
         print(f"server_binary: {result.runtime.backend_installation.server_binary}")
     print(f"backend_pid: {running_process.record.pid}")
+    print(f"backend_command: {_format_command(running_process.record.command)}")
     print(f"backend_log_path: {running_process.record.log_path}")
     if running_process.record.context_size is not None:
         print(f"backend_context_size: {running_process.record.context_size}")
@@ -1185,6 +1222,10 @@ def _print_tool_install_result(result: object, *, output_format: str) -> int:
     print(f"path: {payload['tool']['executable_path']}")
     print(f"version: {payload['tool']['version']}")
     return 0
+
+
+def _format_command(command: tuple[str, ...] | list[str]) -> str:
+    return shlex.join(command)
 
 
 def _raise_keyboard_interrupt(_signum: int, _frame: object) -> None:

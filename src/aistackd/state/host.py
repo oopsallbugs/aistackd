@@ -216,6 +216,13 @@ class HostBackendProcess:
     context_size: int | None = None
     predict_limit: int | None = None
     parallel: int | None = None
+    batch_size: int | None = None
+    ubatch_size: int | None = None
+    gpu_layers: int | None = None
+    fit_target: int | None = None
+    no_kv_offload: bool | None = None
+    no_op_offload: bool | None = None
+    cache_ram: int | None = None
     stopped_at: str | None = None
     exit_code: int | None = None
 
@@ -243,6 +250,13 @@ class HostBackendProcess:
             context_size=_optional_int(payload, "context_size") or _command_flag_int(command, "--ctx-size"),
             predict_limit=_optional_int(payload, "predict_limit") or _command_flag_int(command, "--predict"),
             parallel=_optional_int(payload, "parallel") or _command_flag_int(command, "--parallel"),
+            batch_size=_optional_int(payload, "batch_size") or _command_flag_int(command, "--batch-size"),
+            ubatch_size=_optional_int(payload, "ubatch_size") or _command_flag_int(command, "--ubatch-size"),
+            gpu_layers=_optional_int(payload, "gpu_layers") or _command_flag_int(command, "--gpu-layers"),
+            fit_target=_optional_int(payload, "fit_target") or _command_flag_int(command, "--fit-target"),
+            no_kv_offload=_optional_bool(payload, "no_kv_offload") or _command_has_flag(command, "--no-kv-offload"),
+            no_op_offload=_optional_bool(payload, "no_op_offload") or _command_has_flag(command, "--no-op-offload"),
+            cache_ram=_optional_int(payload, "cache_ram") or _command_flag_int(command, "--cache-ram"),
             stopped_at=_optional_string(payload, "stopped_at"),
             exit_code=_optional_int(payload, "exit_code"),
         )
@@ -269,6 +283,20 @@ class HostBackendProcess:
             payload["predict_limit"] = self.predict_limit
         if self.parallel is not None:
             payload["parallel"] = self.parallel
+        if self.batch_size is not None:
+            payload["batch_size"] = self.batch_size
+        if self.ubatch_size is not None:
+            payload["ubatch_size"] = self.ubatch_size
+        if self.gpu_layers is not None:
+            payload["gpu_layers"] = self.gpu_layers
+        if self.fit_target is not None:
+            payload["fit_target"] = self.fit_target
+        if self.no_kv_offload is not None:
+            payload["no_kv_offload"] = self.no_kv_offload
+        if self.no_op_offload is not None:
+            payload["no_op_offload"] = self.no_op_offload
+        if self.cache_ram is not None:
+            payload["cache_ram"] = self.cache_ram
         if self.stopped_at is not None:
             payload["stopped_at"] = self.stopped_at
         if self.exit_code is not None:
@@ -436,6 +464,13 @@ class HostRuntimeState:
     configured_backend_context_size: int | None = None
     configured_backend_predict_limit: int | None = None
     configured_backend_parallel: int | None = None
+    configured_backend_batch_size: int | None = None
+    configured_backend_ubatch_size: int | None = None
+    configured_backend_gpu_layers: int | None = None
+    configured_backend_fit_target: int | None = None
+    configured_backend_no_kv_offload: bool | None = None
+    configured_backend_no_op_offload: bool | None = None
+    configured_backend_cache_ram: int | None = None
     supported_sources: tuple[str, ...] = SUPPORTED_MODEL_SOURCES
 
     def to_dict(self) -> dict[str, object]:
@@ -466,6 +501,20 @@ class HostRuntimeState:
             payload["configured_backend_predict_limit"] = self.configured_backend_predict_limit
         if self.configured_backend_parallel is not None:
             payload["configured_backend_parallel"] = self.configured_backend_parallel
+        if self.configured_backend_batch_size is not None:
+            payload["configured_backend_batch_size"] = self.configured_backend_batch_size
+        if self.configured_backend_ubatch_size is not None:
+            payload["configured_backend_ubatch_size"] = self.configured_backend_ubatch_size
+        if self.configured_backend_gpu_layers is not None:
+            payload["configured_backend_gpu_layers"] = self.configured_backend_gpu_layers
+        if self.configured_backend_fit_target is not None:
+            payload["configured_backend_fit_target"] = self.configured_backend_fit_target
+        if self.configured_backend_no_kv_offload is not None:
+            payload["configured_backend_no_kv_offload"] = self.configured_backend_no_kv_offload
+        if self.configured_backend_no_op_offload is not None:
+            payload["configured_backend_no_op_offload"] = self.configured_backend_no_op_offload
+        if self.configured_backend_cache_ram is not None:
+            payload["configured_backend_cache_ram"] = self.configured_backend_cache_ram
         return payload
 
 
@@ -608,13 +657,33 @@ class HostStateStore:
         write_json_atomic(self.paths.backend_installation_path, payload)
         return created
 
-    def load_persisted_backend_tuning(self) -> tuple[int | None, int | None, int | None]:
+    def load_persisted_backend_tuning(
+        self,
+    ) -> tuple[
+        int | None,
+        int | None,
+        int | None,
+        int | None,
+        int | None,
+        int | None,
+        int | None,
+        bool | None,
+        bool | None,
+        int | None,
+    ]:
         """Return persisted backend tuning overrides from runtime state."""
         payload = self._load_runtime_payload()
         return (
             _optional_int(payload, "backend_context_size"),
             _optional_int(payload, "backend_predict_limit"),
             _optional_int(payload, "backend_parallel"),
+            _optional_int(payload, "backend_batch_size"),
+            _optional_int(payload, "backend_ubatch_size"),
+            _optional_int(payload, "backend_gpu_layers"),
+            _optional_int(payload, "backend_fit_target"),
+            _optional_bool(payload, "backend_no_kv_offload"),
+            _optional_bool(payload, "backend_no_op_offload"),
+            _optional_int(payload, "backend_cache_ram"),
         )
 
     def save_persisted_backend_tuning(
@@ -623,15 +692,72 @@ class HostStateStore:
         context_size: int,
         predict_limit: int,
         parallel: int,
-    ) -> tuple[int, int, int]:
+        batch_size: int | None = None,
+        ubatch_size: int | None = None,
+        gpu_layers: int | None = None,
+        fit_target: int | None = None,
+        no_kv_offload: bool | None = None,
+        no_op_offload: bool | None = None,
+        cache_ram: int | None = None,
+    ) -> tuple[
+        int,
+        int,
+        int,
+        int | None,
+        int | None,
+        int | None,
+        int | None,
+        bool | None,
+        bool | None,
+        int | None,
+    ]:
         """Persist backend tuning overrides in the runtime state."""
         self.ensure_storage()
         payload = self._load_runtime_payload()
         payload["backend_context_size"] = context_size
         payload["backend_predict_limit"] = predict_limit
         payload["backend_parallel"] = parallel
+        if batch_size is None:
+            payload.pop("backend_batch_size", None)
+        else:
+            payload["backend_batch_size"] = batch_size
+        if ubatch_size is None:
+            payload.pop("backend_ubatch_size", None)
+        else:
+            payload["backend_ubatch_size"] = ubatch_size
+        if gpu_layers is None:
+            payload.pop("backend_gpu_layers", None)
+        else:
+            payload["backend_gpu_layers"] = gpu_layers
+        if fit_target is None:
+            payload.pop("backend_fit_target", None)
+        else:
+            payload["backend_fit_target"] = fit_target
+        if no_kv_offload is None:
+            payload.pop("backend_no_kv_offload", None)
+        else:
+            payload["backend_no_kv_offload"] = no_kv_offload
+        if no_op_offload is None:
+            payload.pop("backend_no_op_offload", None)
+        else:
+            payload["backend_no_op_offload"] = no_op_offload
+        if cache_ram is None:
+            payload.pop("backend_cache_ram", None)
+        else:
+            payload["backend_cache_ram"] = cache_ram
         self._write_runtime_payload(payload)
-        return context_size, predict_limit, parallel
+        return (
+            context_size,
+            predict_limit,
+            parallel,
+            batch_size,
+            ubatch_size,
+            gpu_layers,
+            fit_target,
+            no_kv_offload,
+            no_op_offload,
+            cache_ram,
+        )
 
     def reset_persisted_backend_tuning(self) -> None:
         """Clear persisted backend tuning overrides from the runtime state."""
@@ -639,6 +765,13 @@ class HostStateStore:
         payload.pop("backend_context_size", None)
         payload.pop("backend_predict_limit", None)
         payload.pop("backend_parallel", None)
+        payload.pop("backend_batch_size", None)
+        payload.pop("backend_ubatch_size", None)
+        payload.pop("backend_gpu_layers", None)
+        payload.pop("backend_fit_target", None)
+        payload.pop("backend_no_kv_offload", None)
+        payload.pop("backend_no_op_offload", None)
+        payload.pop("backend_cache_ram", None)
         self._write_runtime_payload(payload)
 
     def load_backend_process(self) -> HostBackendProcess | None:
@@ -713,6 +846,13 @@ class HostStateStore:
         configured_backend_context_size = _optional_int(runtime_payload, "backend_context_size")
         configured_backend_predict_limit = _optional_int(runtime_payload, "backend_predict_limit")
         configured_backend_parallel = _optional_int(runtime_payload, "backend_parallel")
+        configured_backend_batch_size = _optional_int(runtime_payload, "backend_batch_size")
+        configured_backend_ubatch_size = _optional_int(runtime_payload, "backend_ubatch_size")
+        configured_backend_gpu_layers = _optional_int(runtime_payload, "backend_gpu_layers")
+        configured_backend_fit_target = _optional_int(runtime_payload, "backend_fit_target")
+        configured_backend_no_kv_offload = _optional_bool(runtime_payload, "backend_no_kv_offload")
+        configured_backend_no_op_offload = _optional_bool(runtime_payload, "backend_no_op_offload")
+        configured_backend_cache_ram = _optional_int(runtime_payload, "backend_cache_ram")
         active_record = next((record for record in installed_models if record.model == active_model), None)
 
         if active_model is None:
@@ -748,6 +888,13 @@ class HostStateStore:
             configured_backend_context_size=configured_backend_context_size,
             configured_backend_predict_limit=configured_backend_predict_limit,
             configured_backend_parallel=configured_backend_parallel,
+            configured_backend_batch_size=configured_backend_batch_size,
+            configured_backend_ubatch_size=configured_backend_ubatch_size,
+            configured_backend_gpu_layers=configured_backend_gpu_layers,
+            configured_backend_fit_target=configured_backend_fit_target,
+            configured_backend_no_kv_offload=configured_backend_no_kv_offload,
+            configured_backend_no_op_offload=configured_backend_no_op_offload,
+            configured_backend_cache_ram=configured_backend_cache_ram,
         )
 
     def _load_runtime_payload(self) -> dict[str, object]:
