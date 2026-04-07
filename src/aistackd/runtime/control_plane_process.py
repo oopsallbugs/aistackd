@@ -191,6 +191,8 @@ def build_control_plane_command(project_root: Path, service: HostServiceConfig) 
         str(service.backend_context_size),
         "--backend-predict-limit",
         str(service.backend_predict_limit),
+        "--backend-parallel",
+        str(service.backend_parallel),
     ]
 
 

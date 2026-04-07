@@ -16,6 +16,7 @@ DEFAULT_BACKEND_BIND = "127.0.0.1"
 DEFAULT_BACKEND_PORT = 8011
 DEFAULT_BACKEND_CONTEXT_SIZE = 24576
 DEFAULT_BACKEND_PREDICT_LIMIT = 4096
+DEFAULT_BACKEND_PARALLEL = 1
 
 _ENVIRONMENT_VARIABLE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _BIND_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
@@ -32,6 +33,7 @@ class HostServiceConfig:
     backend_port: int = DEFAULT_BACKEND_PORT
     backend_context_size: int = DEFAULT_BACKEND_CONTEXT_SIZE
     backend_predict_limit: int = DEFAULT_BACKEND_PREDICT_LIMIT
+    backend_parallel: int = DEFAULT_BACKEND_PARALLEL
 
     def normalized(self) -> "HostServiceConfig":
         """Return a copy with whitespace normalized."""
@@ -43,6 +45,7 @@ class HostServiceConfig:
             backend_port=self.backend_port,
             backend_context_size=self.backend_context_size,
             backend_predict_limit=self.backend_predict_limit,
+            backend_parallel=self.backend_parallel,
         )
 
     @property
@@ -72,6 +75,7 @@ class HostServiceConfig:
             "backend_port": self.backend_port,
             "backend_context_size": self.backend_context_size,
             "backend_predict_limit": self.backend_predict_limit,
+            "backend_parallel": self.backend_parallel,
             "base_url": self.base_url,
             "responses_base_url": self.responses_base_url,
             "backend_base_url": self.backend_base_url,
@@ -125,6 +129,8 @@ def validate_host_runtime(
         errors.append("backend_context_size must be a positive integer")
     if not isinstance(normalized_service.backend_predict_limit, int) or normalized_service.backend_predict_limit < 1:
         errors.append("backend_predict_limit must be a positive integer")
+    if not isinstance(normalized_service.backend_parallel, int) or normalized_service.backend_parallel < 1:
+        errors.append("backend_parallel must be a positive integer")
 
     if (
         normalized_service.bind_host == normalized_service.backend_bind_host
@@ -178,6 +184,8 @@ def validate_backend_runtime(
         errors.append("backend_context_size must be a positive integer")
     if not isinstance(normalized_service.backend_predict_limit, int) or normalized_service.backend_predict_limit < 1:
         errors.append("backend_predict_limit must be a positive integer")
+    if not isinstance(normalized_service.backend_parallel, int) or normalized_service.backend_parallel < 1:
+        errors.append("backend_parallel must be a positive integer")
 
     if (
         normalized_service.bind_host == normalized_service.backend_bind_host

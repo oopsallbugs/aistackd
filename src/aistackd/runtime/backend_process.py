@@ -33,6 +33,7 @@ class BackendLaunchPlan:
     log_path: str
     context_size: int
     predict_limit: int
+    parallel: int
 
     @property
     def base_url(self) -> str:
@@ -53,6 +54,7 @@ class BackendLaunchPlan:
             "log_path": self.log_path,
             "context_size": self.context_size,
             "predict_limit": self.predict_limit,
+            "parallel": self.parallel,
         }
 
 
@@ -101,6 +103,8 @@ def build_backend_launch_plan(store: HostStateStore, service: HostServiceConfig)
         str(normalized_service.backend_context_size),
         "--predict",
         str(normalized_service.backend_predict_limit),
+        "--parallel",
+        str(normalized_service.backend_parallel),
     )
     return BackendLaunchPlan(
         backend=runtime.backend,
@@ -113,6 +117,7 @@ def build_backend_launch_plan(store: HostStateStore, service: HostServiceConfig)
         log_path=str(log_path),
         context_size=normalized_service.backend_context_size,
         predict_limit=normalized_service.backend_predict_limit,
+        parallel=normalized_service.backend_parallel,
     )
 
 
@@ -165,6 +170,7 @@ def launch_managed_backend_process(
         started_at=started_at,
         context_size=plan.context_size,
         predict_limit=plan.predict_limit,
+        parallel=plan.parallel,
     )
     _save_backend_process_if_current(store, starting_record, expected_pid=process.pid)
 
@@ -185,6 +191,7 @@ def launch_managed_backend_process(
             started_at=started_at,
             context_size=plan.context_size,
             predict_limit=plan.predict_limit,
+            parallel=plan.parallel,
             stopped_at=_timestamp_now(),
             exit_code=exit_code,
         )
@@ -207,6 +214,7 @@ def launch_managed_backend_process(
         started_at=started_at,
         context_size=plan.context_size,
         predict_limit=plan.predict_limit,
+        parallel=plan.parallel,
     )
     _save_backend_process_if_current(store, running_record, expected_pid=process.pid)
     return RunningBackendProcess(plan=plan, record=running_record, process=process)
@@ -251,6 +259,7 @@ def stop_managed_backend_process(
         started_at=running_process.record.started_at,
         context_size=running_process.record.context_size,
         predict_limit=running_process.record.predict_limit,
+        parallel=running_process.record.parallel,
         stopped_at=_timestamp_now(),
         exit_code=exit_code,
     )
@@ -302,6 +311,7 @@ def stop_current_managed_backend_process(
         started_at=current.started_at,
         context_size=current.context_size,
         predict_limit=current.predict_limit,
+        parallel=current.parallel,
         stopped_at=_timestamp_now(),
         exit_code=exit_code,
     )

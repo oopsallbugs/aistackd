@@ -38,6 +38,7 @@ from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.runtime.host import (
     DEFAULT_BACKEND_BIND,
     DEFAULT_BACKEND_CONTEXT_SIZE,
+    DEFAULT_BACKEND_PARALLEL,
     DEFAULT_BACKEND_PREDICT_LIMIT,
     DEFAULT_BACKEND_PORT,
     DEFAULT_HOST_API_KEY_ENV,
@@ -236,6 +237,8 @@ def handle_status(args: argparse.Namespace) -> int:
             print(f"backend_context_size: {runtime_state.backend_process.context_size}")
         if runtime_state.backend_process.predict_limit is not None:
             print(f"backend_predict_limit: {runtime_state.backend_process.predict_limit}")
+        if runtime_state.backend_process.parallel is not None:
+            print(f"backend_parallel: {runtime_state.backend_process.parallel}")
     if runtime_state.control_plane_process is not None:
         print(f"control_plane_pid: {runtime_state.control_plane_process.pid}")
         print(f"control_plane_base_url: {runtime_state.control_plane_process.base_url}")
@@ -244,6 +247,8 @@ def handle_status(args: argparse.Namespace) -> int:
         print(f"configured_backend_context_size: {runtime_state.configured_backend_context_size}")
     if runtime_state.configured_backend_predict_limit is not None:
         print(f"configured_backend_predict_limit: {runtime_state.configured_backend_predict_limit}")
+    if runtime_state.configured_backend_parallel is not None:
+        print(f"configured_backend_parallel: {runtime_state.configured_backend_parallel}")
     print(f"active_model: {runtime_state.active_model or 'none'}")
     print(f"active_source: {runtime_state.active_source or 'none'}")
     print(f"activation_state: {runtime_state.activation_state}")
@@ -602,6 +607,8 @@ def handle_serve(args: argparse.Namespace) -> int:
         print(f"backend_context_size: {running_process.record.context_size}")
     if running_process.record.predict_limit is not None:
         print(f"backend_predict_limit: {running_process.record.predict_limit}")
+    if running_process.record.parallel is not None:
+        print(f"backend_parallel: {running_process.record.parallel}")
     print(f"control_plane_pid: {control_plane_record.pid}")
     print(f"control_plane_log_path: {control_plane_record.log_path}")
     print(f"active_model: {result.runtime.active_model}")
@@ -768,6 +775,8 @@ def handle_restart(args: argparse.Namespace) -> int:
         print(f"backend_context_size: {running_process.record.context_size}")
     if running_process.record.predict_limit is not None:
         print(f"backend_predict_limit: {running_process.record.predict_limit}")
+    if running_process.record.parallel is not None:
+        print(f"backend_parallel: {running_process.record.parallel}")
     print(f"active_model: {running_process.record.model}")
     return 0
 
@@ -815,13 +824,19 @@ def handle_logs(args: argparse.Namespace) -> int:
 def handle_tune_show(args: argparse.Namespace) -> int:
     """Show the persisted backend tuning defaults."""
     store = HostStateStore(args.project_root)
-    context_size, predict_limit = store.load_persisted_backend_tuning()
-    source = "persisted" if context_size is not None and predict_limit is not None else "default"
+    context_size, predict_limit, parallel = store.load_persisted_backend_tuning()
+    source = (
+        "persisted"
+        if context_size is not None and predict_limit is not None and parallel is not None
+        else "default"
+    )
     resolved_context_size = context_size or DEFAULT_BACKEND_CONTEXT_SIZE
     resolved_predict_limit = predict_limit or DEFAULT_BACKEND_PREDICT_LIMIT
+    resolved_parallel = parallel or DEFAULT_BACKEND_PARALLEL
     payload = {
         "backend_context_size": resolved_context_size,
         "backend_predict_limit": resolved_predict_limit,
+        "backend_parallel": resolved_parallel,
         "source": source,
     }
     if args.format == "json":
@@ -831,17 +846,22 @@ def handle_tune_show(args: argparse.Namespace) -> int:
     print("host tuning")
     print(f"backend_context_size: {resolved_context_size}")
     print(f"backend_predict_limit: {resolved_predict_limit}")
+    print(f"backend_parallel: {resolved_parallel}")
     print(f"source: {source}")
     return 0
 
 
 def handle_tune_set(args: argparse.Namespace) -> int:
     """Persist backend tuning defaults."""
-    if args.backend_context_size is None and args.backend_predict_limit is None:
+    if (
+        args.backend_context_size is None
+        and args.backend_predict_limit is None
+        and args.backend_parallel is None
+    ):
         return _exit_with_error("specify at least one tuning flag to persist")
 
     store = HostStateStore(args.project_root)
-    current_context_size, current_predict_limit = store.load_persisted_backend_tuning()
+    current_context_size, current_predict_limit, current_parallel = store.load_persisted_backend_tuning()
     resolved_context_size = (
         args.backend_context_size
         if args.backend_context_size is not None
@@ -852,18 +872,27 @@ def handle_tune_set(args: argparse.Namespace) -> int:
         if args.backend_predict_limit is not None
         else current_predict_limit or DEFAULT_BACKEND_PREDICT_LIMIT
     )
+    resolved_parallel = (
+        args.backend_parallel
+        if args.backend_parallel is not None
+        else current_parallel or DEFAULT_BACKEND_PARALLEL
+    )
     if resolved_context_size < 1:
         return _exit_with_error("backend_context_size must be a positive integer")
     if resolved_predict_limit < 1:
         return _exit_with_error("backend_predict_limit must be a positive integer")
-    context_size, predict_limit = store.save_persisted_backend_tuning(
+    if resolved_parallel < 1:
+        return _exit_with_error("backend_parallel must be a positive integer")
+    context_size, predict_limit, parallel = store.save_persisted_backend_tuning(
         context_size=resolved_context_size,
         predict_limit=resolved_predict_limit,
+        parallel=resolved_parallel,
     )
     payload = {
         "action": "updated",
         "backend_context_size": context_size,
         "backend_predict_limit": predict_limit,
+        "backend_parallel": parallel,
         "source": "persisted",
     }
     if args.format == "json":
@@ -873,6 +902,7 @@ def handle_tune_set(args: argparse.Namespace) -> int:
     print("updated host tuning")
     print(f"backend_context_size: {context_size}")
     print(f"backend_predict_limit: {predict_limit}")
+    print(f"backend_parallel: {parallel}")
     return 0
 
 
@@ -884,6 +914,7 @@ def handle_tune_reset(args: argparse.Namespace) -> int:
         "action": "reset",
         "backend_context_size": DEFAULT_BACKEND_CONTEXT_SIZE,
         "backend_predict_limit": DEFAULT_BACKEND_PREDICT_LIMIT,
+        "backend_parallel": DEFAULT_BACKEND_PARALLEL,
         "source": "default",
     }
     if args.format == "json":
@@ -893,6 +924,7 @@ def handle_tune_reset(args: argparse.Namespace) -> int:
     print("reset host tuning")
     print(f"backend_context_size: {DEFAULT_BACKEND_CONTEXT_SIZE}")
     print(f"backend_predict_limit: {DEFAULT_BACKEND_PREDICT_LIMIT}")
+    print(f"backend_parallel: {DEFAULT_BACKEND_PARALLEL}")
     return 0
 
 
@@ -1022,6 +1054,15 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
             f"(default: saved value or {DEFAULT_BACKEND_PREDICT_LIMIT})"
         ),
     )
+    parser.add_argument(
+        "--backend-parallel",
+        type=int,
+        default=None,
+        help=(
+            "parallel server slot count for the managed llama.cpp process "
+            f"(default: saved value or {DEFAULT_BACKEND_PARALLEL})"
+        ),
+    )
 
 
 def _add_service_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1070,6 +1111,15 @@ def _add_service_arguments(parser: argparse.ArgumentParser) -> None:
             f"(default: saved value or {DEFAULT_BACKEND_PREDICT_LIMIT})"
         ),
     )
+    parser.add_argument(
+        "--backend-parallel",
+        type=int,
+        default=None,
+        help=(
+            "parallel server slot count for the managed llama.cpp process "
+            f"(default: saved value or {DEFAULT_BACKEND_PARALLEL})"
+        ),
+    )
 
 
 def _add_format_argument(parser: argparse.ArgumentParser) -> None:
@@ -1087,8 +1137,9 @@ def _service_config_from_args(
 ) -> HostServiceConfig:
     persisted_context_size: int | None = None
     persisted_predict_limit: int | None = None
+    persisted_parallel: int | None = None
     if store is not None and hasattr(store, "load_persisted_backend_tuning"):
-        persisted_context_size, persisted_predict_limit = store.load_persisted_backend_tuning()
+        persisted_context_size, persisted_predict_limit, persisted_parallel = store.load_persisted_backend_tuning()
     return HostServiceConfig(
         bind_host=args.bind_host,
         port=args.port,
@@ -1104,6 +1155,11 @@ def _service_config_from_args(
             args.backend_predict_limit
             if args.backend_predict_limit is not None
             else persisted_predict_limit or DEFAULT_BACKEND_PREDICT_LIMIT
+        ),
+        backend_parallel=(
+            args.backend_parallel
+            if args.backend_parallel is not None
+            else persisted_parallel or DEFAULT_BACKEND_PARALLEL
         ),
     ).normalized()
 

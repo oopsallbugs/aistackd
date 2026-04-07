@@ -86,12 +86,13 @@ class HostStateTests(unittest.TestCase):
     def test_persisted_backend_tuning_round_trips_and_survives_activation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = HostStateStore(Path(tmpdir))
-            store.save_persisted_backend_tuning(context_size=16384, predict_limit=2048)
+            store.save_persisted_backend_tuning(context_size=16384, predict_limit=2048, parallel=2)
 
-            context_size, predict_limit = store.load_persisted_backend_tuning()
+            context_size, predict_limit, parallel = store.load_persisted_backend_tuning()
 
             self.assertEqual(context_size, 16384)
             self.assertEqual(predict_limit, 2048)
+            self.assertEqual(parallel, 2)
 
             source_model = local_source_model("local-model", source="llmfit")
             artifact_path = _create_fake_gguf(Path(tmpdir), "Local-Model.Q4_K_M.gguf")
@@ -108,6 +109,7 @@ class HostStateTests(unittest.TestCase):
 
             self.assertEqual(runtime_state.configured_backend_context_size, 16384)
             self.assertEqual(runtime_state.configured_backend_predict_limit, 2048)
+            self.assertEqual(runtime_state.configured_backend_parallel, 2)
 
     def test_backend_installation_round_trips_through_host_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -169,6 +171,8 @@ class HostStateTests(unittest.TestCase):
                     "24576",
                     "--predict",
                     "4096",
+                    "--parallel",
+                    "1",
                 ],
                 "bind_host": "127.0.0.1",
                 "port": 8011,
@@ -182,6 +186,7 @@ class HostStateTests(unittest.TestCase):
 
         self.assertEqual(record.context_size, 24576)
         self.assertEqual(record.predict_limit, 4096)
+        self.assertEqual(record.parallel, 1)
 
     def test_runtime_state_marks_stale_control_plane_process_as_exited(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

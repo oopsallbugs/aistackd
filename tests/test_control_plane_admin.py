@@ -51,6 +51,7 @@ class ControlPlaneAdminTests(unittest.TestCase):
                     started_at="2026-03-12T00:00:00+00:00",
                     context_size=24576,
                     predict_limit=4096,
+                    parallel=1,
                 )
             )
             payload = build_runtime_admin_payload(store, _service_config())
@@ -61,6 +62,7 @@ class ControlPlaneAdminTests(unittest.TestCase):
         self.assertEqual(payload["runtime"]["installed_models"], [])
         self.assertEqual(payload["runtime"]["backend_process"]["context_size"], 24576)
         self.assertEqual(payload["runtime"]["backend_process"]["predict_limit"], 4096)
+        self.assertEqual(payload["runtime"]["backend_process"]["parallel"], 1)
         self.assertEqual(payload["responses_state"]["count"], 0)
 
     def test_search_and_recommend_models_admin_use_llmfit(self) -> None:

@@ -11,6 +11,7 @@
 /.ai_stack/
 /huggingface/
 /models/**
+.mcp.json
 
 # Logs and backups
 *.log

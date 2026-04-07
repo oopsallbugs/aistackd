@@ -215,6 +215,7 @@ class HostBackendProcess:
     started_at: str
     context_size: int | None = None
     predict_limit: int | None = None
+    parallel: int | None = None
     stopped_at: str | None = None
     exit_code: int | None = None
 
@@ -241,6 +242,7 @@ class HostBackendProcess:
             started_at=_require_string(payload, "started_at"),
             context_size=_optional_int(payload, "context_size") or _command_flag_int(command, "--ctx-size"),
             predict_limit=_optional_int(payload, "predict_limit") or _command_flag_int(command, "--predict"),
+            parallel=_optional_int(payload, "parallel") or _command_flag_int(command, "--parallel"),
             stopped_at=_optional_string(payload, "stopped_at"),
             exit_code=_optional_int(payload, "exit_code"),
         )
@@ -265,6 +267,8 @@ class HostBackendProcess:
             payload["context_size"] = self.context_size
         if self.predict_limit is not None:
             payload["predict_limit"] = self.predict_limit
+        if self.parallel is not None:
+            payload["parallel"] = self.parallel
         if self.stopped_at is not None:
             payload["stopped_at"] = self.stopped_at
         if self.exit_code is not None:
@@ -431,6 +435,7 @@ class HostRuntimeState:
     control_plane_process_status: str = "not_started"
     configured_backend_context_size: int | None = None
     configured_backend_predict_limit: int | None = None
+    configured_backend_parallel: int | None = None
     supported_sources: tuple[str, ...] = SUPPORTED_MODEL_SOURCES
 
     def to_dict(self) -> dict[str, object]:
@@ -459,6 +464,8 @@ class HostRuntimeState:
             payload["configured_backend_context_size"] = self.configured_backend_context_size
         if self.configured_backend_predict_limit is not None:
             payload["configured_backend_predict_limit"] = self.configured_backend_predict_limit
+        if self.configured_backend_parallel is not None:
+            payload["configured_backend_parallel"] = self.configured_backend_parallel
         return payload
 
 
@@ -601,12 +608,13 @@ class HostStateStore:
         write_json_atomic(self.paths.backend_installation_path, payload)
         return created
 
-    def load_persisted_backend_tuning(self) -> tuple[int | None, int | None]:
+    def load_persisted_backend_tuning(self) -> tuple[int | None, int | None, int | None]:
         """Return persisted backend tuning overrides from runtime state."""
         payload = self._load_runtime_payload()
         return (
             _optional_int(payload, "backend_context_size"),
             _optional_int(payload, "backend_predict_limit"),
+            _optional_int(payload, "backend_parallel"),
         )
 
     def save_persisted_backend_tuning(
@@ -614,20 +622,23 @@ class HostStateStore:
         *,
         context_size: int,
         predict_limit: int,
-    ) -> tuple[int, int]:
+        parallel: int,
+    ) -> tuple[int, int, int]:
         """Persist backend tuning overrides in the runtime state."""
         self.ensure_storage()
         payload = self._load_runtime_payload()
         payload["backend_context_size"] = context_size
         payload["backend_predict_limit"] = predict_limit
+        payload["backend_parallel"] = parallel
         self._write_runtime_payload(payload)
-        return context_size, predict_limit
+        return context_size, predict_limit, parallel
 
     def reset_persisted_backend_tuning(self) -> None:
         """Clear persisted backend tuning overrides from the runtime state."""
         payload = self._load_runtime_payload()
         payload.pop("backend_context_size", None)
         payload.pop("backend_predict_limit", None)
+        payload.pop("backend_parallel", None)
         self._write_runtime_payload(payload)
 
     def load_backend_process(self) -> HostBackendProcess | None:
@@ -701,6 +712,7 @@ class HostStateStore:
         active_source = _optional_string(runtime_payload, "active_source")
         configured_backend_context_size = _optional_int(runtime_payload, "backend_context_size")
         configured_backend_predict_limit = _optional_int(runtime_payload, "backend_predict_limit")
+        configured_backend_parallel = _optional_int(runtime_payload, "backend_parallel")
         active_record = next((record for record in installed_models if record.model == active_model), None)
 
         if active_model is None:
@@ -735,6 +747,7 @@ class HostStateStore:
             ),
             configured_backend_context_size=configured_backend_context_size,
             configured_backend_predict_limit=configured_backend_predict_limit,
+            configured_backend_parallel=configured_backend_parallel,
         )
 
     def _load_runtime_payload(self) -> dict[str, object]:

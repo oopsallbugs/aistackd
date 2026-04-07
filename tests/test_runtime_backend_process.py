@@ -39,6 +39,7 @@ class BackendProcessRuntimeTests(unittest.TestCase):
             self.assertTrue(plan.log_path.endswith(".aistackd/host/logs/llama-cpp.log"))
             self.assertEqual(plan.context_size, 24576)
             self.assertEqual(plan.predict_limit, 4096)
+            self.assertEqual(plan.parallel, 1)
 
     def test_launch_managed_backend_process_reuses_matching_running_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

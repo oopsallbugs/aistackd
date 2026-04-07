@@ -64,6 +64,8 @@ class CLITests(unittest.TestCase):
                     "16384",
                     "--backend-predict-limit",
                     "2048",
+                    "--backend-parallel",
+                    "2",
                     "--format",
                     "json",
                 ]
@@ -74,6 +76,7 @@ class CLITests(unittest.TestCase):
             payload = json.loads(stdout)
             self.assertEqual(payload["backend_context_size"], 16384)
             self.assertEqual(payload["backend_predict_limit"], 2048)
+            self.assertEqual(payload["backend_parallel"], 2)
             self.assertEqual(payload["source"], "persisted")
 
             exit_code, stdout, stderr = invoke(["host", "tune", "show", "--project-root", tmpdir, "--format", "json"])
@@ -95,7 +98,7 @@ class CLITests(unittest.TestCase):
 
     def test_host_start_uses_persisted_tuning_when_flags_are_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(context_size=16384, predict_limit=2048)
+            HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(context_size=16384, predict_limit=2048, parallel=2)
             captured: dict[str, HostServiceConfig] = {}
             running_process = SimpleNamespace(
                 record=SimpleNamespace(
@@ -124,10 +127,11 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             self.assertEqual(captured["service"].backend_context_size, 16384)
             self.assertEqual(captured["service"].backend_predict_limit, 2048)
+            self.assertEqual(captured["service"].backend_parallel, 2)
 
     def test_host_start_flags_override_persisted_tuning(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(context_size=16384, predict_limit=2048)
+            HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(context_size=16384, predict_limit=2048, parallel=2)
             captured: dict[str, HostServiceConfig] = {}
             running_process = SimpleNamespace(
                 record=SimpleNamespace(
@@ -160,6 +164,8 @@ class CLITests(unittest.TestCase):
                         "24576",
                         "--backend-predict-limit",
                         "4096",
+                        "--backend-parallel",
+                        "3",
                         "--format",
                         "json",
                     ]
@@ -169,6 +175,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             self.assertEqual(captured["service"].backend_context_size, 24576)
             self.assertEqual(captured["service"].backend_predict_limit, 4096)
+            self.assertEqual(captured["service"].backend_parallel, 3)
 
     def test_host_logs_backend_prints_requested_tail(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1178,12 +1185,14 @@ class CLITests(unittest.TestCase):
                     log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "llama-cpp.log"),
                     context_size=24576,
                     predict_limit=4096,
+                    parallel=1,
                     model="qwen2.5-coder-7b-instruct-q4-k-m",
                     as_dict=lambda: {
                         "status": "running",
                         "pid": 5151,
                         "context_size": 24576,
                         "predict_limit": 4096,
+                        "parallel": 1,
                     },
                 )
             )
@@ -2286,6 +2295,7 @@ def _fake_running_backend_process(project_root: Path) -> SimpleNamespace:
             log_path=str(log_path),
             context_size=24576,
             predict_limit=4096,
+            parallel=1,
         )
     )
 
