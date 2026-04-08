@@ -1341,6 +1341,128 @@ class CLITests(unittest.TestCase):
             stop_mock.assert_called_once()
             serve_mock.assert_called_once()
 
+    def test_host_lifecycle_cli_runs_install_activate_acquire_start_status_and_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            gguf_path = _create_fake_gguf(project_root, "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
+            backend_root = _create_fake_backend_root(project_root)
+
+            exit_code, stdout, stderr = invoke(
+                [
+                    "models",
+                    "install",
+                    "qwen2.5-coder-7b-instruct-q4-k-m",
+                    "--project-root",
+                    tmpdir,
+                    "--gguf-path",
+                    str(gguf_path),
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "installed")
+            self.assertEqual(payload["model"]["acquisition_method"], "explicit_local_gguf")
+
+            exit_code, stdout, stderr = invoke(
+                [
+                    "models",
+                    "activate",
+                    "qwen2.5-coder-7b-instruct-q4-k-m",
+                    "--project-root",
+                    tmpdir,
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "activated")
+            self.assertEqual(payload["runtime"]["activation_state"], "ready")
+
+            with patch(
+                "aistackd.runtime.prereqs.detect_hardware_with_llmfit",
+                return_value=_fake_llmfit_detection(),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    [
+                        "host",
+                        "acquire-backend",
+                        "--project-root",
+                        tmpdir,
+                        "--backend-root",
+                        str(backend_root),
+                        "--format",
+                        "json",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "adopted")
+            self.assertEqual(payload["backend_installation"]["backend_root"], str(backend_root))
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False),
+                patch(
+                    "aistackd.cli.commands.host.launch_control_plane_process",
+                    side_effect=_fake_launch_control_plane_process,
+                ),
+            ):
+                exit_code, stdout, stderr = invoke(["host", "start", "--project-root", tmpdir, "--format", "json"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "started")
+            self.assertEqual(payload["control_plane_process"]["status"], "running")
+            self.assertEqual(payload["service"]["base_url"], "http://127.0.0.1:8000")
+
+            with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                exit_code, stdout, stderr = invoke(["host", "status", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("readiness_status: ok", stdout)
+            self.assertIn("backend_status: configured", stdout)
+            self.assertIn("control_plane_process_status: running", stdout)
+            self.assertIn("active_model: qwen2.5-coder-7b-instruct-q4-k-m", stdout)
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False),
+                patch(
+                    "aistackd.cli.commands.host.stop_current_control_plane_process",
+                    side_effect=_fake_stop_current_control_plane_process,
+                ),
+            ):
+                exit_code, stdout, stderr = invoke(
+                    ["host", "stop", "--service", "--project-root", tmpdir, "--format", "json"]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["action"], "stopped")
+            self.assertEqual(payload["before_control_plane_status"], "running")
+            self.assertEqual(payload["after_control_plane_status"], "stopped")
+            self.assertIsNone(payload["backend_process"])
+
+            with patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False):
+                exit_code, stdout, stderr = invoke(["host", "status", "--project-root", tmpdir, "--format", "json"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["backend_status"], "configured")
+            self.assertEqual(payload["control_plane_process_status"], "stopped")
+            self.assertEqual(payload["activation_state"], "ready")
+
     def test_models_install_discovers_local_gguf_for_uncatalogued_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             local_models_root = Path(tmpdir) / "models"
@@ -2622,6 +2744,41 @@ def _fake_running_backend_process(project_root: Path) -> SimpleNamespace:
             parallel=1,
         )
     )
+
+
+def _fake_launch_control_plane_process(project_root: Path, service: HostServiceConfig) -> SimpleNamespace:
+    store = HostStateStore(project_root)
+    record = HostControlPlaneProcess(
+        status="running",
+        pid=os.getpid(),
+        command=("python", "-m", "aistackd", "host", "serve"),
+        bind_host=service.bind_host,
+        port=service.port,
+        log_path=str(store.paths.control_plane_log_path()),
+        started_at="2026-04-08T00:00:00+00:00",
+    )
+    store.save_control_plane_process(record)
+    return SimpleNamespace(record=record)
+
+
+def _fake_stop_current_control_plane_process(store: HostStateStore) -> HostControlPlaneProcess | None:
+    current = store.load_control_plane_process()
+    if current is None:
+        return None
+    stopped = HostControlPlaneProcess(
+        status="stopped",
+        pid=current.pid,
+        command=current.command,
+        bind_host=current.bind_host,
+        port=current.port,
+        log_path=current.log_path,
+        started_at=current.started_at,
+        pid_start_time_ticks=current.pid_start_time_ticks,
+        stopped_at="2026-04-08T00:05:00+00:00",
+        exit_code=0,
+    )
+    store.save_control_plane_process(stopped)
+    return stopped
 
 
 def _fake_llmfit_detection(
