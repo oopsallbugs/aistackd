@@ -5,10 +5,22 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import tomllib
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from datetime import date, datetime, time
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-Unix fallback
+    fcntl = None
+
+
+_ADVISORY_LOCKS_GUARD = threading.Lock()
+_ADVISORY_LOCKS: dict[str, threading.RLock] = {}
+_THREAD_LOCAL_LOCK_STATE = threading.local()
 
 
 def load_json_object(path: Path) -> dict[str, object]:
@@ -99,6 +111,44 @@ def prune_empty_directories(start_dir: Path, stop_at: Path) -> tuple[str, ...]:
     return tuple(removed_paths)
 
 
+@contextmanager
+def advisory_file_lock(path: Path):
+    """Serialize access to a repo-owned critical section across threads and processes."""
+    normalized_path = path.expanduser().resolve()
+    lock_key = str(normalized_path)
+
+    with _ADVISORY_LOCKS_GUARD:
+        thread_lock = _ADVISORY_LOCKS.setdefault(lock_key, threading.RLock())
+
+    with thread_lock:
+        held_locks = _thread_local_lock_state()
+        depth, handle = held_locks.get(lock_key, (0, None))
+        if depth == 0:
+            normalized_path.parent.mkdir(parents=True, exist_ok=True)
+            handle = normalized_path.open("a+", encoding="utf-8")
+            try:
+                if fcntl is not None:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            except Exception:
+                handle.close()
+                raise
+        held_locks[lock_key] = (depth + 1, handle)
+        try:
+            yield
+        finally:
+            remaining_depth, current_handle = held_locks[lock_key]
+            if remaining_depth > 1:
+                held_locks[lock_key] = (remaining_depth - 1, current_handle)
+            else:
+                try:
+                    if fcntl is not None and current_handle is not None:
+                        fcntl.flock(current_handle.fileno(), fcntl.LOCK_UN)
+                finally:
+                    if current_handle is not None:
+                        current_handle.close()
+                    held_locks.pop(lock_key, None)
+
+
 def _serialize_toml_document(payload: Mapping[str, object]) -> str:
     """Serialize a subset of TOML sufficient for repo-managed config."""
     lines: list[str] = []
@@ -166,3 +216,11 @@ def _format_toml_value(value: object) -> str:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return "[" + ", ".join(_format_toml_value(item) for item in value) + "]"
     raise ValueError(f"unsupported TOML value: {value!r}")
+
+
+def _thread_local_lock_state() -> dict[str, tuple[int, object | None]]:
+    held_locks = getattr(_THREAD_LOCAL_LOCK_STATE, "held_locks", None)
+    if held_locks is None:
+        held_locks = {}
+        _THREAD_LOCAL_LOCK_STATE.held_locks = held_locks
+    return held_locks

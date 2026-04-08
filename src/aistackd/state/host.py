@@ -17,13 +17,14 @@ from aistackd.models.sources import (
     SourceModel,
     SUPPORTED_MODEL_SOURCES,
 )
-from aistackd.state.files import load_json_object, write_json_atomic
+from aistackd.state.files import advisory_file_lock, load_json_object, write_json_atomic
 from aistackd.state.profiles import RUNTIME_STATE_DIRECTORY_NAME
 
 HOST_DIRECTORY_NAME = "host"
 HOST_RUNTIME_FILE_NAME = "runtime.json"
 INSTALLED_MODELS_FILE_NAME = "installed_models.json"
 INSTALLED_TOOLS_FILE_NAME = "installed_tools.json"
+HOST_STATE_LOCK_FILE_NAME = ".host-state.lock"
 MODEL_RECEIPTS_DIRECTORY_NAME = "model_receipts"
 BACKEND_INSTALLATION_FILE_NAME = "backend_installation.json"
 BACKEND_PROCESS_FILE_NAME = "backend_process.json"
@@ -87,6 +88,7 @@ class HostStatePaths:
     runtime_state_path: Path
     installed_models_path: Path
     installed_tools_path: Path
+    host_state_lock_path: Path
     model_receipts_dir: Path
     backend_installation_path: Path
     backend_process_path: Path
@@ -108,6 +110,7 @@ class HostStatePaths:
             runtime_state_path=host_dir / HOST_RUNTIME_FILE_NAME,
             installed_models_path=host_dir / INSTALLED_MODELS_FILE_NAME,
             installed_tools_path=host_dir / INSTALLED_TOOLS_FILE_NAME,
+            host_state_lock_path=host_dir / HOST_STATE_LOCK_FILE_NAME,
             model_receipts_dir=host_dir / MODEL_RECEIPTS_DIRECTORY_NAME,
             backend_installation_path=host_dir / BACKEND_INSTALLATION_FILE_NAME,
             backend_process_path=host_dir / BACKEND_PROCESS_FILE_NAME,
@@ -581,18 +584,22 @@ class HostStateStore:
                 return record
         return None
 
+    def _mutation_lock(self):
+        return advisory_file_lock(self.paths.host_state_lock_path)
+
     def save_installed_tool(self, record: InstalledToolRecord) -> bool:
         """Persist one installed operator-tool receipt."""
-        self.ensure_storage()
-        existing_records = {entry.tool: entry for entry in self.list_installed_tools()}
-        created = record.tool not in existing_records
-        existing_records[record.tool] = record
-        payload = {
-            "schema_version": CURRENT_HOST_STATE_SCHEMA_VERSION,
-            "tools": [entry.as_dict() for entry in sorted(existing_records.values(), key=lambda item: item.tool)],
-        }
-        write_json_atomic(self.paths.installed_tools_path, payload)
-        return created
+        with self._mutation_lock():
+            self.ensure_storage()
+            existing_records = {entry.tool: entry for entry in self.list_installed_tools()}
+            created = record.tool not in existing_records
+            existing_records[record.tool] = record
+            payload = {
+                "schema_version": CURRENT_HOST_STATE_SCHEMA_VERSION,
+                "tools": [entry.as_dict() for entry in sorted(existing_records.values(), key=lambda item: item.tool)],
+            }
+            write_json_atomic(self.paths.installed_tools_path, payload)
+            return created
 
     def install_model(
         self,
@@ -605,51 +612,52 @@ class HostStateStore:
         sha256: str,
     ) -> tuple[InstalledModelRecord, bool]:
         """Persist an installed-model receipt and inventory record."""
-        self.ensure_storage()
-        existing_records = {record.model: record for record in self.list_installed_models()}
-        installed_at = datetime.now(UTC).replace(microsecond=0).isoformat()
-        receipt_path = self.paths.receipt_path(source_model.name)
-        normalized_artifact_path = artifact_path.expanduser().resolve()
-        record = InstalledModelRecord(
-            model=source_model.name,
-            source=acquisition_source,
-            backend=source_model.backend,
-            acquisition_method=acquisition_method,
-            artifact_path=str(normalized_artifact_path),
-            size_bytes=size_bytes,
-            sha256=sha256,
-            installed_at=installed_at,
-            receipt_path=str(receipt_path),
-        )
+        with self._mutation_lock():
+            self.ensure_storage()
+            existing_records = {record.model: record for record in self.list_installed_models()}
+            installed_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+            receipt_path = self.paths.receipt_path(source_model.name)
+            normalized_artifact_path = artifact_path.expanduser().resolve()
+            record = InstalledModelRecord(
+                model=source_model.name,
+                source=acquisition_source,
+                backend=source_model.backend,
+                acquisition_method=acquisition_method,
+                artifact_path=str(normalized_artifact_path),
+                size_bytes=size_bytes,
+                sha256=sha256,
+                installed_at=installed_at,
+                receipt_path=str(receipt_path),
+            )
 
-        receipt_payload = {
-            "schema_version": CURRENT_HOST_STATE_SCHEMA_VERSION,
-            "model": source_model.name,
-            "source": acquisition_source,
-            "backend": source_model.backend,
-            "summary": source_model.summary,
-            "context_window": source_model.context_window,
-            "quantization": source_model.quantization,
-            "tags": list(source_model.tags),
-            "acquisition_method": acquisition_method,
-            "artifact_path": str(normalized_artifact_path),
-            "size_bytes": size_bytes,
-            "sha256": sha256,
-            "installed_at": installed_at,
-            "status": record.status,
-        }
-        if source_model.source != acquisition_source:
-            receipt_payload["catalog_source"] = source_model.source
-        write_json_atomic(receipt_path, receipt_payload)
+            receipt_payload = {
+                "schema_version": CURRENT_HOST_STATE_SCHEMA_VERSION,
+                "model": source_model.name,
+                "source": acquisition_source,
+                "backend": source_model.backend,
+                "summary": source_model.summary,
+                "context_window": source_model.context_window,
+                "quantization": source_model.quantization,
+                "tags": list(source_model.tags),
+                "acquisition_method": acquisition_method,
+                "artifact_path": str(normalized_artifact_path),
+                "size_bytes": size_bytes,
+                "sha256": sha256,
+                "installed_at": installed_at,
+                "status": record.status,
+            }
+            if source_model.source != acquisition_source:
+                receipt_payload["catalog_source"] = source_model.source
+            write_json_atomic(receipt_path, receipt_payload)
 
-        created = source_model.name not in existing_records
-        existing_records[source_model.name] = record
-        inventory_payload = {
-            "schema_version": CURRENT_HOST_STATE_SCHEMA_VERSION,
-            "models": [entry.as_dict() for entry in sorted(existing_records.values(), key=lambda item: item.model)],
-        }
-        write_json_atomic(self.paths.installed_models_path, inventory_payload)
-        return record, created
+            created = source_model.name not in existing_records
+            existing_records[source_model.name] = record
+            inventory_payload = {
+                "schema_version": CURRENT_HOST_STATE_SCHEMA_VERSION,
+                "models": [entry.as_dict() for entry in sorted(existing_records.values(), key=lambda item: item.model)],
+            }
+            write_json_atomic(self.paths.installed_models_path, inventory_payload)
+            return record, created
 
     def load_backend_installation(self) -> HostBackendInstallation | None:
         """Load the adopted backend installation if present."""
@@ -660,12 +668,13 @@ class HostStateStore:
 
     def save_backend_installation(self, installation: HostBackendInstallation) -> bool:
         """Persist the adopted backend installation record."""
-        self.ensure_storage()
-        created = not self.paths.backend_installation_path.exists()
-        payload = installation.as_dict()
-        payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
-        write_json_atomic(self.paths.backend_installation_path, payload)
-        return created
+        with self._mutation_lock():
+            self.ensure_storage()
+            created = not self.paths.backend_installation_path.exists()
+            payload = installation.as_dict()
+            payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
+            write_json_atomic(self.paths.backend_installation_path, payload)
+            return created
 
     def load_persisted_backend_tuning(
         self,
@@ -722,67 +731,69 @@ class HostStateStore:
         int | None,
     ]:
         """Persist backend tuning overrides in the runtime state."""
-        self.ensure_storage()
-        payload = self._load_runtime_payload()
-        payload["backend_context_size"] = context_size
-        payload["backend_predict_limit"] = predict_limit
-        payload["backend_parallel"] = parallel
-        if batch_size is None:
-            payload.pop("backend_batch_size", None)
-        else:
-            payload["backend_batch_size"] = batch_size
-        if ubatch_size is None:
-            payload.pop("backend_ubatch_size", None)
-        else:
-            payload["backend_ubatch_size"] = ubatch_size
-        if gpu_layers is None:
-            payload.pop("backend_gpu_layers", None)
-        else:
-            payload["backend_gpu_layers"] = gpu_layers
-        if fit_target is None:
-            payload.pop("backend_fit_target", None)
-        else:
-            payload["backend_fit_target"] = fit_target
-        if no_kv_offload is None:
-            payload.pop("backend_no_kv_offload", None)
-        else:
-            payload["backend_no_kv_offload"] = no_kv_offload
-        if no_op_offload is None:
-            payload.pop("backend_no_op_offload", None)
-        else:
-            payload["backend_no_op_offload"] = no_op_offload
-        if cache_ram is None:
-            payload.pop("backend_cache_ram", None)
-        else:
-            payload["backend_cache_ram"] = cache_ram
-        self._write_runtime_payload(payload)
-        return (
-            context_size,
-            predict_limit,
-            parallel,
-            batch_size,
-            ubatch_size,
-            gpu_layers,
-            fit_target,
-            no_kv_offload,
-            no_op_offload,
-            cache_ram,
-        )
+        with self._mutation_lock():
+            self.ensure_storage()
+            payload = self._load_runtime_payload()
+            payload["backend_context_size"] = context_size
+            payload["backend_predict_limit"] = predict_limit
+            payload["backend_parallel"] = parallel
+            if batch_size is None:
+                payload.pop("backend_batch_size", None)
+            else:
+                payload["backend_batch_size"] = batch_size
+            if ubatch_size is None:
+                payload.pop("backend_ubatch_size", None)
+            else:
+                payload["backend_ubatch_size"] = ubatch_size
+            if gpu_layers is None:
+                payload.pop("backend_gpu_layers", None)
+            else:
+                payload["backend_gpu_layers"] = gpu_layers
+            if fit_target is None:
+                payload.pop("backend_fit_target", None)
+            else:
+                payload["backend_fit_target"] = fit_target
+            if no_kv_offload is None:
+                payload.pop("backend_no_kv_offload", None)
+            else:
+                payload["backend_no_kv_offload"] = no_kv_offload
+            if no_op_offload is None:
+                payload.pop("backend_no_op_offload", None)
+            else:
+                payload["backend_no_op_offload"] = no_op_offload
+            if cache_ram is None:
+                payload.pop("backend_cache_ram", None)
+            else:
+                payload["backend_cache_ram"] = cache_ram
+            self._write_runtime_payload(payload)
+            return (
+                context_size,
+                predict_limit,
+                parallel,
+                batch_size,
+                ubatch_size,
+                gpu_layers,
+                fit_target,
+                no_kv_offload,
+                no_op_offload,
+                cache_ram,
+            )
 
     def reset_persisted_backend_tuning(self) -> None:
         """Clear persisted backend tuning overrides from the runtime state."""
-        payload = self._load_runtime_payload()
-        payload.pop("backend_context_size", None)
-        payload.pop("backend_predict_limit", None)
-        payload.pop("backend_parallel", None)
-        payload.pop("backend_batch_size", None)
-        payload.pop("backend_ubatch_size", None)
-        payload.pop("backend_gpu_layers", None)
-        payload.pop("backend_fit_target", None)
-        payload.pop("backend_no_kv_offload", None)
-        payload.pop("backend_no_op_offload", None)
-        payload.pop("backend_cache_ram", None)
-        self._write_runtime_payload(payload)
+        with self._mutation_lock():
+            payload = self._load_runtime_payload()
+            payload.pop("backend_context_size", None)
+            payload.pop("backend_predict_limit", None)
+            payload.pop("backend_parallel", None)
+            payload.pop("backend_batch_size", None)
+            payload.pop("backend_ubatch_size", None)
+            payload.pop("backend_gpu_layers", None)
+            payload.pop("backend_fit_target", None)
+            payload.pop("backend_no_kv_offload", None)
+            payload.pop("backend_no_op_offload", None)
+            payload.pop("backend_cache_ram", None)
+            self._write_runtime_payload(payload)
 
     def load_backend_process(self) -> HostBackendProcess | None:
         """Load the persisted backend-process record if present."""
@@ -793,12 +804,13 @@ class HostStateStore:
 
     def save_backend_process(self, process: HostBackendProcess) -> bool:
         """Persist the current backend-process record."""
-        self.ensure_storage()
-        created = not self.paths.backend_process_path.exists()
-        payload = process.as_dict()
-        payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
-        write_json_atomic(self.paths.backend_process_path, payload)
-        return created
+        with self._mutation_lock():
+            self.ensure_storage()
+            created = not self.paths.backend_process_path.exists()
+            payload = process.as_dict()
+            payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
+            write_json_atomic(self.paths.backend_process_path, payload)
+            return created
 
     def load_control_plane_process(self) -> HostControlPlaneProcess | None:
         """Load the persisted control-plane process record if present."""
@@ -809,33 +821,35 @@ class HostStateStore:
 
     def save_control_plane_process(self, process: HostControlPlaneProcess) -> bool:
         """Persist the current control-plane process record."""
-        self.ensure_storage()
-        created = not self.paths.control_plane_process_path.exists()
-        payload = process.as_dict()
-        payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
-        write_json_atomic(self.paths.control_plane_process_path, payload)
-        return created
+        with self._mutation_lock():
+            self.ensure_storage()
+            created = not self.paths.control_plane_process_path.exists()
+            payload = process.as_dict()
+            payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
+            write_json_atomic(self.paths.control_plane_process_path, payload)
+            return created
 
     def activate_model(self, model_name: str) -> HostRuntimeState:
         """Mark one installed model as active."""
-        installed_models = {record.model: record for record in self.list_installed_models()}
-        try:
-            active_record = installed_models[model_name]
-        except KeyError as exc:
-            raise InstalledModelNotFoundError(f"model '{model_name}' is not installed") from exc
+        with self._mutation_lock():
+            installed_models = {record.model: record for record in self.list_installed_models()}
+            try:
+                active_record = installed_models[model_name]
+            except KeyError as exc:
+                raise InstalledModelNotFoundError(f"model '{model_name}' is not installed") from exc
 
-        self.ensure_storage()
-        payload = self._load_runtime_payload()
-        payload.update(
-            {
-                "backend": _optional_string(payload, "backend") or PRIMARY_BACKEND,
-                "backend_policy": _optional_string(payload, "backend_policy") or BACKEND_ACQUISITION_POLICY,
-                "model_source_policy": _optional_string(payload, "model_source_policy") or MODEL_SOURCE_POLICY,
-                "active_model": active_record.model,
-                "active_source": active_record.source,
-            }
-        )
-        self._write_runtime_payload(payload)
+            self.ensure_storage()
+            payload = self._load_runtime_payload()
+            payload.update(
+                {
+                    "backend": _optional_string(payload, "backend") or PRIMARY_BACKEND,
+                    "backend_policy": _optional_string(payload, "backend_policy") or BACKEND_ACQUISITION_POLICY,
+                    "model_source_policy": _optional_string(payload, "model_source_policy") or MODEL_SOURCE_POLICY,
+                    "active_model": active_record.model,
+                    "active_source": active_record.source,
+                }
+            )
+            self._write_runtime_payload(payload)
         return self.load_runtime_state()
 
     def load_runtime_state(self) -> HostRuntimeState:
@@ -927,17 +941,18 @@ class HostStateStore:
         """Persist one response conversation state and prune stale entries."""
         if retention_limit < 1:
             raise HostStateError("response-state retention limit must be at least 1")
-        self.ensure_storage()
-        stored_state = StoredResponseState(
-            response_id=response_id,
-            model_name=model_name,
-            messages=tuple(deepcopy(message) for message in messages),
-            updated_at=datetime.now(UTC).replace(microsecond=0).isoformat(),
-        )
-        payload = stored_state.as_dict()
-        payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
-        write_json_atomic(self.paths.response_state_path(response_id), payload)
-        self.prune_response_states(retention_limit=retention_limit)
+        with self._mutation_lock():
+            self.ensure_storage()
+            stored_state = StoredResponseState(
+                response_id=response_id,
+                model_name=model_name,
+                messages=tuple(deepcopy(message) for message in messages),
+                updated_at=datetime.now(UTC).replace(microsecond=0).isoformat(),
+            )
+            payload = stored_state.as_dict()
+            payload["schema_version"] = CURRENT_HOST_STATE_SCHEMA_VERSION
+            write_json_atomic(self.paths.response_state_path(response_id), payload)
+            self._prune_response_states_unlocked(retention_limit=retention_limit)
 
     def load_response_state(self, response_id: str) -> StoredResponseState | None:
         """Load one persisted response conversation state if present."""
@@ -968,6 +983,14 @@ class HostStateStore:
         """Prune persisted response-state entries beyond the configured retention limit."""
         if retention_limit < 1:
             raise HostStateError("response-state retention limit must be at least 1")
+        with self._mutation_lock():
+            return self._prune_response_states_unlocked(retention_limit=retention_limit)
+
+    def _prune_response_states_unlocked(
+        self,
+        *,
+        retention_limit: int = DEFAULT_RESPONSE_STATE_RETENTION_LIMIT,
+    ) -> tuple[str, ...]:
         if not self.paths.responses_state_dir.exists():
             return ()
 

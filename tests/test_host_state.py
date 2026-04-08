@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import aistackd.state.host as host_state
 from aistackd.models.sources import local_source_model
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
 from aistackd.state.host import (
@@ -362,6 +364,56 @@ class HostStateTests(unittest.TestCase):
             self.assertEqual(persisted.executable_path, record.executable_path)
             self.assertEqual(persisted.version, "llmfit 0.6.2")
 
+    def test_save_installed_tool_serializes_concurrent_inventory_updates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+            first_record = _installed_tool_record(Path(tmpdir), "llmfit")
+            second_record = _installed_tool_record(Path(tmpdir), "hf")
+            entered_first_read = threading.Event()
+            release_first_read = threading.Event()
+            second_read_started = threading.Event()
+            observed_reads = 0
+            observed_reads_lock = threading.Lock()
+            errors: list[Exception] = []
+            original_load_json_object = host_state.load_json_object
+
+            def controlled_load_json_object(path: Path) -> dict[str, object]:
+                nonlocal observed_reads
+                if path == store.paths.installed_tools_path:
+                    with observed_reads_lock:
+                        observed_reads += 1
+                        current_read = observed_reads
+                    if current_read == 1:
+                        entered_first_read.set()
+                        release_first_read.wait(timeout=2)
+                    elif current_read == 2:
+                        second_read_started.set()
+                return original_load_json_object(path)
+
+            def save_tool(record: InstalledToolRecord) -> None:
+                try:
+                    store.save_installed_tool(record)
+                except Exception as exc:  # pragma: no cover - surfaced below
+                    errors.append(exc)
+
+            with patch("aistackd.state.host.load_json_object", side_effect=controlled_load_json_object):
+                first_thread = threading.Thread(target=save_tool, args=(first_record,))
+                second_thread = threading.Thread(target=save_tool, args=(second_record,))
+                first_thread.start()
+                self.assertTrue(entered_first_read.wait(timeout=2))
+
+                second_thread.start()
+                self.assertFalse(second_read_started.wait(timeout=0.3))
+
+                release_first_read.set()
+                first_thread.join(timeout=2)
+                second_thread.join(timeout=2)
+
+            self.assertFalse(first_thread.is_alive())
+            self.assertFalse(second_thread.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual({record.tool for record in store.list_installed_tools()}, {"hf", "llmfit"})
+
 
 def _create_fake_backend_root(root: Path) -> Path:
     backend_root = root / "llama.cpp"
@@ -384,3 +436,17 @@ def _create_fake_gguf(root: Path, filename: str) -> Path:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _installed_tool_record(root: Path, tool_name: str) -> InstalledToolRecord:
+    executable_path = root / ".local" / "bin" / tool_name
+    executable_path.parent.mkdir(parents=True, exist_ok=True)
+    executable_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    return InstalledToolRecord(
+        tool=tool_name,
+        executable_path=str(executable_path),
+        version=f"{tool_name} 1.0.0",
+        source_url=f"https://example.test/{tool_name}/install.sh",
+        checksum=f"{tool_name}-checksum",
+        installed_at="2026-03-10T00:00:00+00:00",
+    )
