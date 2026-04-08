@@ -6,7 +6,6 @@ Snapshot of the near-term follow-up work after the host tuning and docs pass on 
 
 - [ ] Add a way to clear one optional persisted tuning override without resetting the entire host profile.
 - [ ] Add a real end-to-end smoke path for advanced backend flags such as batch size, ubatch size, GPU layers, offload toggles, fit target, and cache RAM.
-- [ ] Decide whether `/health` should surface the full active backend tuning set instead of only context and predict limits.
 
 ## Host And Runtime Polish
 
@@ -17,7 +16,6 @@ Snapshot of the near-term follow-up work after the host tuning and docs pass on 
 
 ## Client And Control Plane
 
-- [ ] Expand `client runtime` text output so remote operators can see more of the active backend tuning without switching to raw JSON.
 - [ ] Add a matching admin/runtime contract test for the newly persisted backend tuning fields.
 - [ ] Decide whether any host-managed tool execution should move beyond the current client-managed function-call loop.
 

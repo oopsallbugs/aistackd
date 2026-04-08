@@ -752,6 +752,57 @@ class CLITests(unittest.TestCase):
             self.assertIn("health_status_code: 200", stdout)
             self.assertIn("runtime_status_code: 200", stdout)
 
+    def test_client_runtime_reports_remote_backend_tuning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invoke(
+                [
+                    "profiles",
+                    "add",
+                    "remote",
+                    "--project-root",
+                    tmpdir,
+                    "--base-url",
+                    "http://127.0.0.1:8000",
+                    "--api-key-env",
+                    "AISTACKD_REMOTE_API_KEY",
+                    "--model",
+                    "remote-model",
+                    "--role-hint",
+                    "client",
+                    "--activate",
+                ]
+            )
+
+            with (
+                patch.dict(os.environ, {"AISTACKD_REMOTE_API_KEY": "test-key"}, clear=False),
+                patch("aistackd.runtime.remote.request.urlopen", side_effect=_fake_remote_client_urlopen),
+            ):
+                exit_code, stdout, stderr = invoke(["client", "runtime", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("remote runtime", stdout)
+            self.assertIn("active_model: remote-model", stdout)
+            self.assertIn("backend_status: configured", stdout)
+            self.assertIn("backend_process_status: running", stdout)
+            self.assertIn("backend_context_size: 24576", stdout)
+            self.assertIn("backend_predict_limit: 4096", stdout)
+            self.assertIn("backend_parallel: 2", stdout)
+            self.assertIn("backend_batch_size: 512", stdout)
+            self.assertIn("backend_ubatch_size: 256", stdout)
+            self.assertIn("backend_gpu_layers: 0", stdout)
+            self.assertIn("backend_fit_target: 0", stdout)
+            self.assertIn("backend_no_kv_offload: False", stdout)
+            self.assertIn("backend_no_op_offload: True", stdout)
+            self.assertIn("backend_cache_ram: 0", stdout)
+            self.assertIn("configured_backend_context_size: 16384", stdout)
+            self.assertIn("configured_backend_predict_limit: 2048", stdout)
+            self.assertIn("configured_backend_parallel: 1", stdout)
+            self.assertIn("service_base_url: http://127.0.0.1:8000", stdout)
+            self.assertIn("backend_base_url: http://127.0.0.1:8011", stdout)
+            self.assertIn("responses_state_count: 1", stdout)
+            self.assertIn("responses_state_retention_limit: 128", stdout)
+
     def test_client_validate_reports_remote_auth_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             invoke(
@@ -2250,8 +2301,31 @@ def _fake_remote_client_urlopen(request_obj: object, timeout: float = 5) -> _Fak
         return _FakeUrlopenResponse(
             200,
             {
-                "runtime": {"active_model": "remote-model", "backend_status": "configured", "installed_models": []},
-                "service": {"base_url": "http://127.0.0.1:8000"},
+                "runtime": {
+                    "active_model": "remote-model",
+                    "backend_status": "configured",
+                    "backend_process_status": "running",
+                    "backend_context_size": 24576,
+                    "backend_predict_limit": 4096,
+                    "backend_parallel": 2,
+                    "backend_batch_size": 512,
+                    "backend_ubatch_size": 256,
+                    "backend_gpu_layers": 0,
+                    "backend_fit_target": 0,
+                    "backend_no_kv_offload": False,
+                    "backend_no_op_offload": True,
+                    "backend_cache_ram": 0,
+                    "configured_backend_context_size": 16384,
+                    "configured_backend_predict_limit": 2048,
+                    "configured_backend_parallel": 1,
+                    "installed_models": [],
+                },
+                "service": {
+                    "base_url": "http://127.0.0.1:8000",
+                    "responses_base_url": "http://127.0.0.1:8000/v1",
+                    "backend_base_url": "http://127.0.0.1:8011",
+                },
+                "responses_state": {"count": 1, "retention_limit": 128, "storage_dir": "/tmp/responses"},
             },
         )
     if url.endswith("/v1/responses"):

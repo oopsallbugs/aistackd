@@ -161,16 +161,16 @@ class ControlPlaneRequestHandler(BaseHTTPRequestHandler):
                     if runtime.backend_installation is not None
                     else None
                 ),
-                "backend_context_size": (
-                    runtime.backend_process.context_size
-                    if runtime.backend_process is not None
-                    else None
-                ),
-                "backend_predict_limit": (
-                    runtime.backend_process.predict_limit
-                    if runtime.backend_process is not None
-                    else None
-                ),
+                "backend_context_size": getattr(runtime.backend_process, "context_size", None),
+                "backend_predict_limit": getattr(runtime.backend_process, "predict_limit", None),
+                "backend_parallel": getattr(runtime.backend_process, "parallel", None),
+                "backend_batch_size": getattr(runtime.backend_process, "batch_size", None),
+                "backend_ubatch_size": getattr(runtime.backend_process, "ubatch_size", None),
+                "backend_gpu_layers": getattr(runtime.backend_process, "gpu_layers", None),
+                "backend_fit_target": getattr(runtime.backend_process, "fit_target", None),
+                "backend_no_kv_offload": getattr(runtime.backend_process, "no_kv_offload", None),
+                "backend_no_op_offload": getattr(runtime.backend_process, "no_op_offload", None),
+                "backend_cache_ram": getattr(runtime.backend_process, "cache_ram", None),
                 "backend_process": (
                     runtime.backend_process.as_dict()
                     if runtime.backend_process is not None

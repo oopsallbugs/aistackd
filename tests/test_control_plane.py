@@ -58,6 +58,19 @@ class ControlPlaneTests(unittest.TestCase):
                         "24576",
                         "--predict",
                         "4096",
+                        "--parallel",
+                        "2",
+                        "--batch-size",
+                        "512",
+                        "--ubatch-size",
+                        "256",
+                        "--gpu-layers",
+                        "0",
+                        "--fit-target",
+                        "0",
+                        "--no-op-offload",
+                        "--cache-ram",
+                        "0",
                     ),
                     bind_host="127.0.0.1",
                     port=8011,
@@ -68,6 +81,14 @@ class ControlPlaneTests(unittest.TestCase):
                     started_at="2026-03-07T00:00:00+00:00",
                     context_size=24576,
                     predict_limit=4096,
+                    parallel=2,
+                    batch_size=512,
+                    ubatch_size=256,
+                    gpu_layers=0,
+                    fit_target=0,
+                    no_kv_offload=False,
+                    no_op_offload=True,
+                    cache_ram=0,
                 )
             )
 
@@ -97,6 +118,14 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertEqual(health_payload["backend_base_url"], "http://127.0.0.1:8011")
                 self.assertEqual(health_payload["backend_context_size"], 24576)
                 self.assertEqual(health_payload["backend_predict_limit"], 4096)
+                self.assertEqual(health_payload["backend_parallel"], 2)
+                self.assertEqual(health_payload["backend_batch_size"], 512)
+                self.assertEqual(health_payload["backend_ubatch_size"], 256)
+                self.assertEqual(health_payload["backend_gpu_layers"], 0)
+                self.assertEqual(health_payload["backend_fit_target"], 0)
+                self.assertFalse(health_payload["backend_no_kv_offload"])
+                self.assertTrue(health_payload["backend_no_op_offload"])
+                self.assertEqual(health_payload["backend_cache_ram"], 0)
                 self.assertTrue(str(health_payload["server_binary"]).endswith("llama-server"))
 
                 models_payload = _request_json(

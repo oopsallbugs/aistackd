@@ -189,17 +189,26 @@ def handle_runtime(args: argparse.Namespace) -> int:
 
     runtime = payload.get("runtime")
     service = payload.get("service")
+    responses_state = payload.get("responses_state")
     print("remote runtime")
     if isinstance(runtime, dict):
         print(f"active_model: {runtime.get('active_model') or 'none'}")
         print(f"backend_status: {runtime.get('backend_status')}")
         print(f"backend_process_status: {runtime.get('backend_process_status')}")
+        _print_runtime_tuning(runtime)
         installed_models = runtime.get("installed_models")
         if isinstance(installed_models, list):
             print(f"installed_models: {len(installed_models)}")
     if isinstance(service, dict):
         print(f"service_base_url: {service.get('base_url')}")
         print(f"responses_base_url: {service.get('responses_base_url')}")
+        if service.get("backend_base_url") is not None:
+            print(f"backend_base_url: {service.get('backend_base_url')}")
+    if isinstance(responses_state, dict):
+        if responses_state.get("count") is not None:
+            print(f"responses_state_count: {responses_state.get('count')}")
+        if responses_state.get("retention_limit") is not None:
+            print(f"responses_state_retention_limit: {responses_state.get('retention_limit')}")
     return 0
 
 
@@ -407,6 +416,34 @@ def _print_runtime_config(runtime_config: RuntimeConfig) -> None:
     print(f"frontend_targets: {', '.join(runtime_config.frontend_targets)}")
     if runtime_config.profile_role_hint is not None:
         print(f"profile_role_hint: {runtime_config.profile_role_hint}")
+
+
+def _print_runtime_tuning(runtime: dict[str, object]) -> None:
+    for field_name in (
+        "backend_context_size",
+        "backend_predict_limit",
+        "backend_parallel",
+        "backend_batch_size",
+        "backend_ubatch_size",
+        "backend_gpu_layers",
+        "backend_fit_target",
+        "backend_no_kv_offload",
+        "backend_no_op_offload",
+        "backend_cache_ram",
+        "configured_backend_context_size",
+        "configured_backend_predict_limit",
+        "configured_backend_parallel",
+        "configured_backend_batch_size",
+        "configured_backend_ubatch_size",
+        "configured_backend_gpu_layers",
+        "configured_backend_fit_target",
+        "configured_backend_no_kv_offload",
+        "configured_backend_no_op_offload",
+        "configured_backend_cache_ram",
+    ):
+        value = runtime.get(field_name)
+        if value is not None:
+            print(f"{field_name}: {value}")
 
 
 def _print_remote_model_list(label: str, payload: dict[str, object]) -> None:

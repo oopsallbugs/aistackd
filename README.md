@@ -158,7 +158,9 @@ The same tuning flags are also accepted by `host start`, `host restart`, and `ho
 PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host restart --service --backend-context-size 16384 --backend-predict-limit 2048 --backend-batch-size 512 --backend-ubatch-size 256 --backend-gpu-layers 0
 ```
 
-`aistackd host` now surfaces both the persisted `configured_backend_*` values and the live `backend_*` values captured from the managed backend process. `/admin/runtime` surfaces the same tuning state in JSON, `/health` still reports the active context/predict limits, and `aistackd host serve` prints the launched backend command for direct inspection.
+`aistackd host` now surfaces both the persisted `configured_backend_*` values and the live `backend_*` values captured from the managed backend process. `/admin/runtime` and `/health` now both surface the active backend tuning state in JSON, and `aistackd host serve` prints the launched backend command for direct inspection.
+
+On the remote-operator side, `aistackd client runtime` now mirrors the important tuning state in text mode too: live `backend_*` values, persisted `configured_backend_*` values, the remote `backend_base_url`, and response-state counts when the control plane exposes them.
 
 `aistackd doctor ready --frontend ...` now also surfaces the synced frontend config path, the recommended launch command, and the API-key export hint for Codex, OpenCode, and OpenHands.
 
