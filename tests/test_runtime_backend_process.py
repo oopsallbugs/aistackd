@@ -129,6 +129,54 @@ class BackendProcessRuntimeTests(unittest.TestCase):
             self.assertIsNotNone(persisted_record)
             self.assertEqual(persisted_record.status, "running")
 
+    def test_launch_managed_backend_process_persists_optional_backend_tuning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir))
+            fake_process = _FakePopen(pid=4321)
+
+            with (
+                patch("aistackd.runtime.backend_process.subprocess.Popen", return_value=fake_process),
+                patch("aistackd.runtime.backend_process.time.sleep", return_value=None),
+                patch("aistackd.state.host._pid_exists", return_value=True),
+            ):
+                running_process = launch_managed_backend_process(
+                    store,
+                    HostServiceConfig(
+                        backend_batch_size=512,
+                        backend_ubatch_size=256,
+                        backend_gpu_layers=0,
+                        backend_fit_target=0,
+                        backend_no_kv_offload=False,
+                        backend_no_op_offload=True,
+                        backend_cache_ram=0,
+                    ),
+                )
+                runtime = store.load_runtime_state()
+
+            self.assertEqual(running_process.record.batch_size, 512)
+            self.assertEqual(running_process.record.ubatch_size, 256)
+            self.assertEqual(running_process.record.gpu_layers, 0)
+            self.assertEqual(running_process.record.fit_target, 0)
+            self.assertFalse(running_process.record.no_kv_offload)
+            self.assertTrue(running_process.record.no_op_offload)
+            self.assertEqual(running_process.record.cache_ram, 0)
+            self.assertIn("--batch-size", running_process.record.command)
+            self.assertIn("--ubatch-size", running_process.record.command)
+            self.assertIn("--gpu-layers", running_process.record.command)
+            self.assertIn("--fit-target", running_process.record.command)
+            self.assertIn("--no-op-offload", running_process.record.command)
+            self.assertIn("--cache-ram", running_process.record.command)
+            self.assertNotIn("--no-kv-offload", running_process.record.command)
+            self.assertIsNotNone(runtime.backend_process)
+            assert runtime.backend_process is not None
+            self.assertEqual(runtime.backend_process.batch_size, 512)
+            self.assertEqual(runtime.backend_process.ubatch_size, 256)
+            self.assertEqual(runtime.backend_process.gpu_layers, 0)
+            self.assertEqual(runtime.backend_process.fit_target, 0)
+            self.assertFalse(runtime.backend_process.no_kv_offload)
+            self.assertTrue(runtime.backend_process.no_op_offload)
+            self.assertEqual(runtime.backend_process.cache_ram, 0)
+
     def test_stop_managed_backend_process_marks_backend_as_stopped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir))

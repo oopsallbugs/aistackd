@@ -76,6 +76,43 @@ class ControlPlaneProcessRuntimeTests(unittest.TestCase):
             self.assertEqual(runtime.control_plane_process.pid, 4321)
             self.assertTrue(Path(runtime.control_plane_process.log_path).exists())
 
+    def test_launch_control_plane_process_persists_optional_backend_tuning_in_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir))
+            fake_process = _FakePopen(pid=4321)
+
+            with (
+                patch("aistackd.runtime.control_plane_process.subprocess.Popen", return_value=fake_process),
+                patch("aistackd.runtime.control_plane_process.time.sleep", return_value=None),
+                patch("aistackd.state.host._pid_exists", return_value=True),
+            ):
+                running_process = launch_control_plane_process(
+                    Path(tmpdir),
+                    HostServiceConfig(
+                        backend_batch_size=512,
+                        backend_ubatch_size=256,
+                        backend_gpu_layers=0,
+                        backend_fit_target=0,
+                        backend_no_kv_offload=False,
+                        backend_no_op_offload=True,
+                        backend_cache_ram=0,
+                    ),
+                )
+                runtime = store.load_runtime_state()
+
+            self.assertIn("--backend-batch-size", running_process.record.command)
+            self.assertIn("--backend-ubatch-size", running_process.record.command)
+            self.assertIn("--backend-gpu-layers", running_process.record.command)
+            self.assertIn("--backend-fit-target", running_process.record.command)
+            self.assertIn("--backend-kv-offload", running_process.record.command)
+            self.assertIn("--backend-no-op-offload", running_process.record.command)
+            self.assertIn("--backend-cache-ram", running_process.record.command)
+            self.assertNotIn("--backend-no-kv-offload", running_process.record.command)
+            self.assertIsNotNone(runtime.control_plane_process)
+            assert runtime.control_plane_process is not None
+            self.assertIn("--backend-batch-size", runtime.control_plane_process.command)
+            self.assertIn("--backend-kv-offload", runtime.control_plane_process.command)
+
     def test_stop_current_control_plane_process_marks_service_as_stopped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir))

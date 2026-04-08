@@ -4,9 +4,6 @@ Snapshot of the near-term follow-up work after the host tuning and docs pass on 
 
 ## High Priority
 
-- [ ] Add a way to clear one optional persisted tuning override without resetting the entire host profile.
-- [ ] Add a real end-to-end smoke path for advanced backend flags such as batch size, ubatch size, GPU layers, offload toggles, fit target, and cache RAM.
-
 ## Host And Runtime Polish
 
 - [ ] Add a short reference mapping from `aistackd host` tuning flags to the underlying `llama-server` flags.
@@ -16,7 +13,6 @@ Snapshot of the near-term follow-up work after the host tuning and docs pass on 
 
 ## Client And Control Plane
 
-- [ ] Add a matching admin/runtime contract test for the newly persisted backend tuning fields.
 - [ ] Decide whether any host-managed tool execution should move beyond the current client-managed function-call loop.
 
 ## Docs

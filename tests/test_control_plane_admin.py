@@ -28,6 +28,18 @@ class ControlPlaneAdminTests(unittest.TestCase):
     def test_build_runtime_admin_payload_reports_service_and_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = HostStateStore(Path(tmpdir))
+            store.save_persisted_backend_tuning(
+                context_size=16384,
+                predict_limit=2048,
+                parallel=2,
+                batch_size=512,
+                ubatch_size=256,
+                gpu_layers=0,
+                fit_target=0,
+                no_kv_offload=False,
+                no_op_offload=True,
+                cache_ram=0,
+            )
             store.save_backend_process(
                 HostBackendProcess(
                     backend="llama.cpp",
@@ -41,6 +53,19 @@ class ControlPlaneAdminTests(unittest.TestCase):
                         "24576",
                         "--predict",
                         "4096",
+                        "--parallel",
+                        "1",
+                        "--batch-size",
+                        "1024",
+                        "--ubatch-size",
+                        "128",
+                        "--gpu-layers",
+                        "0",
+                        "--fit-target",
+                        "0",
+                        "--no-op-offload",
+                        "--cache-ram",
+                        "0",
                     ),
                     bind_host="127.0.0.1",
                     port=8011,
@@ -52,6 +77,13 @@ class ControlPlaneAdminTests(unittest.TestCase):
                     context_size=24576,
                     predict_limit=4096,
                     parallel=1,
+                    batch_size=1024,
+                    ubatch_size=128,
+                    gpu_layers=0,
+                    fit_target=0,
+                    no_kv_offload=False,
+                    no_op_offload=True,
+                    cache_ram=0,
                 )
             )
             payload = build_runtime_admin_payload(store, _service_config())
@@ -63,6 +95,23 @@ class ControlPlaneAdminTests(unittest.TestCase):
         self.assertEqual(payload["runtime"]["backend_process"]["context_size"], 24576)
         self.assertEqual(payload["runtime"]["backend_process"]["predict_limit"], 4096)
         self.assertEqual(payload["runtime"]["backend_process"]["parallel"], 1)
+        self.assertEqual(payload["runtime"]["backend_process"]["batch_size"], 1024)
+        self.assertEqual(payload["runtime"]["backend_process"]["ubatch_size"], 128)
+        self.assertEqual(payload["runtime"]["backend_process"]["gpu_layers"], 0)
+        self.assertEqual(payload["runtime"]["backend_process"]["fit_target"], 0)
+        self.assertFalse(payload["runtime"]["backend_process"]["no_kv_offload"])
+        self.assertTrue(payload["runtime"]["backend_process"]["no_op_offload"])
+        self.assertEqual(payload["runtime"]["backend_process"]["cache_ram"], 0)
+        self.assertEqual(payload["runtime"]["configured_backend_context_size"], 16384)
+        self.assertEqual(payload["runtime"]["configured_backend_predict_limit"], 2048)
+        self.assertEqual(payload["runtime"]["configured_backend_parallel"], 2)
+        self.assertEqual(payload["runtime"]["configured_backend_batch_size"], 512)
+        self.assertEqual(payload["runtime"]["configured_backend_ubatch_size"], 256)
+        self.assertEqual(payload["runtime"]["configured_backend_gpu_layers"], 0)
+        self.assertEqual(payload["runtime"]["configured_backend_fit_target"], 0)
+        self.assertFalse(payload["runtime"]["configured_backend_no_kv_offload"])
+        self.assertTrue(payload["runtime"]["configured_backend_no_op_offload"])
+        self.assertEqual(payload["runtime"]["configured_backend_cache_ram"], 0)
         self.assertEqual(payload["responses_state"]["count"], 0)
 
     def test_search_and_recommend_models_admin_use_llmfit(self) -> None:

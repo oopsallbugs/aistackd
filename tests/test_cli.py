@@ -128,6 +128,74 @@ class CLITests(unittest.TestCase):
             self.assertNotIn("backend_no_kv_offload", payload)
             self.assertEqual(payload["source"], "default")
 
+    def test_host_tune_set_can_clear_one_optional_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exit_code, stdout, stderr = invoke(
+                [
+                    "host",
+                    "tune",
+                    "set",
+                    "--project-root",
+                    tmpdir,
+                    "--backend-context-size",
+                    "16384",
+                    "--backend-predict-limit",
+                    "2048",
+                    "--backend-parallel",
+                    "2",
+                    "--backend-batch-size",
+                    "512",
+                    "--backend-ubatch-size",
+                    "256",
+                    "--backend-gpu-layers",
+                    "0",
+                    "--backend-no-kv-offload",
+                    "--backend-cache-ram",
+                    "0",
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+
+            exit_code, stdout, stderr = invoke(
+                [
+                    "host",
+                    "tune",
+                    "set",
+                    "--project-root",
+                    tmpdir,
+                    "--clear-backend-batch-size",
+                    "--format",
+                    "json",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertEqual(payload["backend_context_size"], 16384)
+            self.assertEqual(payload["backend_predict_limit"], 2048)
+            self.assertEqual(payload["backend_parallel"], 2)
+            self.assertNotIn("backend_batch_size", payload)
+            self.assertEqual(payload["backend_ubatch_size"], 256)
+            self.assertEqual(payload["backend_gpu_layers"], 0)
+            self.assertTrue(payload["backend_no_kv_offload"])
+            self.assertEqual(payload["backend_cache_ram"], 0)
+
+            exit_code, stdout, stderr = invoke(["host", "tune", "show", "--project-root", tmpdir, "--format", "json"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertNotIn("backend_batch_size", payload)
+            self.assertEqual(payload["backend_ubatch_size"], 256)
+            self.assertEqual(payload["backend_gpu_layers"], 0)
+            self.assertTrue(payload["backend_no_kv_offload"])
+            self.assertEqual(payload["backend_cache_ram"], 0)
+
     def test_host_start_uses_persisted_tuning_when_flags_are_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(

@@ -1040,13 +1040,20 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
             f"(default: saved value or {DEFAULT_BACKEND_PARALLEL})"
         ),
     )
-    parser.add_argument(
+    batch_size_group = parser.add_mutually_exclusive_group()
+    batch_size_group.add_argument(
         "--backend-batch-size",
         type=int,
         default=None,
         help="batch size for the managed llama.cpp process (default: saved value when set; otherwise llama.cpp default)",
     )
-    parser.add_argument(
+    batch_size_group.add_argument(
+        "--clear-backend-batch-size",
+        action="store_true",
+        help="clear any persisted batch-size override so llama.cpp uses its own default",
+    )
+    ubatch_size_group = parser.add_mutually_exclusive_group()
+    ubatch_size_group.add_argument(
         "--backend-ubatch-size",
         type=int,
         default=None,
@@ -1055,7 +1062,13 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
             "(default: saved value when set; otherwise llama.cpp default)"
         ),
     )
-    parser.add_argument(
+    ubatch_size_group.add_argument(
+        "--clear-backend-ubatch-size",
+        action="store_true",
+        help="clear any persisted ubatch-size override so llama.cpp uses its own default",
+    )
+    gpu_layers_group = parser.add_mutually_exclusive_group()
+    gpu_layers_group.add_argument(
         "--backend-gpu-layers",
         type=int,
         default=None,
@@ -1064,7 +1077,13 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
             "(default: saved value when set; otherwise llama.cpp default)"
         ),
     )
-    parser.add_argument(
+    gpu_layers_group.add_argument(
+        "--clear-backend-gpu-layers",
+        action="store_true",
+        help="clear any persisted GPU-layer override so llama.cpp uses its own default",
+    )
+    fit_target_group = parser.add_mutually_exclusive_group()
+    fit_target_group.add_argument(
         "--backend-fit-target",
         type=int,
         default=None,
@@ -1073,7 +1092,13 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
             "(default: saved value when set; otherwise llama.cpp default)"
         ),
     )
-    parser.add_argument(
+    fit_target_group.add_argument(
+        "--clear-backend-fit-target",
+        action="store_true",
+        help="clear any persisted fit-target override so llama.cpp uses its own default",
+    )
+    cache_ram_group = parser.add_mutually_exclusive_group()
+    cache_ram_group.add_argument(
         "--backend-cache-ram",
         type=int,
         default=None,
@@ -1081,6 +1106,11 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
             "cache RAM value for the managed llama.cpp process "
             "(default: saved value when set; otherwise llama.cpp default)"
         ),
+    )
+    cache_ram_group.add_argument(
+        "--clear-backend-cache-ram",
+        action="store_true",
+        help="clear any persisted cache-RAM override so llama.cpp uses its own default",
     )
     kv_offload_group = parser.add_mutually_exclusive_group()
     kv_offload_group.add_argument(
@@ -1097,6 +1127,12 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="enable KV offload for the managed llama.cpp process",
     )
+    kv_offload_group.add_argument(
+        "--clear-backend-kv-offload",
+        dest="clear_backend_no_kv_offload",
+        action="store_true",
+        help="clear any persisted KV-offload override so llama.cpp uses its own default",
+    )
     op_offload_group = parser.add_mutually_exclusive_group()
     op_offload_group.add_argument(
         "--backend-no-op-offload",
@@ -1111,6 +1147,12 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_false",
         default=None,
         help="enable operator offload for the managed llama.cpp process",
+    )
+    op_offload_group.add_argument(
+        "--clear-backend-op-offload",
+        dest="clear_backend_no_op_offload",
+        action="store_true",
+        help="clear any persisted operator-offload override so llama.cpp uses its own default",
     )
 
 
@@ -1261,36 +1303,43 @@ def _resolved_backend_tuning(
             args,
             "backend_batch_size",
             persisted_tuning["backend_batch_size"],
+            clear_field_name="clear_backend_batch_size",
         ),
         "backend_ubatch_size": _resolve_tuning_value(
             args,
             "backend_ubatch_size",
             persisted_tuning["backend_ubatch_size"],
+            clear_field_name="clear_backend_ubatch_size",
         ),
         "backend_gpu_layers": _resolve_tuning_value(
             args,
             "backend_gpu_layers",
             persisted_tuning["backend_gpu_layers"],
+            clear_field_name="clear_backend_gpu_layers",
         ),
         "backend_fit_target": _resolve_tuning_value(
             args,
             "backend_fit_target",
             persisted_tuning["backend_fit_target"],
+            clear_field_name="clear_backend_fit_target",
         ),
         "backend_no_kv_offload": _resolve_tuning_value(
             args,
             "backend_no_kv_offload",
             persisted_tuning["backend_no_kv_offload"],
+            clear_field_name="clear_backend_no_kv_offload",
         ),
         "backend_no_op_offload": _resolve_tuning_value(
             args,
             "backend_no_op_offload",
             persisted_tuning["backend_no_op_offload"],
+            clear_field_name="clear_backend_no_op_offload",
         ),
         "backend_cache_ram": _resolve_tuning_value(
             args,
             "backend_cache_ram",
             persisted_tuning["backend_cache_ram"],
+            clear_field_name="clear_backend_cache_ram",
         ),
     }
 
@@ -1300,7 +1349,11 @@ def _resolve_tuning_value(
     field_name: str,
     persisted_value: int | bool | None,
     default: int | bool | None = None,
+    *,
+    clear_field_name: str | None = None,
 ) -> int | bool | None:
+    if clear_field_name is not None and args is not None and getattr(args, clear_field_name, False):
+        return None
     if args is not None and hasattr(args, field_name):
         value = getattr(args, field_name)
         if value is not None:
@@ -1356,6 +1409,17 @@ def _tuning_arguments_supplied(args: argparse.Namespace) -> bool:
             "backend_no_kv_offload",
             "backend_no_op_offload",
             "backend_cache_ram",
+        )
+    ) or any(
+        getattr(args, field_name, False)
+        for field_name in (
+            "clear_backend_batch_size",
+            "clear_backend_ubatch_size",
+            "clear_backend_gpu_layers",
+            "clear_backend_fit_target",
+            "clear_backend_no_kv_offload",
+            "clear_backend_no_op_offload",
+            "clear_backend_cache_ram",
         )
     )
 

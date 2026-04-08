@@ -149,8 +149,11 @@ Persisted host tuning is now a first-class workflow:
 ```bash
 PYTHONPATH=src python -m aistackd host tune show
 PYTHONPATH=src python -m aistackd host tune set --backend-context-size 16384 --backend-predict-limit 2048 --backend-parallel 2 --backend-batch-size 512 --backend-ubatch-size 256
+PYTHONPATH=src python -m aistackd host tune set --clear-backend-batch-size
 PYTHONPATH=src python -m aistackd host tune reset
 ```
+
+For the optional pass-through knobs, `host tune set` also supports per-field clear flags such as `--clear-backend-batch-size`, `--clear-backend-ubatch-size`, `--clear-backend-gpu-layers`, `--clear-backend-fit-target`, `--clear-backend-kv-offload`, `--clear-backend-op-offload`, and `--clear-backend-cache-ram`.
 
 The same tuning flags are also accepted by `host start`, `host restart`, and `host serve`, so you can do one-off experiments without changing the persisted baseline:
 
