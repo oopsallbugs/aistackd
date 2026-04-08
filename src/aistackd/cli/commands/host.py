@@ -680,12 +680,17 @@ def handle_start(args: argparse.Namespace) -> int:
         "control_plane_process": running_process.record.as_dict(),
         "service": result.service.to_dict(),
     }
+    control_plane_command = getattr(running_process.record, "command", None)
+    if control_plane_command:
+        payload["control_plane_command"] = list(control_plane_command)
     if args.format == "json":
         print(json.dumps(payload, indent=2))
         return 0
 
     print("managed control-plane started")
     print(f"control_plane_pid: {running_process.record.pid}")
+    if control_plane_command:
+        print(f"control_plane_command: {_format_command(control_plane_command)}")
     print(f"base_url: {result.service.base_url}")
     print(f"responses_base_url: {result.service.responses_base_url}")
     print(f"control_plane_log_path: {running_process.record.log_path}")
@@ -788,6 +793,9 @@ def handle_restart(args: argparse.Namespace) -> int:
         "backend_process": running_process.record.as_dict(),
         "service": result.service.to_dict(),
     }
+    backend_command = getattr(running_process.record, "command", None)
+    if backend_command:
+        payload["backend_command"] = list(backend_command)
     if args.format == "json":
         print(json.dumps(payload, indent=2))
         return 0
@@ -797,6 +805,8 @@ def handle_restart(args: argparse.Namespace) -> int:
     print(f"after_status: {payload['after_status']}")
     print(f"backend_pid: {running_process.record.pid}")
     print(f"backend_base_url: {running_process.record.base_url}")
+    if backend_command:
+        print(f"backend_command: {_format_command(backend_command)}")
     print(f"backend_log_path: {running_process.record.log_path}")
     _print_backend_process_tuning(running_process.record)
     print(f"active_model: {running_process.record.model}")
@@ -932,6 +942,9 @@ def _handle_restart_service(args: argparse.Namespace) -> int:
         "control_plane_process": running_process.record.as_dict(),
         "service": result.service.to_dict(),
     }
+    control_plane_command = getattr(running_process.record, "command", None)
+    if control_plane_command:
+        payload["control_plane_command"] = list(control_plane_command)
     if args.format == "json":
         print(json.dumps(payload, indent=2))
         return 0
@@ -940,6 +953,8 @@ def _handle_restart_service(args: argparse.Namespace) -> int:
     print(f"before_control_plane_status: {payload['before_control_plane_status']}")
     print(f"after_control_plane_status: {payload['after_control_plane_status']}")
     print(f"control_plane_pid: {running_process.record.pid}")
+    if control_plane_command:
+        print(f"control_plane_command: {_format_command(control_plane_command)}")
     print(f"base_url: {result.service.base_url}")
     print(f"control_plane_log_path: {running_process.record.log_path}")
     return 0
@@ -1473,6 +1488,10 @@ def _print_backend_tuning_payload(payload: dict[str, object]) -> None:
         "backend_context_size",
         "backend_predict_limit",
         "backend_parallel",
+    ):
+        if field_name in payload:
+            print(f"{field_name}: {payload[field_name]}")
+    for field_name in (
         "backend_batch_size",
         "backend_ubatch_size",
         "backend_gpu_layers",
@@ -1480,10 +1499,10 @@ def _print_backend_tuning_payload(payload: dict[str, object]) -> None:
         "backend_no_kv_offload",
         "backend_no_op_offload",
         "backend_cache_ram",
-        "source",
     ):
-        if field_name in payload:
-            print(f"{field_name}: {payload[field_name]}")
+        print(f"{field_name}: {payload.get(field_name, 'unset')}")
+    if "source" in payload:
+        print(f"source: {payload['source']}")
 
 
 def _print_backend_process_tuning(record: object) -> None:

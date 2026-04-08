@@ -53,6 +53,22 @@ class CLITests(unittest.TestCase):
             self.assertNotIn("backend_batch_size", payload)
             self.assertEqual(payload["source"], "default")
 
+    def test_host_tune_show_text_reports_unset_optional_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exit_code, stdout, stderr = invoke(["host", "tune", "show", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("host tuning", stdout)
+            self.assertIn("backend_batch_size: unset", stdout)
+            self.assertIn("backend_ubatch_size: unset", stdout)
+            self.assertIn("backend_gpu_layers: unset", stdout)
+            self.assertIn("backend_fit_target: unset", stdout)
+            self.assertIn("backend_no_kv_offload: unset", stdout)
+            self.assertIn("backend_no_op_offload: unset", stdout)
+            self.assertIn("backend_cache_ram: unset", stdout)
+            self.assertIn("source: default", stdout)
+
     def test_host_tune_set_and_reset_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             exit_code, stdout, stderr = invoke(
@@ -184,6 +200,16 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["backend_gpu_layers"], 0)
             self.assertTrue(payload["backend_no_kv_offload"])
             self.assertEqual(payload["backend_cache_ram"], 0)
+
+            exit_code, stdout, stderr = invoke(["host", "tune", "show", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("backend_batch_size: unset", stdout)
+            self.assertIn("backend_ubatch_size: 256", stdout)
+            self.assertIn("backend_gpu_layers: 0", stdout)
+            self.assertIn("backend_no_kv_offload: True", stdout)
+            self.assertIn("backend_cache_ram: 0", stdout)
 
             exit_code, stdout, stderr = invoke(["host", "tune", "show", "--project-root", tmpdir, "--format", "json"])
 
@@ -1381,6 +1407,7 @@ class CLITests(unittest.TestCase):
                 record=SimpleNamespace(
                     pid=5151,
                     base_url="http://127.0.0.1:8011",
+                    command=("/tmp/llama-server", "--ctx-size", "24576"),
                     log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "llama-cpp.log"),
                     context_size=24576,
                     predict_limit=4096,
@@ -1411,6 +1438,7 @@ class CLITests(unittest.TestCase):
             self.assertIn("backend_pid: 5151", stdout)
             self.assertIn("backend_context_size: 24576", stdout)
             self.assertIn("backend_predict_limit: 4096", stdout)
+            self.assertIn("backend_command: /tmp/llama-server --ctx-size 24576", stdout)
 
     def test_host_start_reports_started_control_plane(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1424,6 +1452,7 @@ class CLITests(unittest.TestCase):
             running_process = SimpleNamespace(
                 record=SimpleNamespace(
                     pid=6161,
+                    command=("python", "-m", "aistackd.control_plane"),
                     log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "control-plane.log"),
                     as_dict=lambda: {"status": "starting", "pid": 6161},
                 )
@@ -1440,6 +1469,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(stderr, "")
             self.assertIn("managed control-plane started", stdout)
             self.assertIn("control_plane_pid: 6161", stdout)
+            self.assertIn("control_plane_command: python -m aistackd.control_plane", stdout)
             self.assertIn("base_url: http://127.0.0.1:8000", stdout)
 
     def test_host_restart_service_reports_restarted_control_plane(self) -> None:
@@ -1454,6 +1484,7 @@ class CLITests(unittest.TestCase):
             running_process = SimpleNamespace(
                 record=SimpleNamespace(
                     pid=7171,
+                    command=("python", "-m", "aistackd.control_plane"),
                     log_path=str(Path(tmpdir) / ".aistackd" / "host" / "logs" / "control-plane.log"),
                     as_dict=lambda: {"status": "starting", "pid": 7171},
                 )
@@ -1473,6 +1504,7 @@ class CLITests(unittest.TestCase):
             self.assertIn("before_control_plane_status: running", stdout)
             self.assertIn("after_control_plane_status: starting", stdout)
             self.assertIn("control_plane_pid: 7171", stdout)
+            self.assertIn("control_plane_command: python -m aistackd.control_plane", stdout)
 
     def test_models_browse_imports_all_new_ggufs_after_successful_exit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
