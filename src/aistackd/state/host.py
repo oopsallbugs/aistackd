@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -33,6 +34,7 @@ HOST_LOGS_DIRECTORY_NAME = "logs"
 RESPONSES_STATE_DIRECTORY_NAME = "responses"
 DEFAULT_RESPONSE_STATE_RETENTION_LIMIT = 128
 CURRENT_HOST_STATE_SCHEMA_VERSION = "v1alpha1"
+_RESPONSE_STATE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 class HostStateError(RuntimeError):
@@ -158,7 +160,7 @@ class HostStatePaths:
 
     def response_state_path(self, response_id: str) -> Path:
         """Return the persisted response-state path for one response id."""
-        return self.responses_state_dir / f"{response_id}.json"
+        return self.responses_state_dir / f"{validate_response_state_id(response_id)}.json"
 
 
 @dataclass(frozen=True)
@@ -223,6 +225,7 @@ class HostBackendProcess:
     no_kv_offload: bool | None = None
     no_op_offload: bool | None = None
     cache_ram: int | None = None
+    pid_start_time_ticks: int | None = None
     stopped_at: str | None = None
     exit_code: int | None = None
 
@@ -257,6 +260,7 @@ class HostBackendProcess:
             no_kv_offload=_coalesce(_optional_bool(payload, "no_kv_offload"), _command_has_flag(command, "--no-kv-offload")),
             no_op_offload=_coalesce(_optional_bool(payload, "no_op_offload"), _command_has_flag(command, "--no-op-offload")),
             cache_ram=_coalesce(_optional_int(payload, "cache_ram"), _command_flag_int(command, "--cache-ram")),
+            pid_start_time_ticks=_optional_int(payload, "pid_start_time_ticks"),
             stopped_at=_optional_string(payload, "stopped_at"),
             exit_code=_optional_int(payload, "exit_code"),
         )
@@ -297,6 +301,8 @@ class HostBackendProcess:
             payload["no_op_offload"] = self.no_op_offload
         if self.cache_ram is not None:
             payload["cache_ram"] = self.cache_ram
+        if self.pid_start_time_ticks is not None:
+            payload["pid_start_time_ticks"] = self.pid_start_time_ticks
         if self.stopped_at is not None:
             payload["stopped_at"] = self.stopped_at
         if self.exit_code is not None:
@@ -315,6 +321,7 @@ class HostControlPlaneProcess:
     port: int
     log_path: str
     started_at: str
+    pid_start_time_ticks: int | None = None
     stopped_at: str | None = None
     exit_code: int | None = None
 
@@ -334,6 +341,7 @@ class HostControlPlaneProcess:
             port=_require_int(payload, "port"),
             log_path=_require_string(payload, "log_path"),
             started_at=_require_string(payload, "started_at"),
+            pid_start_time_ticks=_optional_int(payload, "pid_start_time_ticks"),
             stopped_at=_optional_string(payload, "stopped_at"),
             exit_code=_optional_int(payload, "exit_code"),
         )
@@ -350,6 +358,8 @@ class HostControlPlaneProcess:
             "log_path": self.log_path,
             "started_at": self.started_at,
         }
+        if self.pid_start_time_ticks is not None:
+            payload["pid_start_time_ticks"] = self.pid_start_time_ticks
         if self.stopped_at is not None:
             payload["stopped_at"] = self.stopped_at
         if self.exit_code is not None:
@@ -1014,6 +1024,19 @@ def _refresh_backend_process_record(process: HostBackendProcess | None) -> HostB
     if process is None or process.status not in {"running", "starting"}:
         return process
     if _pid_exists(process.pid):
+        current_start_time_ticks = read_pid_start_time_ticks(process.pid)
+        if process.pid_start_time_ticks is None and current_start_time_ticks is not None:
+            return replace(process, pid_start_time_ticks=current_start_time_ticks)
+        if (
+            process.pid_start_time_ticks is not None
+            and current_start_time_ticks is not None
+            and current_start_time_ticks != process.pid_start_time_ticks
+        ):
+            return replace(
+                process,
+                status="exited",
+                stopped_at=process.stopped_at or datetime.now(UTC).replace(microsecond=0).isoformat(),
+            )
         return process
     return replace(
         process,
@@ -1028,6 +1051,19 @@ def _refresh_control_plane_process_record(
     if process is None or process.status not in {"running", "starting"}:
         return process
     if _pid_exists(process.pid):
+        current_start_time_ticks = read_pid_start_time_ticks(process.pid)
+        if process.pid_start_time_ticks is None and current_start_time_ticks is not None:
+            return replace(process, pid_start_time_ticks=current_start_time_ticks)
+        if (
+            process.pid_start_time_ticks is not None
+            and current_start_time_ticks is not None
+            and current_start_time_ticks != process.pid_start_time_ticks
+        ):
+            return replace(
+                process,
+                status="exited",
+                stopped_at=process.stopped_at or datetime.now(UTC).replace(microsecond=0).isoformat(),
+            )
         return process
     return replace(
         process,
@@ -1039,14 +1075,9 @@ def _refresh_control_plane_process_record(
 def _pid_exists(pid: int) -> bool:
     if pid < 1:
         return False
-    stat_path = Path("/proc") / str(pid) / "stat"
-    if stat_path.exists():
-        try:
-            stat_fields = stat_path.read_text(encoding="utf-8").split()
-        except OSError:
-            stat_fields = ()
-        if len(stat_fields) >= 3 and stat_fields[2] == "Z":
-            return False
+    state, _start_time_ticks = _pid_status_and_start_time_ticks(pid)
+    if state == "Z":
+        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -1054,6 +1085,20 @@ def _pid_exists(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def read_pid_start_time_ticks(pid: int) -> int | None:
+    """Return the Linux /proc start-time tick count for one pid, if available."""
+    _state, start_time_ticks = _pid_status_and_start_time_ticks(pid)
+    return start_time_ticks
+
+
+def validate_response_state_id(response_id: str) -> str:
+    """Validate one persisted response-state identifier."""
+    normalized = response_id.strip()
+    if not normalized or not _RESPONSE_STATE_ID_RE.fullmatch(normalized):
+        raise HostStateError("response_id must use only letters, numbers, underscores, or hyphens")
+    return normalized
 
 
 def _require_string(payload: dict[str, object], field_name: str) -> str:
@@ -1124,3 +1169,27 @@ def _require_string_tuple(payload: dict[str, object], field_name: str) -> tuple[
     if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
         raise HostStateError(f"expected non-empty list of strings for field '{field_name}'")
     return tuple(value)
+
+
+def _pid_status_and_start_time_ticks(pid: int) -> tuple[str | None, int | None]:
+    stat_path = Path("/proc") / str(pid) / "stat"
+    if not stat_path.exists():
+        return None, None
+    try:
+        raw_stat = stat_path.read_text(encoding="utf-8")
+    except OSError:
+        return None, None
+    closing_paren = raw_stat.rfind(")")
+    if closing_paren == -1 or closing_paren + 2 >= len(raw_stat):
+        return None, None
+    fields = raw_stat[closing_paren + 2 :].split()
+    if not fields:
+        return None, None
+    state = fields[0]
+    start_time_ticks: int | None = None
+    if len(fields) >= 20:
+        try:
+            start_time_ticks = int(fields[19])
+        except ValueError:
+            start_time_ticks = None
+    return state, start_time_ticks

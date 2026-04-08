@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from aistackd.runtime.host import HostServiceConfig
-from aistackd.state.host import HostControlPlaneProcess, HostStateStore
+from aistackd.state.host import HostControlPlaneProcess, HostStateStore, read_pid_start_time_ticks
 
 DEFAULT_CONTROL_PLANE_STARTUP_GRACE_SECONDS = 0.05
 DEFAULT_CONTROL_PLANE_STOP_TIMEOUT_SECONDS = 1.0
@@ -62,6 +62,7 @@ def launch_control_plane_process(
         except OSError as exc:
             raise ControlPlaneProcessError(f"failed to launch control-plane service: {exc}") from exc
 
+    pid_start_time_ticks = read_pid_start_time_ticks(process.pid)
     starting_record = HostControlPlaneProcess(
         status="starting",
         pid=process.pid,
@@ -70,6 +71,7 @@ def launch_control_plane_process(
         port=normalized_service.port,
         log_path=str(log_path),
         started_at=started_at,
+        pid_start_time_ticks=pid_start_time_ticks,
     )
     store.save_control_plane_process(starting_record)
 
@@ -84,6 +86,7 @@ def launch_control_plane_process(
             port=normalized_service.port,
             log_path=str(log_path),
             started_at=started_at,
+            pid_start_time_ticks=pid_start_time_ticks,
             stopped_at=_timestamp_now(),
             exit_code=exit_code,
         )
@@ -97,7 +100,7 @@ def launch_control_plane_process(
 
 def stop_current_control_plane_process(store: HostStateStore) -> HostControlPlaneProcess | None:
     """Stop the current managed control-plane service if it is active."""
-    current = store.load_control_plane_process()
+    current = store.load_runtime_state().control_plane_process
     if current is None:
         return None
     if current.status not in {"running", "starting"}:
@@ -112,6 +115,7 @@ def stop_current_control_plane_process(store: HostStateStore) -> HostControlPlan
         port=current.port,
         log_path=current.log_path,
         started_at=current.started_at,
+        pid_start_time_ticks=current.pid_start_time_ticks,
         stopped_at=_timestamp_now(),
         exit_code=exit_code,
     )
@@ -137,6 +141,7 @@ def save_current_control_plane_process(
         port=normalized_service.port,
         log_path=str(store.paths.control_plane_log_path()),
         started_at=_timestamp_now(),
+        pid_start_time_ticks=read_pid_start_time_ticks(os.getpid() if pid is None else pid),
     )
     store.save_control_plane_process(record)
     return record
@@ -161,6 +166,7 @@ def mark_current_control_plane_process_stopped(
         port=current.port,
         log_path=current.log_path,
         started_at=current.started_at,
+        pid_start_time_ticks=current.pid_start_time_ticks,
         stopped_at=_timestamp_now(),
         exit_code=exit_code,
     )

@@ -11,7 +11,13 @@ from unittest.mock import patch
 
 from aistackd.models.sources import local_source_model
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
-from aistackd.state.host import HostBackendProcess, HostControlPlaneProcess, HostStateStore, InstalledToolRecord
+from aistackd.state.host import (
+    HostBackendProcess,
+    HostControlPlaneProcess,
+    HostStateError,
+    HostStateStore,
+    InstalledToolRecord,
+)
 
 
 class HostStateTests(unittest.TestCase):
@@ -30,6 +36,13 @@ class HostStateTests(unittest.TestCase):
             self.assertEqual(persisted.model_name, "local-model")
             self.assertEqual(persisted.messages[0]["content"], "second")
             self.assertEqual(store.count_response_states(), 1)
+
+    def test_response_state_rejects_unsafe_response_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+
+            with self.assertRaisesRegex(HostStateError, "response_id must use only letters, numbers, underscores, or hyphens"):
+                store.save_response_state("../escape", "local-model", [{"role": "user", "content": "bad"}])
 
     def test_install_and_activate_model_round_trips_host_runtime_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -249,6 +262,70 @@ class HostStateTests(unittest.TestCase):
             self.assertIsNotNone(runtime_state.control_plane_process)
             assert runtime_state.control_plane_process is not None
             self.assertEqual(runtime_state.control_plane_process.status, "exited")
+
+    def test_runtime_state_marks_backend_process_as_exited_when_pid_start_time_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+            backend_log_path = store.paths.backend_log_path()
+            backend_log_path.parent.mkdir(parents=True, exist_ok=True)
+            backend_log_path.write_text("", encoding="utf-8")
+            store.save_backend_process(
+                HostBackendProcess(
+                    backend="llama.cpp",
+                    status="running",
+                    pid=4242,
+                    command=("llama-server", "--model", "/tmp/model.gguf"),
+                    bind_host="127.0.0.1",
+                    port=8011,
+                    model="local-model",
+                    artifact_path="/tmp/model.gguf",
+                    server_binary="/tmp/llama-server",
+                    log_path=str(backend_log_path),
+                    started_at="2026-03-07T00:00:00+00:00",
+                    pid_start_time_ticks=100,
+                )
+            )
+
+            with (
+                patch("aistackd.state.host._pid_exists", return_value=True),
+                patch("aistackd.state.host.read_pid_start_time_ticks", return_value=200),
+            ):
+                runtime = store.load_runtime_state()
+
+            self.assertEqual(runtime.backend_process_status, "exited")
+            self.assertIsNotNone(runtime.backend_process)
+            assert runtime.backend_process is not None
+            self.assertEqual(runtime.backend_process.status, "exited")
+
+    def test_runtime_state_marks_control_plane_process_as_exited_when_pid_start_time_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = HostStateStore(Path(tmpdir))
+            log_path = store.paths.control_plane_log_path()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("", encoding="utf-8")
+            store.save_control_plane_process(
+                HostControlPlaneProcess(
+                    status="running",
+                    pid=1234,
+                    command=("python3", "-m", "aistackd", "host", "serve"),
+                    bind_host="127.0.0.1",
+                    port=8000,
+                    log_path=str(log_path),
+                    started_at="2026-03-08T00:00:00+00:00",
+                    pid_start_time_ticks=100,
+                )
+            )
+
+            with (
+                patch("aistackd.state.host._pid_exists", return_value=True),
+                patch("aistackd.state.host.read_pid_start_time_ticks", return_value=200),
+            ):
+                runtime = store.load_runtime_state()
+
+            self.assertEqual(runtime.control_plane_process_status, "exited")
+            self.assertIsNotNone(runtime.control_plane_process)
+            assert runtime.control_plane_process is not None
+            self.assertEqual(runtime.control_plane_process.status, "exited")
 
     def test_host_state_storage_creates_managed_backends_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

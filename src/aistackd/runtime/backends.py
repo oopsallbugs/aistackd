@@ -449,8 +449,12 @@ def _acquire_from_prebuilt_archive(paths: HostStatePaths, prebuilt_archive: Path
     _reset_backend_workspace(workspace_root)
     extract_root.mkdir(parents=True, exist_ok=True)
     try:
-        shutil.unpack_archive(str(normalized_archive), str(extract_root))
-    except (shutil.ReadError, ValueError) as exc:
+        extract_archive(
+            normalized_archive,
+            extract_root,
+            archive_kind=_archive_kind_from_path(normalized_archive),
+        )
+    except BootstrapError as exc:
         raise BackendAcquisitionError(f"failed to unpack prebuilt archive '{normalized_archive}': {exc}") from exc
 
     candidate_root = _find_archive_backend_root(extract_root)
@@ -529,6 +533,8 @@ def _acquire_from_source_build(
 
 
 def _acquire_from_remote_prebuilt(paths: HostStatePaths, asset: LlamaCppPrebuiltAsset) -> HostBackendInstallation:
+    if asset.checksum is None:
+        raise BackendAcquisitionError(f"no pinned checksum is configured for prebuilt asset '{asset.url}'")
     workspace_root = paths.backend_workspace_dir(PRIMARY_BACKEND)
     extract_root = paths.backend_extract_dir(PRIMARY_BACKEND)
     _reset_backend_workspace(workspace_root)
@@ -566,6 +572,10 @@ def _acquire_from_remote_source(
     *,
     jobs: int | None,
 ) -> HostBackendInstallation:
+    if LLAMA_CPP_BOOTSTRAP_MANIFEST.source_checksum is None:
+        raise BackendAcquisitionError(
+            f"no pinned checksum is configured for source archive '{LLAMA_CPP_BOOTSTRAP_MANIFEST.source_url}'"
+        )
     workspace_root = paths.backend_workspace_dir(PRIMARY_BACKEND)
     _reset_backend_workspace(workspace_root)
     archive_path = workspace_root / f"llama.cpp-{LLAMA_CPP_BOOTSTRAP_MANIFEST.version}.tar.gz"
@@ -623,6 +633,17 @@ def _find_source_tree_root(extract_root: Path) -> Path | None:
         if (candidate / "CMakeLists.txt").exists():
             return candidate
     return None
+
+
+def _archive_kind_from_path(archive_path: Path) -> str:
+    archive_name = archive_path.name.lower()
+    if archive_name.endswith(".zip"):
+        return "zip"
+    if archive_name.endswith(".tar.gz") or archive_name.endswith(".tgz"):
+        return "tar.gz"
+    raise BackendAcquisitionError(
+        f"unsupported archive format for '{archive_path}'; expected .zip, .tar.gz, or .tgz"
+    )
 
 
 def _ensure_source_build_toolchain() -> None:

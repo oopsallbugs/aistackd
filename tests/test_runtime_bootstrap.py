@@ -12,7 +12,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aistackd.runtime.backends import acquire_managed_llama_cpp_installation, plan_llama_cpp_acquisition
-from aistackd.runtime.bootstrap import BootstrapToolSpec, install_tool, resolve_tool_binary
+from aistackd.runtime.bootstrap import (
+    BOOTSTRAP_TOOL_SPECS,
+    LLAMA_CPP_BOOTSTRAP_MANIFEST,
+    BootstrapError,
+    BootstrapToolSpec,
+    extract_archive,
+    install_tool,
+    resolve_tool_binary,
+)
 from aistackd.runtime.hardware import CURRENT_HARDWARE_PROFILE_SCHEMA_VERSION, HardwareProfile
 
 
@@ -89,7 +97,7 @@ class RemoteBackendBootstrapTests(unittest.TestCase):
                 {
                     "url": "https://example.invalid/llama.zip",
                     "archive_kind": "zip",
-                    "checksum": None,
+                    "checksum": LLAMA_CPP_BOOTSTRAP_MANIFEST.prebuilt_assets[0].checksum,
                 },
             )()
 
@@ -142,9 +150,29 @@ class RemoteBackendBootstrapTests(unittest.TestCase):
             self.assertEqual(captured_env["HSA_OVERRIDE_GFX_VERSION"], "11.0.0")
             self.assertTrue(Path(result.installation.server_binary).exists())
 
+    def test_extract_archive_rejects_tar_path_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive_path = Path(tmpdir) / "malicious.tar.gz"
+            destination = Path(tmpdir) / "extract"
+
+            with tarfile.open(archive_path, "w:gz") as handle:
+                payload = b"escape\n"
+                member = tarfile.TarInfo(name="../escape.txt")
+                member.size = len(payload)
+                handle.addfile(member, io.BytesIO(payload))
+
+            with self.assertRaisesRegex(BootstrapError, "outside the destination"):
+                extract_archive(archive_path, destination, archive_kind="tar.gz")
+
+            self.assertFalse((Path(tmpdir) / "escape.txt").exists())
+
 
 def _fake_tool_download(url: str, destination: Path) -> str:
     destination.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    if "llmfit" in url:
+        return BOOTSTRAP_TOOL_SPECS["llmfit"].checksum or "tool-checksum"
+    if "hf.co" in url:
+        return BOOTSTRAP_TOOL_SPECS["hf"].checksum or "tool-checksum"
     return "tool-checksum"
 
 
@@ -183,7 +211,7 @@ def _fake_backend_zip_download(url: str, destination: Path) -> str:
     with zipfile.ZipFile(destination, "w") as handle:
         handle.writestr("llama.cpp/bin/llama-server", "#!/bin/sh\nexit 0\n")
         handle.writestr("llama.cpp/bin/llama-cli", "#!/bin/sh\nexit 0\n")
-    return "zip-checksum"
+    return LLAMA_CPP_BOOTSTRAP_MANIFEST.prebuilt_assets[0].checksum or "zip-checksum"
 
 
 def _fake_backend_source_download(url: str, destination: Path) -> str:
@@ -192,7 +220,7 @@ def _fake_backend_source_download(url: str, destination: Path) -> str:
         cmake_info = tarfile.TarInfo(name="llama.cpp-source/CMakeLists.txt")
         cmake_info.size = len(cmake_contents)
         handle.addfile(cmake_info, io.BytesIO(cmake_contents))
-    return "source-checksum"
+    return LLAMA_CPP_BOOTSTRAP_MANIFEST.source_checksum or "source-checksum"
 
 
 def _fake_backend_subprocess_run(

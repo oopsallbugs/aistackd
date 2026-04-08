@@ -20,6 +20,7 @@ from aistackd.state.host import (
     HostStateError,
     HostStateStore,
     StoredResponseState,
+    validate_response_state_id,
 )
 
 CHAT_COMPLETIONS_ENDPOINT = "/v1/chat/completions"
@@ -994,11 +995,18 @@ def _load_previous_response_state(
             HTTPStatus.BAD_REQUEST,
             "previous_response_id is not available for this control-plane path",
         )
-    state = response_state_cache.load(previous_response_id.strip())
+    try:
+        normalized_previous_response_id = validate_response_state_id(previous_response_id)
+    except HostStateError as exc:
+        raise ResponsesProxyError(
+            HTTPStatus.BAD_REQUEST,
+            f"invalid previous_response_id: {exc}",
+        ) from exc
+    state = response_state_cache.load(normalized_previous_response_id)
     if state is None:
         raise ResponsesProxyError(
             HTTPStatus.BAD_REQUEST,
-            f"unknown previous_response_id '{previous_response_id.strip()}'; it may have expired, been pruned, or come from a different host instance",
+            f"unknown previous_response_id '{normalized_previous_response_id}'; it may have expired, been pruned, or come from a different host instance",
         )
     return state
 

@@ -569,6 +569,30 @@ class ControlPlaneResponsesTests(unittest.TestCase):
             self.assertEqual(excinfo.exception.status.value, 400)
             self.assertIn("may have expired, been pruned, or come from a different host instance", excinfo.exception.message)
 
+    def test_proxy_responses_request_rejects_invalid_previous_response_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir), backend_port=8011)
+
+            with self.assertRaises(ResponsesProxyError) as excinfo:
+                proxy_responses_request(
+                    store,
+                    HostServiceConfig(),
+                    {
+                        "previous_response_id": "../runtime",
+                        "input": [
+                            {
+                                "type": "function_call_output",
+                                "call_id": "call_123",
+                                "output": {"ok": True},
+                            }
+                        ],
+                    },
+                    response_state_cache=ResponsesStateCache(store),
+                )
+
+            self.assertEqual(excinfo.exception.status.value, 400)
+            self.assertIn("invalid previous_response_id", excinfo.exception.message)
+
     def test_open_responses_stream_translates_backend_sse_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir), backend_port=8011)

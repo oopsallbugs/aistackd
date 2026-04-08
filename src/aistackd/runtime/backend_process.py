@@ -12,7 +12,7 @@ from pathlib import Path
 
 from aistackd.models.sources import PRIMARY_BACKEND
 from aistackd.runtime.host import HostServiceConfig
-from aistackd.state.host import HostBackendProcess, HostStateStore
+from aistackd.state.host import HostBackendProcess, HostStateStore, read_pid_start_time_ticks
 
 DEFAULT_BACKEND_STARTUP_GRACE_SECONDS = 0.05
 DEFAULT_BACKEND_STOP_TIMEOUT_SECONDS = 1.0
@@ -200,6 +200,7 @@ def launch_managed_backend_process(
         except OSError as exc:
             raise BackendProcessError(f"failed to launch backend process: {exc}") from exc
 
+    pid_start_time_ticks = read_pid_start_time_ticks(process.pid)
     starting_record = HostBackendProcess(
         backend=plan.backend,
         status="starting",
@@ -222,6 +223,7 @@ def launch_managed_backend_process(
         no_kv_offload=plan.no_kv_offload,
         no_op_offload=plan.no_op_offload,
         cache_ram=plan.cache_ram,
+        pid_start_time_ticks=pid_start_time_ticks,
     )
     _save_backend_process_if_current(store, starting_record, expected_pid=process.pid)
 
@@ -250,6 +252,7 @@ def launch_managed_backend_process(
             no_kv_offload=plan.no_kv_offload,
             no_op_offload=plan.no_op_offload,
             cache_ram=plan.cache_ram,
+            pid_start_time_ticks=pid_start_time_ticks,
             stopped_at=_timestamp_now(),
             exit_code=exit_code,
         )
@@ -280,6 +283,7 @@ def launch_managed_backend_process(
         no_kv_offload=plan.no_kv_offload,
         no_op_offload=plan.no_op_offload,
         cache_ram=plan.cache_ram,
+        pid_start_time_ticks=pid_start_time_ticks,
     )
     _save_backend_process_if_current(store, running_record, expected_pid=process.pid)
     return RunningBackendProcess(plan=plan, record=running_record, process=process)

@@ -131,7 +131,10 @@ class ControlPlaneProcessRuntimeTests(unittest.TestCase):
                 )
             )
 
-            with patch("aistackd.runtime.control_plane_process._terminate_pid", return_value=-15) as terminate_mock:
+            with (
+                patch("aistackd.state.host._pid_exists", return_value=True),
+                patch("aistackd.runtime.control_plane_process._terminate_pid", return_value=-15) as terminate_mock,
+            ):
                 stopped_record = stop_current_control_plane_process(store)
 
             self.assertIsNotNone(stopped_record)

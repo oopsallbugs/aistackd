@@ -118,12 +118,14 @@ BOOTSTRAP_TOOL_SPECS: Final[dict[str, BootstrapToolSpec]] = {
         installer_url="https://llmfit.axjns.dev/install.sh",
         installer_args=("--local",),
         version_command=("--version",),
+        checksum="300df90e4c9dd40b47b06742a1066eb9807117aaefba1cb017679a27420f0ca1",
     ),
     "hf": BootstrapToolSpec(
         name="hf",
         installer_url="https://hf.co/cli/install.sh",
         installer_args=(),
         version_command=("version",),
+        checksum="fb90b8fc0c3edbc74d4661115c3b95cb4e1e7219e15562d68813ec93fe6d7230",
         persistent_home=True,
     ),
 }
@@ -131,7 +133,7 @@ BOOTSTRAP_TOOL_SPECS: Final[dict[str, BootstrapToolSpec]] = {
 LLAMA_CPP_BOOTSTRAP_MANIFEST: Final[LlamaCppBootstrapManifest] = LlamaCppBootstrapManifest(
     version=LLAMA_CPP_BOOTSTRAP_VERSION,
     source_url=f"https://github.com/ggml-org/llama.cpp/archive/refs/tags/{LLAMA_CPP_BOOTSTRAP_VERSION}.tar.gz",
-    source_checksum=None,
+    source_checksum="f8920035e207f6b2c7e939b783d584595bb270ca03fc3ad43505be944c175f14",
     prebuilt_assets=(
         LlamaCppPrebuiltAsset(
             os_name="linux",
@@ -142,6 +144,7 @@ LLAMA_CPP_BOOTSTRAP_MANIFEST: Final[LlamaCppBootstrapManifest] = LlamaCppBootstr
                 f"{LLAMA_CPP_BOOTSTRAP_VERSION}/llama-{LLAMA_CPP_BOOTSTRAP_VERSION}-bin-ubuntu-x64.zip"
             ),
             archive_kind="zip",
+            checksum="bfd891ae48c4b7a1754379d9b5fcac2f79924efd17a67e1dbfd0bc28f12c2388",
         ),
     ),
 )
@@ -259,6 +262,9 @@ def install_tool(
     except KeyError as exc:
         raise BootstrapError(f"unknown bootstrap tool '{tool_name}'") from exc
 
+    if spec.checksum is None:
+        raise BootstrapError(f"{tool_name} bootstrap installer must define a pinned checksum")
+
     final_bin_dir = user_bin_dir.expanduser().resolve()
     final_bin_dir.mkdir(parents=True, exist_ok=True)
     installer_checksum = ""
@@ -363,7 +369,7 @@ def extract_archive(archive_path: Path, destination: Path, *, archive_kind: str)
         return
     if archive_kind in {"tar.gz", "tgz"}:
         with tarfile.open(archive_path, "r:gz") as handle:
-            handle.extractall(destination)
+            _extract_tar_archive_safely(handle, destination)
         return
     raise BootstrapError(f"unsupported archive kind '{archive_kind}'")
 
@@ -457,3 +463,32 @@ def _summarize_command_output(stdout: str, stderr: str) -> str:
         return ""
     first_line = combined.splitlines()[0].strip()
     return first_line[:240]
+
+
+def _extract_tar_archive_safely(handle: tarfile.TarFile, destination: Path) -> None:
+    root = destination.resolve()
+    members: list[tarfile.TarInfo] = []
+    for member in handle.getmembers():
+        if member.issym() or member.islnk():
+            raise BootstrapError(f"tar archive '{handle.name}' contains unsupported link entry '{member.name}'")
+        if member.isdev() or member.isfifo():
+            raise BootstrapError(f"tar archive '{handle.name}' contains unsupported special entry '{member.name}'")
+        _validate_tar_member_path(root, member.name, archive_name=str(handle.name))
+        members.append(member)
+    handle.extractall(root, members=members)
+
+
+def _validate_tar_member_path(root: Path, member_name: str, *, archive_name: str) -> None:
+    normalized_name = member_name.strip()
+    if not normalized_name:
+        raise BootstrapError(f"tar archive '{archive_name}' contains an empty member path")
+    member_path = Path(normalized_name)
+    if member_path.is_absolute():
+        raise BootstrapError(f"tar archive '{archive_name}' contains an absolute member path '{member_name}'")
+    resolved_target = (root / member_path).resolve()
+    try:
+        resolved_target.relative_to(root)
+    except ValueError as exc:
+        raise BootstrapError(
+            f"tar archive '{archive_name}' contains a member path outside the destination: '{member_name}'"
+        ) from exc
