@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
+import aistackd.state.host as host_state
 from aistackd.control_plane import create_control_plane_server
 from aistackd.models.sources import local_source_model
 from aistackd.runtime.backends import adopt_backend_installation, discover_llama_cpp_installation
@@ -823,6 +824,109 @@ class ControlPlaneTests(unittest.TestCase):
                         server.shutdown()
                         server.server_close()
                         thread.join(timeout=1)
+
+    def test_control_plane_admin_install_serializes_concurrent_model_mutations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            store = HostStateStore(project_root)
+            first_gguf_path = _create_fake_gguf(project_root, "Concurrent-One-Q4_K_M.gguf")
+            second_gguf_path = _create_fake_gguf(project_root, "Concurrent-Two-Q4_K_M.gguf")
+            original_load_json_object = host_state.load_json_object
+            entered_first_inventory_read = threading.Event()
+            release_first_inventory_read = threading.Event()
+            second_inventory_read_started = threading.Event()
+            observed_reads = 0
+            observed_reads_lock = threading.Lock()
+            responses: list[dict[str, object]] = []
+            errors: list[Exception] = []
+
+            def controlled_load_json_object(path: Path) -> dict[str, object]:
+                nonlocal observed_reads
+                if path == store.paths.installed_models_path:
+                    with observed_reads_lock:
+                        observed_reads += 1
+                        current_read = observed_reads
+                    if current_read == 1:
+                        entered_first_inventory_read.set()
+                        if not release_first_inventory_read.wait(timeout=2):
+                            raise AssertionError("timed out waiting to release first inventory read")
+                    elif current_read == 2:
+                        second_inventory_read_started.set()
+                return original_load_json_object(path)
+
+            def install_model_via_admin(gguf_path: Path) -> None:
+                try:
+                    payload = _request_json(
+                        f"http://127.0.0.1:{port}/admin/models/install",
+                        token="test-key",
+                        method="POST",
+                        payload={
+                            "gguf_path": str(gguf_path),
+                            "activate": False,
+                        },
+                    )
+                    responses.append(payload)
+                except Exception as exc:  # pragma: no cover - surfaced below
+                    errors.append(exc)
+
+            port = 0
+            first_thread: threading.Thread | None = None
+            second_thread: threading.Thread | None = None
+            with (
+                patch.dict(os.environ, {"AISTACKD_API_KEY": "test-key"}, clear=False),
+                patch("aistackd.state.host.load_json_object", side_effect=controlled_load_json_object),
+                patch("aistackd.control_plane.admin.resolve_source_model", return_value=None),
+            ):
+                server = create_control_plane_server(
+                    project_root,
+                    HostServiceConfig(bind_host="127.0.0.1", port=0, api_key_env="AISTACKD_API_KEY"),
+                )
+
+                try:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    time.sleep(0.02)
+                    port = server.server_address[1]
+
+                    first_thread = threading.Thread(target=install_model_via_admin, args=(first_gguf_path,))
+                    second_thread = threading.Thread(target=install_model_via_admin, args=(second_gguf_path,))
+                    first_thread.start()
+                    self.assertTrue(entered_first_inventory_read.wait(timeout=2))
+
+                    second_thread.start()
+                    self.assertFalse(second_inventory_read_started.wait(timeout=0.3))
+
+                    release_first_inventory_read.set()
+                    self.assertTrue(second_inventory_read_started.wait(timeout=2))
+
+                    first_thread.join(timeout=2)
+                    second_thread.join(timeout=2)
+
+                    runtime_payload = _request_json(
+                        f"http://127.0.0.1:{port}/admin/runtime",
+                        token="test-key",
+                    )
+                finally:
+                    release_first_inventory_read.set()
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=1)
+
+            assert first_thread is not None
+            assert second_thread is not None
+            self.assertFalse(first_thread.is_alive())
+            self.assertFalse(second_thread.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(len(responses), 2)
+            self.assertEqual(
+                {response["model"]["model"] for response in responses},
+                {"concurrent-one-q4-k-m", "concurrent-two-q4-k-m"},
+            )
+            self.assertEqual(len(runtime_payload["runtime"]["installed_models"]), 2)
+            self.assertEqual(
+                {record.model for record in store.list_installed_models()},
+                {"concurrent-one-q4-k-m", "concurrent-two-q4-k-m"},
+            )
 
 
 def _request_json(
