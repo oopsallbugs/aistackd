@@ -155,6 +155,8 @@ PYTHONPATH=src python -m aistackd host tune reset
 
 For the optional pass-through knobs, `host tune set` also supports per-field clear flags such as `--clear-backend-batch-size`, `--clear-backend-ubatch-size`, `--clear-backend-gpu-layers`, `--clear-backend-fit-target`, `--clear-backend-kv-offload`, `--clear-backend-op-offload`, and `--clear-backend-cache-ram`.
 
+For a fuller operator guide, see [docs/host-tuning.md](docs/host-tuning.md).
+
 The same tuning flags are also accepted by `host start`, `host restart`, and `host serve`, so you can do one-off experiments without changing the persisted baseline:
 
 ```bash

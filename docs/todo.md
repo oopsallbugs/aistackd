@@ -17,7 +17,6 @@ Snapshot of the near-term follow-up work after the host tuning and docs pass on 
 
 ## Docs
 
-- [ ] Add a dedicated `host tune` section to the operator docs beyond the README quick examples.
 - [ ] Keep the GPU OOM checklist updated as live tuning guidance changes.
 - [ ] Document the important state files under `.aistackd/host/` for debugging and manual inspection.
 
