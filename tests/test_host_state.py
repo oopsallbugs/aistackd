@@ -86,13 +86,42 @@ class HostStateTests(unittest.TestCase):
     def test_persisted_backend_tuning_round_trips_and_survives_activation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = HostStateStore(Path(tmpdir))
-            store.save_persisted_backend_tuning(context_size=16384, predict_limit=2048, parallel=2)
+            store.save_persisted_backend_tuning(
+                context_size=16384,
+                predict_limit=2048,
+                parallel=2,
+                batch_size=512,
+                ubatch_size=256,
+                gpu_layers=0,
+                fit_target=0,
+                no_kv_offload=False,
+                no_op_offload=True,
+                cache_ram=0,
+            )
 
-            context_size, predict_limit, parallel = store.load_persisted_backend_tuning()
+            (
+                context_size,
+                predict_limit,
+                parallel,
+                batch_size,
+                ubatch_size,
+                gpu_layers,
+                fit_target,
+                no_kv_offload,
+                no_op_offload,
+                cache_ram,
+            ) = store.load_persisted_backend_tuning()
 
             self.assertEqual(context_size, 16384)
             self.assertEqual(predict_limit, 2048)
             self.assertEqual(parallel, 2)
+            self.assertEqual(batch_size, 512)
+            self.assertEqual(ubatch_size, 256)
+            self.assertEqual(gpu_layers, 0)
+            self.assertEqual(fit_target, 0)
+            self.assertFalse(no_kv_offload)
+            self.assertTrue(no_op_offload)
+            self.assertEqual(cache_ram, 0)
 
             source_model = local_source_model("local-model", source="llmfit")
             artifact_path = _create_fake_gguf(Path(tmpdir), "Local-Model.Q4_K_M.gguf")
@@ -110,6 +139,13 @@ class HostStateTests(unittest.TestCase):
             self.assertEqual(runtime_state.configured_backend_context_size, 16384)
             self.assertEqual(runtime_state.configured_backend_predict_limit, 2048)
             self.assertEqual(runtime_state.configured_backend_parallel, 2)
+            self.assertEqual(runtime_state.configured_backend_batch_size, 512)
+            self.assertEqual(runtime_state.configured_backend_ubatch_size, 256)
+            self.assertEqual(runtime_state.configured_backend_gpu_layers, 0)
+            self.assertEqual(runtime_state.configured_backend_fit_target, 0)
+            self.assertFalse(runtime_state.configured_backend_no_kv_offload)
+            self.assertTrue(runtime_state.configured_backend_no_op_offload)
+            self.assertEqual(runtime_state.configured_backend_cache_ram, 0)
 
     def test_backend_installation_round_trips_through_host_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

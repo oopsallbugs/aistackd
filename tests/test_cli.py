@@ -49,6 +49,8 @@ class CLITests(unittest.TestCase):
             payload = json.loads(stdout)
             self.assertEqual(payload["backend_context_size"], 24576)
             self.assertEqual(payload["backend_predict_limit"], 4096)
+            self.assertEqual(payload["backend_parallel"], 1)
+            self.assertNotIn("backend_batch_size", payload)
             self.assertEqual(payload["source"], "default")
 
     def test_host_tune_set_and_reset_round_trip(self) -> None:
@@ -66,6 +68,18 @@ class CLITests(unittest.TestCase):
                     "2048",
                     "--backend-parallel",
                     "2",
+                    "--backend-batch-size",
+                    "512",
+                    "--backend-ubatch-size",
+                    "256",
+                    "--backend-gpu-layers",
+                    "0",
+                    "--backend-fit-target",
+                    "0",
+                    "--backend-kv-offload",
+                    "--backend-no-op-offload",
+                    "--backend-cache-ram",
+                    "0",
                     "--format",
                     "json",
                 ]
@@ -77,6 +91,13 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["backend_context_size"], 16384)
             self.assertEqual(payload["backend_predict_limit"], 2048)
             self.assertEqual(payload["backend_parallel"], 2)
+            self.assertEqual(payload["backend_batch_size"], 512)
+            self.assertEqual(payload["backend_ubatch_size"], 256)
+            self.assertEqual(payload["backend_gpu_layers"], 0)
+            self.assertEqual(payload["backend_fit_target"], 0)
+            self.assertFalse(payload["backend_no_kv_offload"])
+            self.assertTrue(payload["backend_no_op_offload"])
+            self.assertEqual(payload["backend_cache_ram"], 0)
             self.assertEqual(payload["source"], "persisted")
 
             exit_code, stdout, stderr = invoke(["host", "tune", "show", "--project-root", tmpdir, "--format", "json"])
@@ -86,6 +107,14 @@ class CLITests(unittest.TestCase):
             payload = json.loads(stdout)
             self.assertEqual(payload["backend_context_size"], 16384)
             self.assertEqual(payload["backend_predict_limit"], 2048)
+            self.assertEqual(payload["backend_parallel"], 2)
+            self.assertEqual(payload["backend_batch_size"], 512)
+            self.assertEqual(payload["backend_ubatch_size"], 256)
+            self.assertEqual(payload["backend_gpu_layers"], 0)
+            self.assertEqual(payload["backend_fit_target"], 0)
+            self.assertFalse(payload["backend_no_kv_offload"])
+            self.assertTrue(payload["backend_no_op_offload"])
+            self.assertEqual(payload["backend_cache_ram"], 0)
 
             exit_code, stdout, stderr = invoke(["host", "tune", "reset", "--project-root", tmpdir, "--format", "json"])
 
@@ -94,11 +123,25 @@ class CLITests(unittest.TestCase):
             payload = json.loads(stdout)
             self.assertEqual(payload["backend_context_size"], 24576)
             self.assertEqual(payload["backend_predict_limit"], 4096)
+            self.assertEqual(payload["backend_parallel"], 1)
+            self.assertNotIn("backend_batch_size", payload)
+            self.assertNotIn("backend_no_kv_offload", payload)
             self.assertEqual(payload["source"], "default")
 
     def test_host_start_uses_persisted_tuning_when_flags_are_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(context_size=16384, predict_limit=2048, parallel=2)
+            HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(
+                context_size=16384,
+                predict_limit=2048,
+                parallel=2,
+                batch_size=512,
+                ubatch_size=256,
+                gpu_layers=0,
+                fit_target=0,
+                no_kv_offload=False,
+                no_op_offload=True,
+                cache_ram=0,
+            )
             captured: dict[str, HostServiceConfig] = {}
             running_process = SimpleNamespace(
                 record=SimpleNamespace(
@@ -128,10 +171,28 @@ class CLITests(unittest.TestCase):
             self.assertEqual(captured["service"].backend_context_size, 16384)
             self.assertEqual(captured["service"].backend_predict_limit, 2048)
             self.assertEqual(captured["service"].backend_parallel, 2)
+            self.assertEqual(captured["service"].backend_batch_size, 512)
+            self.assertEqual(captured["service"].backend_ubatch_size, 256)
+            self.assertEqual(captured["service"].backend_gpu_layers, 0)
+            self.assertEqual(captured["service"].backend_fit_target, 0)
+            self.assertFalse(captured["service"].backend_no_kv_offload)
+            self.assertTrue(captured["service"].backend_no_op_offload)
+            self.assertEqual(captured["service"].backend_cache_ram, 0)
 
     def test_host_start_flags_override_persisted_tuning(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(context_size=16384, predict_limit=2048, parallel=2)
+            HostStateStore(Path(tmpdir)).save_persisted_backend_tuning(
+                context_size=16384,
+                predict_limit=2048,
+                parallel=2,
+                batch_size=512,
+                ubatch_size=256,
+                gpu_layers=12,
+                fit_target=1,
+                no_kv_offload=True,
+                no_op_offload=True,
+                cache_ram=1,
+            )
             captured: dict[str, HostServiceConfig] = {}
             running_process = SimpleNamespace(
                 record=SimpleNamespace(
@@ -166,6 +227,18 @@ class CLITests(unittest.TestCase):
                         "4096",
                         "--backend-parallel",
                         "3",
+                        "--backend-batch-size",
+                        "1024",
+                        "--backend-ubatch-size",
+                        "128",
+                        "--backend-gpu-layers",
+                        "0",
+                        "--backend-fit-target",
+                        "0",
+                        "--backend-kv-offload",
+                        "--backend-op-offload",
+                        "--backend-cache-ram",
+                        "0",
                         "--format",
                         "json",
                     ]
@@ -176,6 +249,13 @@ class CLITests(unittest.TestCase):
             self.assertEqual(captured["service"].backend_context_size, 24576)
             self.assertEqual(captured["service"].backend_predict_limit, 4096)
             self.assertEqual(captured["service"].backend_parallel, 3)
+            self.assertEqual(captured["service"].backend_batch_size, 1024)
+            self.assertEqual(captured["service"].backend_ubatch_size, 128)
+            self.assertEqual(captured["service"].backend_gpu_layers, 0)
+            self.assertEqual(captured["service"].backend_fit_target, 0)
+            self.assertFalse(captured["service"].backend_no_kv_offload)
+            self.assertFalse(captured["service"].backend_no_op_offload)
+            self.assertEqual(captured["service"].backend_cache_ram, 0)
 
     def test_host_logs_backend_prints_requested_tail(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

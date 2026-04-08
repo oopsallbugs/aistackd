@@ -58,11 +58,15 @@ PYTHONPATH=src python -m aistackd host acquire-backend --prebuilt-archive /path/
 PYTHONPATH=src python -m aistackd host acquire-backend --backend-root /path/to/llama.cpp
 PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host validate
 PYTHONPATH=src python -m aistackd host
+PYTHONPATH=src python -m aistackd host tune show
+PYTHONPATH=src python -m aistackd host tune set --backend-context-size 16384 --backend-predict-limit 2048 --backend-parallel 2 --backend-batch-size 512 --backend-ubatch-size 256
 PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host start
 PYTHONPATH=src python -m aistackd host stop
 PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host stop --service
 PYTHONPATH=src python -m aistackd host restart
 PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host restart --service
+PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host restart --service --backend-context-size 16384 --backend-predict-limit 2048 --backend-batch-size 512 --backend-ubatch-size 256 --backend-gpu-layers 0
+PYTHONPATH=src python -m aistackd host tune reset
 PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host serve
 curl -s http://127.0.0.1:8000/v1/responses \
   -H "Authorization: Bearer test-key" \
@@ -104,9 +108,11 @@ When using the current `llmfit` TUI for `models browse`, treat the `Inst` column
 PYTHONPATH=src python -m aistackd models install --hf-url "<huggingface-gguf-url>"
 ```
 
+See [docs/gpu-oom-debug-checklist.md](docs/gpu-oom-debug-checklist.md) for a practical host-tuning loop when a model fails to load or the GPU runs out of memory.
+
 ## Current Scope
 
-The repo is still intentionally thin overall. Function-tool transport is implemented on `POST /v1/responses` for both non-streaming and streaming requests, including follow-up `function_call_output` turns through `previous_response_id`, with persisted host-side response state so tool loops can survive control-plane restarts within the configured retention window. Tool calling is client-managed only: the host transports function calls but does not own or advertise executable repo tools. Synced `tools/` scripts are operator utilities, not model-executed server tools. Non-function tools and broader orchestration are still not implemented. Repo-owned operator tools are part of the baseline alongside profile-scoped target model selection, live `llmfit` search/recommend, native `llmfit` TUI browse, managed import of `llmfit`-downloaded GGUFs, direct noninteractive `llmfit` downloads into managed host state with optional quant/budget controls, a managed host-side model store, explicit local GGUF import, common-root local GGUF discovery, explicit Hugging Face file-URL install when `llmfit` pulling is insufficient, bootstrap-managed `llmfit` and `hf` installs into a user bin directory, `llmfit`-backed hardware detection, remote `llama.cpp` acquisition with pinned prebuilt-first source fallback into repo-managed host state, local host validation, managed `llama-server` process launch plus explicit backend stop/restart controls, managed background control-plane service start/stop/restart, persisted process state with stale-receipt reconciliation after crashes or reboots for both backend and control plane, authenticated `GET /health`, `GET /v1/models`, Responses control-plane endpoints with streaming and non-streaming text generation support, authenticated admin endpoints for runtime inspection plus model search, recommendation, install, and activate, and client-side remote profile validation, smoke, local tool-loop demo, and remote model administration are now implemented, alongside active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, OpenHands CLI/headless config plus microagent sync, baseline skill and tool sync, and ownership manifests. The current roadmap is:
+The repo is still intentionally thin overall. Function-tool transport is implemented on `POST /v1/responses` for both non-streaming and streaming requests, including follow-up `function_call_output` turns through `previous_response_id`, with persisted host-side response state so tool loops can survive control-plane restarts within the configured retention window. Tool calling is client-managed only: the host transports function calls but does not own or advertise executable repo tools. Synced `tools/` scripts are operator utilities, not model-executed server tools. Non-function tools and broader orchestration are still not implemented. Repo-owned operator tools are part of the baseline alongside profile-scoped target model selection, live `llmfit` search/recommend, native `llmfit` TUI browse, managed import of `llmfit`-downloaded GGUFs, direct noninteractive `llmfit` downloads into managed host state with optional quant/budget controls, a managed host-side model store, explicit local GGUF import, common-root local GGUF discovery, explicit Hugging Face file-URL install when `llmfit` pulling is insufficient, bootstrap-managed `llmfit` and `hf` installs into a user bin directory, `llmfit`-backed hardware detection, remote `llama.cpp` acquisition with pinned prebuilt-first source fallback into repo-managed host state, local host validation, persisted backend tuning defaults for context/predict/parallel plus batch/ubatch/GPU/offload/cache controls, managed `llama-server` process launch plus explicit backend stop/restart controls, managed background control-plane service start/stop/restart, persisted process state with stale-receipt reconciliation after crashes or reboots for both backend and control plane, authenticated `GET /health`, `GET /v1/models`, Responses control-plane endpoints with streaming and non-streaming text generation support, authenticated admin endpoints for runtime inspection plus model search, recommendation, install, and activate, and client-side remote profile validation, smoke, local tool-loop demo, and remote model administration are now implemented, alongside active-profile-derived client config, sync planning, OpenCode project-local config writes, Codex project-local provider wiring, OpenHands CLI/headless config plus microagent sync, baseline skill and tool sync, and ownership manifests. The current roadmap is:
 
 1. broader frontend polish after the OpenHands adapter
 
@@ -126,14 +132,33 @@ The current default managed backend limits are tuned from that live run:
 
 - `backend_context_size = 24576`
 - `backend_predict_limit = 4096`
+- `backend_parallel = 1`
 
-You can override them when restarting the host:
+The advanced backend knobs are intentionally unset by default and are only passed through to `llama-server` when you persist or override them:
+
+- `backend_batch_size`
+- `backend_ubatch_size`
+- `backend_gpu_layers`
+- `backend_fit_target`
+- `--backend-no-kv-offload` / `--backend-kv-offload`
+- `--backend-no-op-offload` / `--backend-op-offload`
+- `backend_cache_ram`
+
+Persisted host tuning is now a first-class workflow:
 
 ```bash
-PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host restart --service --backend-context-size 16384 --backend-predict-limit 2048
+PYTHONPATH=src python -m aistackd host tune show
+PYTHONPATH=src python -m aistackd host tune set --backend-context-size 16384 --backend-predict-limit 2048 --backend-parallel 2 --backend-batch-size 512 --backend-ubatch-size 256
+PYTHONPATH=src python -m aistackd host tune reset
 ```
 
-`aistackd host`, `/health`, and `/admin/runtime` now surface the active backend limits so tuning is visible instead of hidden in the raw backend command.
+The same tuning flags are also accepted by `host start`, `host restart`, and `host serve`, so you can do one-off experiments without changing the persisted baseline:
+
+```bash
+PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host restart --service --backend-context-size 16384 --backend-predict-limit 2048 --backend-batch-size 512 --backend-ubatch-size 256 --backend-gpu-layers 0
+```
+
+`aistackd host` now surfaces both the persisted `configured_backend_*` values and the live `backend_*` values captured from the managed backend process. `/admin/runtime` surfaces the same tuning state in JSON, `/health` still reports the active context/predict limits, and `aistackd host serve` prints the launched backend command for direct inspection.
 
 `aistackd doctor ready --frontend ...` now also surfaces the synced frontend config path, the recommended launch command, and the API-key export hint for Codex, OpenCode, and OpenHands.
 

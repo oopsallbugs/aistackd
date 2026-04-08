@@ -247,16 +247,16 @@ class HostBackendProcess:
             server_binary=_require_string(payload, "server_binary"),
             log_path=_require_string(payload, "log_path"),
             started_at=_require_string(payload, "started_at"),
-            context_size=_optional_int(payload, "context_size") or _command_flag_int(command, "--ctx-size"),
-            predict_limit=_optional_int(payload, "predict_limit") or _command_flag_int(command, "--predict"),
-            parallel=_optional_int(payload, "parallel") or _command_flag_int(command, "--parallel"),
-            batch_size=_optional_int(payload, "batch_size") or _command_flag_int(command, "--batch-size"),
-            ubatch_size=_optional_int(payload, "ubatch_size") or _command_flag_int(command, "--ubatch-size"),
-            gpu_layers=_optional_int(payload, "gpu_layers") or _command_flag_int(command, "--gpu-layers"),
-            fit_target=_optional_int(payload, "fit_target") or _command_flag_int(command, "--fit-target"),
-            no_kv_offload=_optional_bool(payload, "no_kv_offload") or _command_has_flag(command, "--no-kv-offload"),
-            no_op_offload=_optional_bool(payload, "no_op_offload") or _command_has_flag(command, "--no-op-offload"),
-            cache_ram=_optional_int(payload, "cache_ram") or _command_flag_int(command, "--cache-ram"),
+            context_size=_coalesce(_optional_int(payload, "context_size"), _command_flag_int(command, "--ctx-size")),
+            predict_limit=_coalesce(_optional_int(payload, "predict_limit"), _command_flag_int(command, "--predict")),
+            parallel=_coalesce(_optional_int(payload, "parallel"), _command_flag_int(command, "--parallel")),
+            batch_size=_coalesce(_optional_int(payload, "batch_size"), _command_flag_int(command, "--batch-size")),
+            ubatch_size=_coalesce(_optional_int(payload, "ubatch_size"), _command_flag_int(command, "--ubatch-size")),
+            gpu_layers=_coalesce(_optional_int(payload, "gpu_layers"), _command_flag_int(command, "--gpu-layers")),
+            fit_target=_coalesce(_optional_int(payload, "fit_target"), _command_flag_int(command, "--fit-target")),
+            no_kv_offload=_coalesce(_optional_bool(payload, "no_kv_offload"), _command_has_flag(command, "--no-kv-offload")),
+            no_op_offload=_coalesce(_optional_bool(payload, "no_op_offload"), _command_has_flag(command, "--no-op-offload")),
+            cache_ram=_coalesce(_optional_int(payload, "cache_ram"), _command_flag_int(command, "--cache-ram")),
             stopped_at=_optional_string(payload, "stopped_at"),
             exit_code=_optional_int(payload, "exit_code"),
         )
@@ -1089,6 +1089,15 @@ def _optional_int(payload: dict[str, object], field_name: str) -> int | None:
     return value
 
 
+def _optional_bool(payload: dict[str, object], field_name: str) -> bool | None:
+    value = payload.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise HostStateError(f"expected boolean for field '{field_name}'")
+    return value
+
+
 def _command_flag_int(command: tuple[str, ...], flag: str) -> int | None:
     try:
         index = command.index(flag)
@@ -1100,6 +1109,14 @@ def _command_flag_int(command: tuple[str, ...], flag: str) -> int | None:
         return int(command[index + 1])
     except ValueError:
         return None
+
+
+def _command_has_flag(command: tuple[str, ...], flag: str) -> bool:
+    return flag in command
+
+
+def _coalesce(value: object, fallback: object) -> object:
+    return value if value is not None else fallback
 
 
 def _require_string_tuple(payload: dict[str, object], field_name: str) -> tuple[str, ...]:

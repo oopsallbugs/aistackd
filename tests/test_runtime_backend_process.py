@@ -41,6 +41,41 @@ class BackendProcessRuntimeTests(unittest.TestCase):
             self.assertEqual(plan.predict_limit, 4096)
             self.assertEqual(plan.parallel, 1)
 
+    def test_build_backend_launch_plan_includes_optional_backend_tuning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _create_ready_host_state(Path(tmpdir))
+
+            plan = build_backend_launch_plan(
+                store,
+                HostServiceConfig(
+                    backend_batch_size=512,
+                    backend_ubatch_size=256,
+                    backend_gpu_layers=0,
+                    backend_fit_target=0,
+                    backend_no_kv_offload=False,
+                    backend_no_op_offload=True,
+                    backend_cache_ram=0,
+                ),
+            )
+
+            self.assertIn("--batch-size", plan.command)
+            self.assertIn("512", plan.command)
+            self.assertIn("--ubatch-size", plan.command)
+            self.assertIn("256", plan.command)
+            self.assertIn("--gpu-layers", plan.command)
+            self.assertIn("0", plan.command)
+            self.assertIn("--fit-target", plan.command)
+            self.assertIn("--cache-ram", plan.command)
+            self.assertIn("--no-op-offload", plan.command)
+            self.assertNotIn("--no-kv-offload", plan.command)
+            self.assertEqual(plan.batch_size, 512)
+            self.assertEqual(plan.ubatch_size, 256)
+            self.assertEqual(plan.gpu_layers, 0)
+            self.assertEqual(plan.fit_target, 0)
+            self.assertFalse(plan.no_kv_offload)
+            self.assertTrue(plan.no_op_offload)
+            self.assertEqual(plan.cache_ram, 0)
+
     def test_launch_managed_backend_process_reuses_matching_running_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir))

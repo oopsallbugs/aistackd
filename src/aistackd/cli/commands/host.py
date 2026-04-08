@@ -37,18 +37,11 @@ from aistackd.runtime.control_plane_process import (
 )
 from aistackd.runtime.hardware import LLMFIT_BINARY_NAME
 from aistackd.runtime.host import (
-    DEFAULT_BACKEND_BATCH_SIZE,
     DEFAULT_BACKEND_BIND,
-    DEFAULT_BACKEND_CACHE_RAM,
     DEFAULT_BACKEND_CONTEXT_SIZE,
-    DEFAULT_BACKEND_FIT_TARGET,
-    DEFAULT_BACKEND_GPU_LAYERS,
-    DEFAULT_BACKEND_NO_KV_OFFLOAD,
-    DEFAULT_BACKEND_NO_OP_OFFLOAD,
     DEFAULT_BACKEND_PARALLEL,
     DEFAULT_BACKEND_PREDICT_LIMIT,
     DEFAULT_BACKEND_PORT,
-    DEFAULT_BACKEND_UBATCH_SIZE,
     DEFAULT_HOST_API_KEY_ENV,
     DEFAULT_HOST_BIND,
     DEFAULT_HOST_PORT,
@@ -638,14 +631,11 @@ def handle_serve(args: argparse.Namespace) -> int:
     if result.runtime.backend_installation is not None:
         print(f"server_binary: {result.runtime.backend_installation.server_binary}")
     print(f"backend_pid: {running_process.record.pid}")
-    print(f"backend_command: {_format_command(running_process.record.command)}")
+    backend_command = getattr(running_process.record, "command", None)
+    if backend_command:
+        print(f"backend_command: {_format_command(backend_command)}")
     print(f"backend_log_path: {running_process.record.log_path}")
-    if running_process.record.context_size is not None:
-        print(f"backend_context_size: {running_process.record.context_size}")
-    if running_process.record.predict_limit is not None:
-        print(f"backend_predict_limit: {running_process.record.predict_limit}")
-    if running_process.record.parallel is not None:
-        print(f"backend_parallel: {running_process.record.parallel}")
+    _print_backend_process_tuning(running_process.record)
     print(f"control_plane_pid: {control_plane_record.pid}")
     print(f"control_plane_log_path: {control_plane_record.log_path}")
     print(f"active_model: {result.runtime.active_model}")
@@ -808,12 +798,7 @@ def handle_restart(args: argparse.Namespace) -> int:
     print(f"backend_pid: {running_process.record.pid}")
     print(f"backend_base_url: {running_process.record.base_url}")
     print(f"backend_log_path: {running_process.record.log_path}")
-    if running_process.record.context_size is not None:
-        print(f"backend_context_size: {running_process.record.context_size}")
-    if running_process.record.predict_limit is not None:
-        print(f"backend_predict_limit: {running_process.record.predict_limit}")
-    if running_process.record.parallel is not None:
-        print(f"backend_parallel: {running_process.record.parallel}")
+    _print_backend_process_tuning(running_process.record)
     print(f"active_model: {running_process.record.model}")
     return 0
 
@@ -861,85 +846,48 @@ def handle_logs(args: argparse.Namespace) -> int:
 def handle_tune_show(args: argparse.Namespace) -> int:
     """Show the persisted backend tuning defaults."""
     store = HostStateStore(args.project_root)
-    context_size, predict_limit, parallel = store.load_persisted_backend_tuning()
-    source = (
-        "persisted"
-        if context_size is not None and predict_limit is not None and parallel is not None
-        else "default"
-    )
-    resolved_context_size = context_size or DEFAULT_BACKEND_CONTEXT_SIZE
-    resolved_predict_limit = predict_limit or DEFAULT_BACKEND_PREDICT_LIMIT
-    resolved_parallel = parallel or DEFAULT_BACKEND_PARALLEL
-    payload = {
-        "backend_context_size": resolved_context_size,
-        "backend_predict_limit": resolved_predict_limit,
-        "backend_parallel": resolved_parallel,
-        "source": source,
-    }
+    persisted_tuning = _load_persisted_backend_tuning(store)
+    source = "persisted" if _has_persisted_backend_tuning(persisted_tuning) else "default"
+    payload = _backend_tuning_payload(_resolved_backend_tuning(store=store), source=source)
     if args.format == "json":
         print(json.dumps(payload, indent=2))
         return 0
 
     print("host tuning")
-    print(f"backend_context_size: {resolved_context_size}")
-    print(f"backend_predict_limit: {resolved_predict_limit}")
-    print(f"backend_parallel: {resolved_parallel}")
-    print(f"source: {source}")
+    _print_backend_tuning_payload(payload)
     return 0
 
 
 def handle_tune_set(args: argparse.Namespace) -> int:
     """Persist backend tuning defaults."""
-    if (
-        args.backend_context_size is None
-        and args.backend_predict_limit is None
-        and args.backend_parallel is None
-    ):
+    if not _tuning_arguments_supplied(args):
         return _exit_with_error("specify at least one tuning flag to persist")
 
     store = HostStateStore(args.project_root)
-    current_context_size, current_predict_limit, current_parallel = store.load_persisted_backend_tuning()
-    resolved_context_size = (
-        args.backend_context_size
-        if args.backend_context_size is not None
-        else current_context_size or DEFAULT_BACKEND_CONTEXT_SIZE
+    resolved_tuning = _resolved_backend_tuning(args=args, store=store)
+    error = _validate_backend_tuning(resolved_tuning)
+    if error is not None:
+        return _exit_with_error(error)
+
+    store.save_persisted_backend_tuning(
+        context_size=int(resolved_tuning["backend_context_size"]),
+        predict_limit=int(resolved_tuning["backend_predict_limit"]),
+        parallel=int(resolved_tuning["backend_parallel"]),
+        batch_size=_optional_tuning_int(resolved_tuning["backend_batch_size"]),
+        ubatch_size=_optional_tuning_int(resolved_tuning["backend_ubatch_size"]),
+        gpu_layers=_optional_tuning_int(resolved_tuning["backend_gpu_layers"]),
+        fit_target=_optional_tuning_int(resolved_tuning["backend_fit_target"]),
+        no_kv_offload=_optional_tuning_bool(resolved_tuning["backend_no_kv_offload"]),
+        no_op_offload=_optional_tuning_bool(resolved_tuning["backend_no_op_offload"]),
+        cache_ram=_optional_tuning_int(resolved_tuning["backend_cache_ram"]),
     )
-    resolved_predict_limit = (
-        args.backend_predict_limit
-        if args.backend_predict_limit is not None
-        else current_predict_limit or DEFAULT_BACKEND_PREDICT_LIMIT
-    )
-    resolved_parallel = (
-        args.backend_parallel
-        if args.backend_parallel is not None
-        else current_parallel or DEFAULT_BACKEND_PARALLEL
-    )
-    if resolved_context_size < 1:
-        return _exit_with_error("backend_context_size must be a positive integer")
-    if resolved_predict_limit < 1:
-        return _exit_with_error("backend_predict_limit must be a positive integer")
-    if resolved_parallel < 1:
-        return _exit_with_error("backend_parallel must be a positive integer")
-    context_size, predict_limit, parallel = store.save_persisted_backend_tuning(
-        context_size=resolved_context_size,
-        predict_limit=resolved_predict_limit,
-        parallel=resolved_parallel,
-    )
-    payload = {
-        "action": "updated",
-        "backend_context_size": context_size,
-        "backend_predict_limit": predict_limit,
-        "backend_parallel": parallel,
-        "source": "persisted",
-    }
+    payload = _backend_tuning_payload(resolved_tuning, action="updated", source="persisted")
     if args.format == "json":
         print(json.dumps(payload, indent=2))
         return 0
 
     print("updated host tuning")
-    print(f"backend_context_size: {context_size}")
-    print(f"backend_predict_limit: {predict_limit}")
-    print(f"backend_parallel: {parallel}")
+    _print_backend_tuning_payload(payload)
     return 0
 
 
@@ -947,21 +895,13 @@ def handle_tune_reset(args: argparse.Namespace) -> int:
     """Reset persisted backend tuning defaults to the documented runtime defaults."""
     store = HostStateStore(args.project_root)
     store.reset_persisted_backend_tuning()
-    payload = {
-        "action": "reset",
-        "backend_context_size": DEFAULT_BACKEND_CONTEXT_SIZE,
-        "backend_predict_limit": DEFAULT_BACKEND_PREDICT_LIMIT,
-        "backend_parallel": DEFAULT_BACKEND_PARALLEL,
-        "source": "default",
-    }
+    payload = _backend_tuning_payload(_resolved_backend_tuning(), action="reset", source="default")
     if args.format == "json":
         print(json.dumps(payload, indent=2))
         return 0
 
     print("reset host tuning")
-    print(f"backend_context_size: {DEFAULT_BACKEND_CONTEXT_SIZE}")
-    print(f"backend_predict_limit: {DEFAULT_BACKEND_PREDICT_LIMIT}")
-    print(f"backend_parallel: {DEFAULT_BACKEND_PARALLEL}")
+    _print_backend_tuning_payload(payload)
     return 0
 
 
@@ -1100,6 +1040,78 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
             f"(default: saved value or {DEFAULT_BACKEND_PARALLEL})"
         ),
     )
+    parser.add_argument(
+        "--backend-batch-size",
+        type=int,
+        default=None,
+        help="batch size for the managed llama.cpp process (default: saved value when set; otherwise llama.cpp default)",
+    )
+    parser.add_argument(
+        "--backend-ubatch-size",
+        type=int,
+        default=None,
+        help=(
+            "micro-batch size for the managed llama.cpp process "
+            "(default: saved value when set; otherwise llama.cpp default)"
+        ),
+    )
+    parser.add_argument(
+        "--backend-gpu-layers",
+        type=int,
+        default=None,
+        help=(
+            "GPU layer count for the managed llama.cpp process "
+            "(default: saved value when set; otherwise llama.cpp default)"
+        ),
+    )
+    parser.add_argument(
+        "--backend-fit-target",
+        type=int,
+        default=None,
+        help=(
+            "fit-target value for the managed llama.cpp process "
+            "(default: saved value when set; otherwise llama.cpp default)"
+        ),
+    )
+    parser.add_argument(
+        "--backend-cache-ram",
+        type=int,
+        default=None,
+        help=(
+            "cache RAM value for the managed llama.cpp process "
+            "(default: saved value when set; otherwise llama.cpp default)"
+        ),
+    )
+    kv_offload_group = parser.add_mutually_exclusive_group()
+    kv_offload_group.add_argument(
+        "--backend-no-kv-offload",
+        dest="backend_no_kv_offload",
+        action="store_true",
+        default=None,
+        help="disable KV offload for the managed llama.cpp process",
+    )
+    kv_offload_group.add_argument(
+        "--backend-kv-offload",
+        dest="backend_no_kv_offload",
+        action="store_false",
+        default=None,
+        help="enable KV offload for the managed llama.cpp process",
+    )
+    op_offload_group = parser.add_mutually_exclusive_group()
+    op_offload_group.add_argument(
+        "--backend-no-op-offload",
+        dest="backend_no_op_offload",
+        action="store_true",
+        default=None,
+        help="disable operator offload for the managed llama.cpp process",
+    )
+    op_offload_group.add_argument(
+        "--backend-op-offload",
+        dest="backend_no_op_offload",
+        action="store_false",
+        default=None,
+        help="enable operator offload for the managed llama.cpp process",
+    )
 
 
 def _add_service_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1130,33 +1142,7 @@ def _add_service_arguments(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_BACKEND_PORT,
         help=f"bind port for the managed llama.cpp process (default: {DEFAULT_BACKEND_PORT})",
     )
-    parser.add_argument(
-        "--backend-context-size",
-        type=int,
-        default=None,
-        help=(
-            "context size for the managed llama.cpp process "
-            f"(default: saved value or {DEFAULT_BACKEND_CONTEXT_SIZE})"
-        ),
-    )
-    parser.add_argument(
-        "--backend-predict-limit",
-        type=int,
-        default=None,
-        help=(
-            "token prediction limit for the managed llama.cpp process "
-            f"(default: saved value or {DEFAULT_BACKEND_PREDICT_LIMIT})"
-        ),
-    )
-    parser.add_argument(
-        "--backend-parallel",
-        type=int,
-        default=None,
-        help=(
-            "parallel server slot count for the managed llama.cpp process "
-            f"(default: saved value or {DEFAULT_BACKEND_PARALLEL})"
-        ),
-    )
+    _add_tuning_arguments(parser)
 
 
 def _add_format_argument(parser: argparse.ArgumentParser) -> None:
@@ -1172,32 +1158,23 @@ def _service_config_from_args(
     args: argparse.Namespace,
     store: HostStateStore | None = None,
 ) -> HostServiceConfig:
-    persisted_context_size: int | None = None
-    persisted_predict_limit: int | None = None
-    persisted_parallel: int | None = None
-    if store is not None and hasattr(store, "load_persisted_backend_tuning"):
-        persisted_context_size, persisted_predict_limit, persisted_parallel = store.load_persisted_backend_tuning()
+    resolved_tuning = _resolved_backend_tuning(args=args, store=store)
     return HostServiceConfig(
         bind_host=args.bind_host,
         port=args.port,
         api_key_env=args.api_key_env,
         backend_bind_host=args.backend_bind_host,
         backend_port=args.backend_port,
-        backend_context_size=(
-            args.backend_context_size
-            if args.backend_context_size is not None
-            else persisted_context_size or DEFAULT_BACKEND_CONTEXT_SIZE
-        ),
-        backend_predict_limit=(
-            args.backend_predict_limit
-            if args.backend_predict_limit is not None
-            else persisted_predict_limit or DEFAULT_BACKEND_PREDICT_LIMIT
-        ),
-        backend_parallel=(
-            args.backend_parallel
-            if args.backend_parallel is not None
-            else persisted_parallel or DEFAULT_BACKEND_PARALLEL
-        ),
+        backend_context_size=int(resolved_tuning["backend_context_size"]),
+        backend_predict_limit=int(resolved_tuning["backend_predict_limit"]),
+        backend_parallel=int(resolved_tuning["backend_parallel"]),
+        backend_batch_size=_optional_tuning_int(resolved_tuning["backend_batch_size"]),
+        backend_ubatch_size=_optional_tuning_int(resolved_tuning["backend_ubatch_size"]),
+        backend_gpu_layers=_optional_tuning_int(resolved_tuning["backend_gpu_layers"]),
+        backend_fit_target=_optional_tuning_int(resolved_tuning["backend_fit_target"]),
+        backend_no_kv_offload=_optional_tuning_bool(resolved_tuning["backend_no_kv_offload"]),
+        backend_no_op_offload=_optional_tuning_bool(resolved_tuning["backend_no_op_offload"]),
+        backend_cache_ram=_optional_tuning_int(resolved_tuning["backend_cache_ram"]),
     ).normalized()
 
 
@@ -1222,6 +1199,245 @@ def _print_tool_install_result(result: object, *, output_format: str) -> int:
     print(f"path: {payload['tool']['executable_path']}")
     print(f"version: {payload['tool']['version']}")
     return 0
+
+
+def _load_persisted_backend_tuning(store: HostStateStore | None) -> dict[str, int | bool | None]:
+    persisted_tuning: dict[str, int | bool | None] = {
+        "backend_context_size": None,
+        "backend_predict_limit": None,
+        "backend_parallel": None,
+        "backend_batch_size": None,
+        "backend_ubatch_size": None,
+        "backend_gpu_layers": None,
+        "backend_fit_target": None,
+        "backend_no_kv_offload": None,
+        "backend_no_op_offload": None,
+        "backend_cache_ram": None,
+    }
+    if store is None or not hasattr(store, "load_persisted_backend_tuning"):
+        return persisted_tuning
+
+    (
+        persisted_tuning["backend_context_size"],
+        persisted_tuning["backend_predict_limit"],
+        persisted_tuning["backend_parallel"],
+        persisted_tuning["backend_batch_size"],
+        persisted_tuning["backend_ubatch_size"],
+        persisted_tuning["backend_gpu_layers"],
+        persisted_tuning["backend_fit_target"],
+        persisted_tuning["backend_no_kv_offload"],
+        persisted_tuning["backend_no_op_offload"],
+        persisted_tuning["backend_cache_ram"],
+    ) = store.load_persisted_backend_tuning()
+    return persisted_tuning
+
+
+def _resolved_backend_tuning(
+    *,
+    args: argparse.Namespace | None = None,
+    store: HostStateStore | None = None,
+) -> dict[str, int | bool | None]:
+    persisted_tuning = _load_persisted_backend_tuning(store)
+    return {
+        "backend_context_size": _resolve_tuning_value(
+            args,
+            "backend_context_size",
+            persisted_tuning["backend_context_size"],
+            DEFAULT_BACKEND_CONTEXT_SIZE,
+        ),
+        "backend_predict_limit": _resolve_tuning_value(
+            args,
+            "backend_predict_limit",
+            persisted_tuning["backend_predict_limit"],
+            DEFAULT_BACKEND_PREDICT_LIMIT,
+        ),
+        "backend_parallel": _resolve_tuning_value(
+            args,
+            "backend_parallel",
+            persisted_tuning["backend_parallel"],
+            DEFAULT_BACKEND_PARALLEL,
+        ),
+        "backend_batch_size": _resolve_tuning_value(
+            args,
+            "backend_batch_size",
+            persisted_tuning["backend_batch_size"],
+        ),
+        "backend_ubatch_size": _resolve_tuning_value(
+            args,
+            "backend_ubatch_size",
+            persisted_tuning["backend_ubatch_size"],
+        ),
+        "backend_gpu_layers": _resolve_tuning_value(
+            args,
+            "backend_gpu_layers",
+            persisted_tuning["backend_gpu_layers"],
+        ),
+        "backend_fit_target": _resolve_tuning_value(
+            args,
+            "backend_fit_target",
+            persisted_tuning["backend_fit_target"],
+        ),
+        "backend_no_kv_offload": _resolve_tuning_value(
+            args,
+            "backend_no_kv_offload",
+            persisted_tuning["backend_no_kv_offload"],
+        ),
+        "backend_no_op_offload": _resolve_tuning_value(
+            args,
+            "backend_no_op_offload",
+            persisted_tuning["backend_no_op_offload"],
+        ),
+        "backend_cache_ram": _resolve_tuning_value(
+            args,
+            "backend_cache_ram",
+            persisted_tuning["backend_cache_ram"],
+        ),
+    }
+
+
+def _resolve_tuning_value(
+    args: argparse.Namespace | None,
+    field_name: str,
+    persisted_value: int | bool | None,
+    default: int | bool | None = None,
+) -> int | bool | None:
+    if args is not None and hasattr(args, field_name):
+        value = getattr(args, field_name)
+        if value is not None:
+            return value
+    return persisted_value if persisted_value is not None else default
+
+
+def _backend_tuning_payload(
+    tuning: dict[str, int | bool | None],
+    *,
+    action: str | None = None,
+    source: str | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "backend_context_size": tuning["backend_context_size"],
+        "backend_predict_limit": tuning["backend_predict_limit"],
+        "backend_parallel": tuning["backend_parallel"],
+    }
+    for field_name in (
+        "backend_batch_size",
+        "backend_ubatch_size",
+        "backend_gpu_layers",
+        "backend_fit_target",
+        "backend_no_kv_offload",
+        "backend_no_op_offload",
+        "backend_cache_ram",
+    ):
+        value = tuning[field_name]
+        if value is not None:
+            payload[field_name] = value
+    if action is not None:
+        payload["action"] = action
+    if source is not None:
+        payload["source"] = source
+    return payload
+
+
+def _has_persisted_backend_tuning(tuning: dict[str, int | bool | None]) -> bool:
+    return any(value is not None for value in tuning.values())
+
+
+def _tuning_arguments_supplied(args: argparse.Namespace) -> bool:
+    return any(
+        getattr(args, field_name, None) is not None
+        for field_name in (
+            "backend_context_size",
+            "backend_predict_limit",
+            "backend_parallel",
+            "backend_batch_size",
+            "backend_ubatch_size",
+            "backend_gpu_layers",
+            "backend_fit_target",
+            "backend_no_kv_offload",
+            "backend_no_op_offload",
+            "backend_cache_ram",
+        )
+    )
+
+
+def _validate_backend_tuning(tuning: dict[str, int | bool | None]) -> str | None:
+    context_size = tuning["backend_context_size"]
+    if not isinstance(context_size, int) or context_size < 1:
+        return "backend_context_size must be a positive integer"
+
+    predict_limit = tuning["backend_predict_limit"]
+    if not isinstance(predict_limit, int) or predict_limit < 1:
+        return "backend_predict_limit must be a positive integer"
+
+    parallel = tuning["backend_parallel"]
+    if not isinstance(parallel, int) or parallel < 1:
+        return "backend_parallel must be a positive integer"
+
+    batch_size = tuning["backend_batch_size"]
+    if batch_size is not None and (not isinstance(batch_size, int) or batch_size < 1):
+        return "backend_batch_size must be a positive integer"
+
+    ubatch_size = tuning["backend_ubatch_size"]
+    if ubatch_size is not None and (not isinstance(ubatch_size, int) or ubatch_size < 1):
+        return "backend_ubatch_size must be a positive integer"
+
+    gpu_layers = tuning["backend_gpu_layers"]
+    if gpu_layers is not None and (not isinstance(gpu_layers, int) or gpu_layers < -1):
+        return "backend_gpu_layers must be an integer greater than or equal to -1"
+
+    fit_target = tuning["backend_fit_target"]
+    if fit_target is not None and (not isinstance(fit_target, int) or fit_target < 0):
+        return "backend_fit_target must be a non-negative integer"
+
+    cache_ram = tuning["backend_cache_ram"]
+    if cache_ram is not None and (not isinstance(cache_ram, int) or cache_ram < -1):
+        return "backend_cache_ram must be an integer greater than or equal to -1"
+
+    return None
+
+
+def _optional_tuning_int(value: int | bool | None) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _optional_tuning_bool(value: int | bool | None) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _print_backend_tuning_payload(payload: dict[str, object]) -> None:
+    for field_name in (
+        "backend_context_size",
+        "backend_predict_limit",
+        "backend_parallel",
+        "backend_batch_size",
+        "backend_ubatch_size",
+        "backend_gpu_layers",
+        "backend_fit_target",
+        "backend_no_kv_offload",
+        "backend_no_op_offload",
+        "backend_cache_ram",
+        "source",
+    ):
+        if field_name in payload:
+            print(f"{field_name}: {payload[field_name]}")
+
+
+def _print_backend_process_tuning(record: object) -> None:
+    for field_name, attribute_name in (
+        ("backend_context_size", "context_size"),
+        ("backend_predict_limit", "predict_limit"),
+        ("backend_parallel", "parallel"),
+        ("backend_batch_size", "batch_size"),
+        ("backend_ubatch_size", "ubatch_size"),
+        ("backend_gpu_layers", "gpu_layers"),
+        ("backend_fit_target", "fit_target"),
+        ("backend_no_kv_offload", "no_kv_offload"),
+        ("backend_no_op_offload", "no_op_offload"),
+        ("backend_cache_ram", "cache_ram"),
+    ):
+        value = getattr(record, attribute_name, None)
+        if value is not None:
+            print(f"{field_name}: {value}")
 
 
 def _format_command(command: tuple[str, ...] | list[str]) -> str:

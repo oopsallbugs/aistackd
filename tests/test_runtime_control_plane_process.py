@@ -31,6 +31,32 @@ class ControlPlaneProcessRuntimeTests(unittest.TestCase):
         self.assertIn("--backend-predict-limit", command)
         self.assertIn("2048", command)
 
+    def test_build_control_plane_command_includes_optional_backend_tuning(self) -> None:
+        command = build_control_plane_command(
+            Path("/tmp/project"),
+            HostServiceConfig(
+                backend_batch_size=512,
+                backend_ubatch_size=256,
+                backend_gpu_layers=0,
+                backend_fit_target=0,
+                backend_no_kv_offload=False,
+                backend_no_op_offload=True,
+                backend_cache_ram=0,
+            ),
+        )
+
+        self.assertIn("--backend-batch-size", command)
+        self.assertIn("512", command)
+        self.assertIn("--backend-ubatch-size", command)
+        self.assertIn("256", command)
+        self.assertIn("--backend-gpu-layers", command)
+        self.assertIn("--backend-fit-target", command)
+        self.assertIn("--backend-cache-ram", command)
+        self.assertIn("--backend-kv-offload", command)
+        self.assertIn("--backend-no-op-offload", command)
+        self.assertNotIn("--backend-no-kv-offload", command)
+        self.assertNotIn("--backend-op-offload", command)
+
     def test_launch_control_plane_process_persists_starting_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _create_ready_host_state(Path(tmpdir))
