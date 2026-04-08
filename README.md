@@ -167,6 +167,16 @@ PYTHONPATH=src AISTACKD_API_KEY=test-key python -m aistackd host restart --servi
 
 On the remote-operator side, `aistackd client runtime` now mirrors the important tuning state in text mode too: live `backend_*` values, persisted `configured_backend_*` values, the remote `backend_base_url`, and response-state counts when the control plane exposes them.
 
+If a managed launch fails, the fastest local debug loop is:
+
+```bash
+PYTHONPATH=src python -m aistackd host
+PYTHONPATH=src python -m aistackd host logs backend --lines 200
+PYTHONPATH=src python -m aistackd host logs control-plane --lines 200
+```
+
+`host` now prints `readiness_status`, `readiness_error`, and the last known backend/control-plane failure details when they are available, including exit codes, launch commands, and the next log command to run.
+
 `aistackd doctor ready --frontend ...` now also surfaces the synced frontend config path, the recommended launch command, and the API-key export hint for Codex, OpenCode, and OpenHands.
 
 ## Project-Local Skills

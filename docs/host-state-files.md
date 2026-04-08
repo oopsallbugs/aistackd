@@ -186,6 +186,15 @@ When something feels off, this order is usually fastest:
 4. Inspect `runtime.json` for persisted tuning and activation state.
 5. Inspect `backend_installation.json` or `installed_models.json` if the problem looks like setup rather than launch.
 
+What `host` now gives you immediately:
+
+- `readiness_status`: whether the current host config is runnable under the normal validation rules
+- `readiness_error`: the exact validation failures, such as a missing API key or backend installation
+- `backend_last_status` and `control_plane_last_status`: the last persisted failed or exited process state
+- `backend_exit_code` and `control_plane_exit_code`: quick clues for crash vs clean stop
+- `backend_command` and `control_plane_command`: the exact managed launch command when a failed record is present
+- `backend_log_hint` and `control_plane_log_hint`: the next log command to run without guessing
+
 ## Related Docs
 
 - [host-tuning.md](host-tuning.md)

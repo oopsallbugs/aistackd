@@ -20,4 +20,4 @@ Snapshot of the near-term follow-up work after the host tuning and docs pass on 
 
 - [ ] Continue the broader frontend polish work after the OpenHands adapter.
 - [ ] Expand the validated host matrix beyond the current same-machine Linux reference path.
-- [ ] Tighten the release-readiness story around host bootstrap, frontend sync, and operator troubleshooting.
+- [ ] Tighten the release-readiness story around host bootstrap and frontend sync.

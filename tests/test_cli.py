@@ -22,7 +22,7 @@ from aistackd.models.sources import local_source_model
 from aistackd.runtime.host import HostServiceConfig
 from aistackd.runtime.hardware import CURRENT_HARDWARE_PROFILE_SCHEMA_VERSION, HardwareProfile, LlmfitDetectionResult
 from aistackd.state.layout import COMMAND_GROUPS
-from aistackd.state.host import HostBackendInstallation, HostStateStore
+from aistackd.state.host import HostBackendInstallation, HostBackendProcess, HostControlPlaneProcess, HostStateStore
 
 
 def invoke(argv: list[str]) -> tuple[int, str, str]:
@@ -221,6 +221,76 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["backend_gpu_layers"], 0)
             self.assertTrue(payload["backend_no_kv_offload"])
             self.assertEqual(payload["backend_cache_ram"], 0)
+
+    def test_host_status_surfaces_readiness_errors_and_failure_hints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            store = HostStateStore(project_root)
+            backend_root = _create_fake_backend_root(project_root)
+            store.save_backend_installation(
+                HostBackendInstallation(
+                    backend="llama.cpp",
+                    acquisition_method="adopted",
+                    backend_root=str(backend_root),
+                    server_binary=str(backend_root / "bin" / "llama-server"),
+                    cli_binary=str(backend_root / "bin" / "llama-cli"),
+                    configured_at="2026-04-08T00:00:00+00:00",
+                )
+            )
+            model_path = _create_fake_gguf(project_root / "models", "Qwen2.5-Coder-7B-Instruct.Q4_K_M.gguf")
+            artifact_bytes = model_path.read_bytes()
+            store.install_model(
+                local_source_model("qwen2.5-coder-7b-instruct-q4-k-m"),
+                acquisition_source="local",
+                acquisition_method="explicit_local_gguf",
+                artifact_path=model_path,
+                size_bytes=len(artifact_bytes),
+                sha256=hashlib.sha256(artifact_bytes).hexdigest(),
+            )
+            store.activate_model("qwen2.5-coder-7b-instruct-q4-k-m")
+            store.save_backend_process(
+                HostBackendProcess(
+                    backend="llama.cpp",
+                    status="failed",
+                    pid=5151,
+                    command=(str(backend_root / "bin" / "llama-server"), "--ctx-size", "24576"),
+                    bind_host="127.0.0.1",
+                    port=8011,
+                    model="qwen2.5-coder-7b-instruct-q4-k-m",
+                    artifact_path=str(model_path),
+                    server_binary=str(backend_root / "bin" / "llama-server"),
+                    log_path=str(store.paths.backend_log_path()),
+                    started_at="2026-04-08T00:00:00+00:00",
+                    exit_code=137,
+                )
+            )
+            store.save_control_plane_process(
+                HostControlPlaneProcess(
+                    status="failed",
+                    pid=6161,
+                    command=("python", "-m", "aistackd.control_plane"),
+                    bind_host="127.0.0.1",
+                    port=8000,
+                    log_path=str(store.paths.control_plane_log_path()),
+                    started_at="2026-04-08T00:00:00+00:00",
+                    exit_code=1,
+                )
+            )
+
+            exit_code, stdout, stderr = invoke(["host", "--project-root", tmpdir])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("readiness_status: needs_attention", stdout)
+            self.assertIn("readiness_error: api key environment variable 'AISTACKD_API_KEY' is not set or empty", stdout)
+            self.assertIn("backend_last_status: failed", stdout)
+            self.assertIn("backend_exit_code: 137", stdout)
+            self.assertIn("backend_command:", stdout)
+            self.assertIn("backend_log_hint: aistackd host logs backend --lines 200", stdout)
+            self.assertIn("control_plane_last_status: failed", stdout)
+            self.assertIn("control_plane_exit_code: 1", stdout)
+            self.assertIn("control_plane_command: python -m aistackd.control_plane", stdout)
+            self.assertIn("control_plane_log_hint: aistackd host logs control-plane --lines 200", stdout)
 
     def test_host_start_uses_persisted_tuning_when_flags_are_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

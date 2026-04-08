@@ -33,7 +33,7 @@ PYTHONPATH=src python -m aistackd host logs backend --lines 200
 What they show:
 
 - `host tune show`: the resolved persisted baseline used by future lifecycle commands
-- `host`: both persisted `configured_backend_*` values and the active backend process `backend_*` values
+- `host`: both persisted `configured_backend_*` values and the active backend process `backend_*` values, plus readiness errors and failed-launch hints when something is broken
 - `host logs backend`: recent backend launch output and model-load failures
 
 In `host tune show` text output, optional pass-through fields are printed as `unset` when they are not currently persisted. That makes the operator-facing distinction visible without reading raw state files:

@@ -209,13 +209,16 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 def handle_status(args: argparse.Namespace) -> int:
     """Render the current host runtime state."""
     try:
-        runtime_state = HostStateStore(args.project_root).load_runtime_state()
+        store = HostStateStore(args.project_root)
+        runtime_state = store.load_runtime_state()
     except HostStateError as exc:
         return _exit_with_error(str(exc))
 
     if args.format == "json":
         print(json.dumps(runtime_state.to_dict(), indent=2))
         return 0
+
+    validation_result = validate_host_runtime(store, _status_service_config(store))
 
     print("host runtime state")
     print(f"backend: {runtime_state.backend}")
@@ -224,6 +227,9 @@ def handle_status(args: argparse.Namespace) -> int:
     print(f"backend_status: {runtime_state.backend_status}")
     print(f"backend_process_status: {runtime_state.backend_process_status}")
     print(f"control_plane_process_status: {runtime_state.control_plane_process_status}")
+    print(f"readiness_status: {'ok' if validation_result.ok else 'needs_attention'}")
+    for message in validation_result.errors:
+        print(f"readiness_error: {message}")
     if runtime_state.backend_installation is not None:
         print(f"backend_root: {runtime_state.backend_installation.backend_root}")
         print(f"server_binary: {runtime_state.backend_installation.server_binary}")
@@ -234,6 +240,12 @@ def handle_status(args: argparse.Namespace) -> int:
         print(f"backend_pid: {runtime_state.backend_process.pid}")
         print(f"backend_base_url: {runtime_state.backend_process.base_url}")
         print(f"backend_log_path: {runtime_state.backend_process.log_path}")
+        if runtime_state.backend_process.status in {"failed", "exited", "stopped"}:
+            print(f"backend_last_status: {runtime_state.backend_process.status}")
+            if runtime_state.backend_process.exit_code is not None:
+                print(f"backend_exit_code: {runtime_state.backend_process.exit_code}")
+            print(f"backend_command: {_format_command(runtime_state.backend_process.command)}")
+            print("backend_log_hint: aistackd host logs backend --lines 200")
         if runtime_state.backend_process.context_size is not None:
             print(f"backend_context_size: {runtime_state.backend_process.context_size}")
         if runtime_state.backend_process.predict_limit is not None:
@@ -258,6 +270,12 @@ def handle_status(args: argparse.Namespace) -> int:
         print(f"control_plane_pid: {runtime_state.control_plane_process.pid}")
         print(f"control_plane_base_url: {runtime_state.control_plane_process.base_url}")
         print(f"control_plane_log_path: {runtime_state.control_plane_process.log_path}")
+        if runtime_state.control_plane_process.status in {"failed", "exited", "stopped"}:
+            print(f"control_plane_last_status: {runtime_state.control_plane_process.status}")
+            if runtime_state.control_plane_process.exit_code is not None:
+                print(f"control_plane_exit_code: {runtime_state.control_plane_process.exit_code}")
+            print(f"control_plane_command: {_format_command(runtime_state.control_plane_process.command)}")
+            print("control_plane_log_hint: aistackd host logs control-plane --lines 200")
     if runtime_state.configured_backend_context_size is not None:
         print(f"configured_backend_context_size: {runtime_state.configured_backend_context_size}")
     if runtime_state.configured_backend_predict_limit is not None:
@@ -1222,6 +1240,22 @@ def _service_config_from_args(
         api_key_env=args.api_key_env,
         backend_bind_host=args.backend_bind_host,
         backend_port=args.backend_port,
+        backend_context_size=int(resolved_tuning["backend_context_size"]),
+        backend_predict_limit=int(resolved_tuning["backend_predict_limit"]),
+        backend_parallel=int(resolved_tuning["backend_parallel"]),
+        backend_batch_size=_optional_tuning_int(resolved_tuning["backend_batch_size"]),
+        backend_ubatch_size=_optional_tuning_int(resolved_tuning["backend_ubatch_size"]),
+        backend_gpu_layers=_optional_tuning_int(resolved_tuning["backend_gpu_layers"]),
+        backend_fit_target=_optional_tuning_int(resolved_tuning["backend_fit_target"]),
+        backend_no_kv_offload=_optional_tuning_bool(resolved_tuning["backend_no_kv_offload"]),
+        backend_no_op_offload=_optional_tuning_bool(resolved_tuning["backend_no_op_offload"]),
+        backend_cache_ram=_optional_tuning_int(resolved_tuning["backend_cache_ram"]),
+    ).normalized()
+
+
+def _status_service_config(store: HostStateStore) -> HostServiceConfig:
+    resolved_tuning = _resolved_backend_tuning(store=store)
+    return HostServiceConfig(
         backend_context_size=int(resolved_tuning["backend_context_size"]),
         backend_predict_limit=int(resolved_tuning["backend_predict_limit"]),
         backend_parallel=int(resolved_tuning["backend_parallel"]),
